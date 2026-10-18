@@ -1,9 +1,10 @@
-[project]
-name = "ldap-portal"
-version = "0.1.0"
-description = "Self-service and admin portal for OpenLDAP + MIT Kerberos (kldap backend)"
-requires-python = ">=3.11"
+name = "refhandbookmcp"
+version = "0.10.0"
+description = "A quick reference handbook for agents, served over MCP: condition-indexed cards linked by runtime-defined relations, with a research ledger and its Self-service and admin portal for OpenLDAP + MIT Kerberos (kldap backend)"
+readme = "README.md"
+requires-python = ">=3.14"
 dependencies = [
+    "mcp>=2.3.0,<3",  # MCPServer API (2.x); 3.0 changes auth defaults
     "fastapi>=0.115",
     "uvicorn>=0.30",
     "jinja2>=3.1",
@@ -12,6 +13,18 @@ dependencies = [
     "ldap3>=2.9",
     "pexpect>=4.9",
     "pyjwt[crypto]>=2.8",  # SSO identity tokens (EdDSA)
+    "python-pam>=2.1.0",  # remote mode: password check through the system's PAM stack (default)
+    "ldap3>=2.9.1",  # remote mode: password check by LDAP bind (RHB_AUTH=ldap)
+    "uvicorn>=0.54.0",  # remote mode: HTTP server
+]
+
+[project.scripts]
+refhandbook = "refhandbook.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "httpx2>=2.13.1",  # tests drive the ASGI app directly
 ]
 
 [project.optional-dependencies]
@@ -19,15 +32,24 @@ dependencies = [
 kerberos = ["gssapi>=1.8"]
 dev = ["pytest>=8", "httpx>=0.27"]
 
-[tool.pytest.ini_options]
-testpaths = ["tests"]
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
+[tool.hatch.build.targets.wheel]
+packages = ["src/refhandbook"]
 [tool.setuptools]
 packages = ["portal"]
 
 [tool.setuptools.package-data]
 portal = ["templates/*.html", "static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# ldap3 2.9.1 (its latest release) imports pyasn1's tagMap/typeMap, which pyasn1 keeps as deprecated
+# aliases. Harmless while they exist; the LDAP tests fail loudly if a pyasn1 upgrade removes them.
+filterwarnings = ["ignore:(tagMap|typeMap) is deprecated:DeprecationWarning:ldap3"]

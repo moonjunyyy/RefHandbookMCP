@@ -1,0 +1,24 @@
+{
+  "name": "refhandbookmcp",
+  "version": "0.5.0",
+  "description": "A quick reference handbook served over MCP: condition-indexed cards linked by runtime relations, the research cards (rs-*), and the research ledger that keeps a research conversation's run state across turns and sessions.",
+  "author": {
+    "name": "Moonny"
+  },
+  "mcpServers": {
+    "refhandbook": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--frozen",
+        "--project",
+        "${CLAUDE_PLUGIN_ROOT}",
+        "refhandbook",
+        "serve"
+      ],
+      "env": {
+        "UV_PROJECT_ENVIRONMENT": "${CLAUDE_PLUGIN_DATA}/venv"
+      }
+    }
+  }
+}

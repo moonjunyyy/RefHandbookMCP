@@ -1,0 +1,33 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
+    color: #1c1917;
+    background-color: #fbf9f5;
+  }
+}
+
+.font-serif-kr {
+  font-family: 'Gowun Batang', 'Source Serif 4', Georgia, serif;
+}
+
+.font-display {
+  font-family: 'Cinzel', 'Gowun Batang', Georgia, serif;
+}
+
+/* Custom scrollbar for clean editorial look */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #f5f2eb;
+}
+::-webkit-scrollbar-thumb {
+  background: #d6cebe;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #b8ac96;
+}

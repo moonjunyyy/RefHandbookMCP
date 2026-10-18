@@ -5,3 +5,4 @@ __pycache__/
 .pytest_cache/
 # host-specific [site] keys (portal/facts.py: local_file)
 deploy/site.local.toml
+dist
