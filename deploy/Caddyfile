@@ -1,0 +1,12 @@
+# Caddy obtains the certificate itself. For rate limits on /login, /register, /authorize and /token,
+# use the caddy-ratelimit plugin, or nginx (deploy/nginx.conf).
+hb.example.org {
+	header Strict-Transport-Security "max-age=31536000"
+	reverse_proxy 127.0.0.1:8765 {
+		header_up X-Forwarded-For {remote_host}
+		flush_interval -1
+		transport http {
+			read_timeout 360s
+		}
+	}
+}

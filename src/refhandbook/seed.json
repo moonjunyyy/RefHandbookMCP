@@ -1,0 +1,87 @@
+{
+  "relation_types": [
+    {"name": "mitigates", "inverse": "mitigated_by", "description": "The source reduces the chance of ending up in the target."}
+  ],
+  "entries": [
+    {
+      "id": "tests-fail-after-dependency-bump",
+      "title": "Tests fail after dependency bump",
+      "condition": "The suite passed before a dependency or lockfile change and fails after it, with no change to the code under test.",
+      "objective": "Get back to a green suite and know which package caused the failure.",
+      "triggers": ["ImportError", "ModuleNotFoundError", "AttributeError: module has no attribute", "lockfile changed", "renovate", "dependabot"],
+      "tags": ["tests", "dependencies"],
+      "items": [
+        {"phase": "memory", "text": "Stop stacking further changes on the failing state", "response": "STOPPED"},
+        {"phase": "memory", "text": "Save the full failing output before re-running anything", "response": "SAVED"},
+        {"text": "Diff the lockfile against the last green commit", "response": "CHANGED PACKAGES LISTED"},
+        {"when": "the failure differs from run to run", "goto": "flaky-test-triage"},
+        {"kind": "caution", "text": "Pinning hides the incompatibility. Record why the pin exists next to it."},
+        {"text": "Revert one changed package at a time, most suspicious first, and re-run the failing test", "response": "CULPRIT IDENTIFIED"},
+        {"when": "the culprit has a migration guide", "text": "Apply the migration and re-run the suite", "ends": true},
+        {"text": "Pin the culprit to the last good version", "response": "SUITE GREEN"},
+        {"phase": "deferred", "when": "the task at hand is merged", "text": "Open an issue to remove the pin"}
+      ]
+    },
+    {
+      "id": "flaky-test-triage",
+      "title": "Flaky test triage",
+      "condition": "The same test on the same commit both passes and fails.",
+      "objective": "Decide whether the nondeterminism is in the test or in the code, and stop it from blocking other work.",
+      "triggers": ["intermittent failure", "passes locally fails in CI", "passes on retry", "timeout", "flaky"],
+      "tags": ["tests"],
+      "items": [
+        {"text": "Run the test alone 20 times", "response": "FAILURE RATE KNOWN"},
+        {"when": "it never fails alone", "text": "Run it after its neighbours in suite order; suspect shared state"},
+        {"text": "Check for wall-clock time, random seeds, network calls and ordering of unordered collections"},
+        {"when": "the cause is in the code under test", "text": "Treat as a real bug: fix the code, not the test", "ends": true},
+        {"text": "Make the test deterministic: inject the clock, fix the seed, fake the network", "response": "20/20 PASS"},
+        {"kind": "note", "text": "Quarantining is a last resort and needs an owner and a date."}
+      ]
+    },
+    {
+      "id": "rebase-conflict",
+      "title": "Rebase stops on a conflict",
+      "condition": "git rebase has paused and git status shows unmerged paths.",
+      "objective": "Finish or cleanly abandon the rebase without losing either side's work.",
+      "triggers": ["CONFLICT (content)", "could not apply", "unmerged paths", "rebase in progress"],
+      "tags": ["git"],
+      "items": [
+        {"phase": "memory", "text": "Do not commit, stash or switch branch while the rebase is paused", "response": "HANDS OFF"},
+        {"text": "git status", "response": "CONFLICTED FILES LISTED"},
+        {"kind": "caution", "text": "During a rebase 'ours' is the branch being rebased onto and 'theirs' is your commit: the reverse of a merge."},
+        {"text": "Resolve each file, then git add it", "response": "NO UNMERGED PATHS"},
+        {"when": "the resolution is unclear or the result does not build", "text": "git rebase --abort", "goto": "git-recovery-reference"},
+        {"text": "git rebase --continue", "response": "REBASE COMPLETE"},
+        {"phase": "deferred", "when": "before pushing", "text": "Run the suite on the rebased branch"}
+      ]
+    },
+    {
+      "id": "git-recovery-reference",
+      "kind": "reference",
+      "title": "Git recovery reference",
+      "condition": "Work appears to be lost after a reset, rebase, amend or branch deletion.",
+      "triggers": ["lost commit", "reset --hard", "deleted branch", "detached HEAD", "undo rebase"],
+      "tags": ["git"],
+      "body": "State before the last operation   git reflog, then git reset --hard HEAD@{n}\nUndo the last rebase              git reset --hard ORIG_HEAD\nRecover a deleted branch          git reflog, then git branch <name> <sha>\nCommit made on detached HEAD      git branch <name> <sha> before switching away\nFile as it was in a commit        git restore --source=<sha> -- <path>"
+    },
+    {
+      "id": "pre-merge-checks",
+      "title": "Pre-merge checks",
+      "condition": "A branch is about to be merged or rebased onto main.",
+      "objective": "Catch the conflicts and breakage that are cheapest to fix before the merge.",
+      "triggers": ["ready to merge", "before merging", "open a pull request"],
+      "tags": ["git", "tests"],
+      "items": [
+        {"text": "git fetch and compare with the target branch", "response": "UP TO DATE OR REBASED"},
+        {"text": "Run the full suite", "response": "GREEN"},
+        {"text": "Read the diff once as a reviewer would", "response": "NO SURPRISES"}
+      ]
+    }
+  ],
+  "relations": [
+    {"src": "tests-fail-after-dependency-bump", "type": "see_also", "dst": "pre-merge-checks"},
+    {"src": "rebase-conflict", "type": "escalates_to", "dst": "git-recovery-reference", "note": "if work looks lost after aborting"},
+    {"src": "pre-merge-checks", "type": "mitigates", "dst": "rebase-conflict"},
+    {"src": "pre-merge-checks", "type": "precedes", "dst": "rebase-conflict"}
+  ]
+}

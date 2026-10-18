@@ -1,0 +1,46 @@
+# /etc/systemd/system/refhandbook.service
+[Unit]
+Description=refhandbook MCP server (remote mode)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=refhandbook
+Group=refhandbook
+EnvironmentFile=/etc/refhandbook/env
+WorkingDirectory=/var/lib/refhandbook
+# The venv and its Python belong to root (built by install.sh); the service cannot change its own code.
+ExecStart=/opt/refhandbook-venv/bin/refhandbook serve --http
+Restart=on-failure
+RestartSec=3
+
+# NoNewPrivileges also stops PAM's setuid helpers (unix_chkpwd), so local /etc/shadow accounts
+# cannot sign in; directory and Kerberos accounts are unaffected.
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ReadWritePaths=/var/lib/refhandbook
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

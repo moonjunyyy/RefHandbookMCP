@@ -1,0 +1,34 @@
+[project]
+name = "refhandbookmcp"
+version = "0.5.0"
+description = "A quick reference handbook for agents, served over MCP: condition-indexed cards linked by runtime-defined relations, with a research ledger."
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "mcp>=2.3.0,<3",  # MCPServer API (2.x); 3.0 changes auth defaults
+    "python-pam>=2.1.0",  # remote mode: password check through the system's PAM stack (default)
+    "ldap3>=2.9.1",  # remote mode: password check by LDAP bind (RHB_AUTH=ldap)
+    "uvicorn>=0.54.0",  # remote mode: HTTP server
+]
+
+[project.scripts]
+refhandbook = "refhandbook.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "httpx2>=2.13.1",  # tests drive the ASGI app directly
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/refhandbook"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# ldap3 2.9.1 (its latest release) imports pyasn1's tagMap/typeMap, which pyasn1 keeps as deprecated
+# aliases. Harmless while they exist; the LDAP tests fail loudly if a pyasn1 upgrade removes them.
+filterwarnings = ["ignore:(tagMap|typeMap) is deprecated:DeprecationWarning:ldap3"]
