@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import argparse
-import contextlib
 import json
+import logging
 import sys
 import threading
 from importlib import resources
@@ -57,10 +57,9 @@ def main(argv: list[str] | None = None) -> int:
     ap = sub.add_parser("approve", help="the user's channel: approve a proposed rule or type (see `proposals`)")
     ap.add_argument("what", choices=["rule", "type"])
     ap.add_argument("name")
-    ap.add_argument("--seen", required=True, metavar="SHA",
-                    help="the sha `proposals` showed (8+ hex digits): a proposal revised since is not approved")
-    ap.add_argument("--retire", metavar="RULE", action="append", default=[],
-                    help="retire this rule in the same step (the one the proposal replaces)")
+    ap.add_argument("--seen", required=True, metavar="APPROVAL",
+                    help="the approval hash `proposals` showed (8+ hex digits): it names the proposal and the "
+                         "rules it retires, so anything changed since is not approved")
     sub.add_parser("proposals", help="list the model's open rule proposals")
     po = sub.add_parser("policy", help="the user's channel: show or grant a sandbox policy")
     po.add_argument("name", nargs="?", default="")
@@ -267,20 +266,23 @@ def _approve(args: argparse.Namespace, hb: Handbook) -> int:
     if args.command == "proposals":
         print(r.proposals())
         return 0
+    from .kernel import proposals
+
     g = r.k.g
     try:
-        with g.tx():
-            if args.command == "reject":
-                g.retire_rule(args.name, actor="user")
-                print(f"rule {args.name} rejected")
-                return 0
-            g.approve(args.what, args.name, actor="user", seen=args.seen)
-            for old in args.retire:
-                g.retire_rule(old, actor="user")
+        if args.command == "reject":
+            proposals.reject(g, args.name, actor="user")
+            print(f"rule {args.name} rejected")
+            return 0
+        if args.what == "type":
+            g.approve("type", args.name, actor="user")
+            retired: list[str] = []
+        else:
+            retired = proposals.approve(g, args.name, args.seen, actor="user")
     except HandbookError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
-    print(f"{args.what} {args.name} approved" + "".join(f"; {o} retired" for o in args.retire))
+    print(f"{args.what} {args.name} approved" + "".join(f"; {o} retired" for o in retired))
     return 0
 
 
@@ -290,7 +292,7 @@ def _policy(args: argparse.Namespace, hb: Handbook) -> int:
     from .agents.workspace import Workspace
 
     ws = Workspace(hb)
-    sandbox_api.configure(lambda: hb, threading.RLock(), contextlib.nullcontext)
+    sandbox_api.configure(lambda: hb, threading.RLock())
     changes: dict = {}
     if args.commands is not None:
         changes["commands"] = args.commands.split()
@@ -338,11 +340,15 @@ def _runner(args: argparse.Namespace) -> int:
 
     stop = {"now": False}
     signal.signal(signal.SIGTERM, lambda *_: stop.update(now=True))
+    log = logging.getLogger("refhandbook.runner")
     while not stop["now"]:
         for db in stores():
-            r = runner_for(db)
-            r.reap_lost()
-            r.poll()
+            try:  # one store's trouble (a busy file, a bad row) never stops the others
+                r = runner_for(db)
+                r.reap_lost()
+                r.poll()
+            except Exception:  # noqa: BLE001
+                log.exception("runner: %s", db)
         if args.once:
             break
         time.sleep(0.5)

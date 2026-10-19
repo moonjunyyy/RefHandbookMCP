@@ -27,8 +27,10 @@ def api(tmp_path):
 
 
 def seen(rid):
-    """The sha the proposals listing shows for a rule (what the user approves)."""
-    return rule_sha(research_api.R().k.g.get_rule(rid))[:12]
+    """The approval hash the proposals listing shows (what the user approves)."""
+    from refhandbook.kernel import proposals
+
+    return proposals.approval_sha(research_api.R().k.g, rid)[:12]
 
 
 def turn(n, ledger="geo"):
@@ -83,7 +85,7 @@ def test_a_proposal_warns_until_the_user_approves_it(api, capsys):
     with pytest.raises(Forbidden, match="only the user approves"):
         g.approve("rule", "rv_says_drops", actor="model")
     sha = seen("rv_says_drops")
-    assert f"rv_says_drops sha {sha}" in research_api.research_review("geo", action="proposals")
+    assert f"rv_says_drops approval {sha}" in research_api.research_review("geo", action="proposals")
     assert cli.main(["--db", str(api.path), "approve", "rule", "rv_says_drops", "--seen", sha]) == 0
     assert "rule rv_says_drops approved" in capsys.readouterr().out
     assert "ERROR H1: says 'drops'" in research_api.research_check("geo")
@@ -108,8 +110,8 @@ def test_a_package_rule_the_user_retired_stays_retired_across_upgrades(api, monk
     research_api.research_review("geo", token=t, why="accreting fires on quoted history",
                                  rules=[dict(RULE, id="rv_accreting", replaces="rs_w_accreting",
                                              body=RULE["body"].replace("rv_says_drops", "rv_accreting"))])
-    assert cli.main(["--db", str(api.path), "approve", "rule", "rv_accreting", "--seen", seen("rv_accreting"),
-                     "--retire", "rs_w_accreting"]) == 0
+    assert "retires rs_w_accreting" in research_api.research_review("geo", action="proposals")
+    assert cli.main(["--db", str(api.path), "approve", "rule", "rv_accreting", "--seen", seen("rv_accreting")]) == 0
     m = research_api.R().k
     monkeypatch.setattr(rs_pkg, "RULES", [dict(r, message=r["message"] + " (v2)") for r in rs_pkg.RULES])
     m.upgrade_packages()
@@ -247,3 +249,29 @@ def test_a_card_for_another_device_version_says_so():
                   tags=["refhandbookmcp", "device:0.0.1"])
     assert "DEVICE 0.0.1: written for that version" in render.card(hb.get_entry("where-things-are"), [])
     assert "DEVICE 0.0.1" in render.candidates("where things are", hb.lookup("where things are"))
+
+
+def test_what_an_approval_retires_is_data_bound_to_the_hash(api, capsys):
+    """The model's prose cannot widen an approval: only the structured `replaces` retires, and the
+    approval hash covers each rule it retires."""
+    out, t = turn(1)
+    g = research_api.R().k.g
+    prose = dict(RULE, id="rv_prose", body=RULE["body"].replace("rv_says_drops", "rv_prose"))
+    t = tok(research_api.research_review("geo", token=t, why="tidy (replaces rs_w_accreting rs_c_recall)",
+                                         rules=[prose]))
+    assert cli.main(["--db", str(api.path), "approve", "rule", "rv_prose", "--seen", seen("rv_prose")]) == 0
+    assert g.get_rule("rs_w_accreting")["state"] == "active" and g.get_rule("rs_c_recall")["state"] == "active"
+    real = dict(RULE, id="rv_real", replaces=["rs_w_accreting"], body=RULE["body"].replace("rv_says_drops", "rv_real"))
+    t = tok(research_api.research_review("geo", token=t, why="x", rules=[real]))
+    shown = seen("rv_real")
+    with g.tx():  # the replaced rule changes after the user looked
+        spec = g.get_rule("rs_w_accreting")
+        g.define_rule("rs_w_accreting", "check", spec["body"], actor="user", applies_to="ledger", severity="block",
+                      message=spec["message"])
+    assert cli.main(["--db", str(api.path), "approve", "rule", "rv_real", "--seen", shown]) == 1
+    assert "not the version shown" in capsys.readouterr().err
+    assert cli.main(["--db", str(api.path), "approve", "rule", "rv_real", "--seen", seen("rv_real")]) == 0
+    assert g.get_rule("rs_w_accreting")["state"] == "retired"
+    with pytest.raises(KernelError, match="not an active rule"):
+        research_api.research_review("geo", token=t, why="x", rules=[dict(real, id="rv_ghost", replaces="nope",
+                                     body=RULE["body"].replace("rv_says_drops", "rv_ghost"))])

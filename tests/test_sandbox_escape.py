@@ -132,3 +132,70 @@ def test_a_per_user_outside_uid(tmp_path):
 
 def test_the_capability_report_finds_user_namespaces():
     assert USERNS
+
+
+def test_dev_is_neither_writable_nor_executable(tmp_path):
+    code, out, err = run(tmp_path, ["/usr/bin/sh", "-c", "cp /usr/bin/cat /dev/x 2>/dev/null && /dev/x /dev/null; "
+                                    "echo rc=$?; echo hi > /dev/null && echo null-ok"], commands=["sh", "cp", "cat"])
+    assert code == 0, err
+    assert "rc=0" not in out and "null-ok" in out
+
+
+MEMFD = r"""
+import os
+try:
+    fd = os.memfd_create("x")
+except OSError as e:
+    print("memfd-refused", e.errno); raise SystemExit
+os.write(fd, open("/usr/bin/python3", "rb").read())
+try:
+    os.execv(f"/proc/self/fd/{fd}", ["x", "-c", "print('RAN')"])
+except OSError as e:
+    print("exec-refused", e.errno)
+"""
+
+
+def test_memory_written_by_the_command_does_not_run(tmp_path):
+    code, out, err = run(tmp_path, ["/usr/bin/python3", "-I", "-c", MEMFD], commands=["python3"])
+    assert code == 0, err
+    assert "RAN" not in out and ("exec-refused" in out or "memfd-refused" in out)
+
+
+def test_with_a_command_view_nothing_else_runs_by_its_path(tmp_path):
+    import glob
+
+    helper = next((p for p in ["/usr/lib/git-core/git", *glob.glob("/usr/lib/*/*")] if os.path.isfile(p)
+                   and os.access(p, os.X_OK) and open(p, "rb").read(4) == b"\x7fELF"), None)
+    if helper is None:
+        pytest.skip("no ELF helper under /usr/lib on this host")
+    code, out, err = run(tmp_path, ["/usr/bin/sh", "-c", f"{helper} --version >/dev/null 2>&1; echo rc=$?"],
+                         commands=["sh"])
+    assert code == 0, err
+    assert "rc=126" in out
+
+
+def test_a_network_grant_reaches_only_its_ports(tmp_path):
+    import socket
+
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(4)
+    port = listener.getsockname()[1]
+    probe = f"""
+import socket
+for p in ({port},):
+    try:
+        socket.create_connection(("127.0.0.1", p), timeout=2); print("connected", p)
+    except OSError as e:
+        print("refused", p, e.errno)
+"""
+    try:
+        code, out, err = run(tmp_path, ["/usr/bin/python3", "-I", "-c", probe], commands=["python3"],
+                             network=True, ports=[443])
+        assert code == 0, err
+        assert f"refused {port}" in out  # the host's loopback service stays out of reach
+        code, out, err = run(tmp_path, ["/usr/bin/python3", "-I", "-c", probe], commands=["python3"],
+                             network=True, ports=[port])
+        assert f"connected {port}" in out
+    finally:
+        listener.close()

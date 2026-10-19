@@ -29,6 +29,8 @@ import os
 import secrets
 import shutil
 import signal
+import sqlite3
+import stat
 import subprocess
 import tempfile
 import threading
@@ -122,8 +124,8 @@ class Workspace:
         if self.g.get_node(pid) is None:
             commands = [c for c in DEFAULT_COMMANDS if shutil.which(c, path=sandbox.HOST_PATH)]
             self.g.put_node(pid, "policy", actor="kernel", content="the default: computation, no network",
-                            attrs={"commands": commands, "network": False, "timeout": 120, "memory_mb": 2048,
-                                   "cpus": 2.0, "tmp_mb": 512, "disk_mb": 2048, "concurrent": 2})
+                            attrs={"commands": commands, "network": False, "ports": [80, 443], "timeout": 120,
+                                   "memory_mb": 2048, "cpus": 2.0, "tmp_mb": 512, "disk_mb": 2048, "concurrent": 2})
 
     def set_policy(self, name: str, *, actor: str, **attrs: Any) -> dict[str, Any]:
         """Grant or change a policy. Only the user's channel (the approval page, the CLI) calls
@@ -132,7 +134,7 @@ class Workspace:
             raise Forbidden("a policy is the user's grant: the model cannot write one (ask the user to grant it "
                             "on the approval page)")
         name = _name(name, "policy")
-        known = {"commands", "network", "timeout", "memory_mb", "cpus", "tmp_mb", "disk_mb", "concurrent",
+        known = {"commands", "network", "ports", "timeout", "memory_mb", "cpus", "tmp_mb", "disk_mb", "concurrent",
                  "description"}
         bad = set(attrs) - known
         if bad:
@@ -143,6 +145,11 @@ class Workspace:
             if missing:
                 raise WorkspaceError(f"not installed on the host: {', '.join(missing)}")
             attrs["commands"] = cmds
+        if "ports" in attrs and attrs["ports"] is not None:
+            ports = [int(x) for x in attrs["ports"]]
+            if not all(0 < x < 65536 for x in ports):
+                raise WorkspaceError("ports are TCP port numbers (1-65535)")
+            attrs["ports"] = ports
         desc = attrs.pop("description", None)
         pid = f"policy:{name}"
         with self.g.tx():
@@ -257,48 +264,104 @@ class Workspace:
         return self.g.get_blob(sha).decode(errors="replace") if sha else ""
 
     # ── files ────────────────────────────────────────────────────────────
+    # The sandbox writes the workspace, so the host never follows a name in it: every path is walked
+    # one component at a time on directory descriptors, with no symlink followed (O_NOFOLLOW), and
+    # only regular files are opened (O_NONBLOCK, then fstat), so a symlink swapped in by a running
+    # job, or a FIFO, cannot steer or stall a call.
 
-    def path(self, rel: str) -> Path:
-        """A path inside the workspace; refuses anything that leaves it (.., absolute, symlinks)."""
-        rel = (rel or ".").strip().removeprefix("/work").lstrip("/") or "."
-        p = (self.work / rel)
-        real = Path(os.path.realpath(p))
-        if real != self.work.resolve() and self.work.resolve() not in real.parents:
-            raise WorkspaceError(f"{rel!r} is outside the workspace")
-        return real
+    @staticmethod
+    def _parts(rel: str) -> list[str]:
+        rel = (rel or ".").strip()
+        rel = rel[len("/work"):] if rel == "/work" or rel.startswith("/work/") else rel
+        parts = [p for p in rel.split("/") if p not in ("", ".")]
+        if any(p == ".." for p in parts):
+            raise WorkspaceError(f"{rel!r} is outside the workspace (no '..')")
+        return parts
+
+    def _dir_fd(self, parts: list[str], create: bool = False) -> int:
+        """A descriptor of the directory parts[...] beneath the workspace, symlinks refused."""
+        fd = os.open(self.work, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        try:
+            for name in parts:
+                if create:
+                    try:
+                        os.mkdir(name, 0o755, dir_fd=fd)
+                    except FileExistsError:
+                        pass
+                try:
+                    nxt = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=fd)
+                except (NotADirectoryError, OSError) as e:
+                    raise WorkspaceError(f"{'/'.join(parts)!r}: {name!r} is not a directory of the workspace "
+                                         f"(or is a symlink)") from e
+                os.close(fd)
+                fd = nxt
+            return fd
+        except BaseException:
+            os.close(fd)
+            raise
+
+    def _open_file(self, rel: str, flags: int, mode: int = 0o644) -> int:
+        parts = self._parts(rel)
+        if not parts:
+            raise WorkspaceError("name a file")
+        d = self._dir_fd(parts[:-1], create=bool(flags & os.O_CREAT))
+        try:
+            fd = os.open(parts[-1], flags | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, mode, dir_fd=d)
+        except OSError as e:
+            raise WorkspaceError(f"{rel!r}: {e.strerror} (a symlink, a special file, or missing)") from e
+        finally:
+            os.close(d)
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            os.close(fd)
+            raise WorkspaceError(f"{rel!r} is not a regular file")
+        os.set_blocking(fd, True)
+        return fd
 
     def ls(self, rel: str = ".") -> list[tuple[str, str, int]]:
-        p = self.path(rel)
-        if not p.is_dir():
-            raise WorkspaceError(f"{rel!r} is not a directory")
-        out = []
-        for e in sorted(os.scandir(p), key=lambda e: e.name):
-            kind = "link" if e.is_symlink() else "dir" if e.is_dir() else "file"
-            out.append((e.name, kind, e.stat(follow_symlinks=False).st_size if kind == "file" else 0))
-        return out
+        d = self._dir_fd(self._parts(rel))
+        try:
+            out = []
+            with os.scandir(d) as it:
+                for e in sorted(it, key=lambda e: e.name):
+                    st = e.stat(follow_symlinks=False)
+                    kind = ("link" if stat.S_ISLNK(st.st_mode) else "dir" if stat.S_ISDIR(st.st_mode)
+                            else "file" if stat.S_ISREG(st.st_mode) else "special")
+                    out.append((e.name, kind, st.st_size if kind == "file" else 0))
+            return out
+        finally:
+            os.close(d)
 
     def read(self, rel: str, limit: int = 200_000) -> str:
-        p = self.path(rel)
-        with open(p, "rb") as f:
+        fd = self._open_file(rel, os.O_RDONLY)
+        with os.fdopen(fd, "rb") as f:
+            size = os.fstat(f.fileno()).st_size
             data = f.read(limit + 1)
         text = data[:limit].decode(errors="replace")
-        return text + (f"\n… (cut at {limit} bytes of {p.stat().st_size})" if len(data) > limit else "")
+        return text + (f"\n… (cut at {limit} bytes of {size})" if len(data) > limit else "")
 
     def write(self, rel: str, text: str) -> int:
-        p = self.path(rel)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o644)
+        fd = self._open_file(rel, os.O_WRONLY | os.O_CREAT)
         with os.fdopen(fd, "w") as f:
+            f.truncate(0)
             return f.write(text)
 
     def remove(self, rel: str) -> None:
-        p = self.path(rel)
-        if p == self.work.resolve():
+        """Removes the name itself: a symlink is unlinked, never followed; a directory is removed with
+        its contents (shutil.rmtree on descriptors, which follows no symlink)."""
+        parts = self._parts(rel)
+        if not parts:
             raise WorkspaceError("the workspace itself cannot be removed")
-        if p.is_dir() and not p.is_symlink():
-            shutil.rmtree(p)
-        else:
-            p.unlink()
+        d = self._dir_fd(parts[:-1])
+        try:
+            st = os.stat(parts[-1], dir_fd=d, follow_symlinks=False)
+            if stat.S_ISDIR(st.st_mode):
+                shutil.rmtree(parts[-1], dir_fd=d)
+            else:
+                os.unlink(parts[-1], dir_fd=d)
+        except FileNotFoundError as e:
+            raise WorkspaceError(f"no {rel!r} in the workspace") from e
+        finally:
+            os.close(d)
 
 
 # ── the runner ───────────────────────────────────────────────────────────
@@ -317,8 +380,14 @@ class Runner:
     `lost` when its lease expires. Store access goes through `lock` (the server's call lock in the
     MCP process, a private one in the runner unit)."""
 
-    def __init__(self, ws: Workspace, lock: threading.RLock | None = None, workers: int = 2, rid: str | None = None):
+    def __init__(self, ws: Workspace, lock: threading.RLock | None = None, workers: int = 2, rid: str | None = None,
+                 cgroups: bool | None = None):
         self.ws, self.lock = ws, lock or threading.RLock()
+        if cgroups is None:
+            cgroups = os.environ.get("RHB_CGROUPS", "1") != "0"
+        # memory and cpu limits: a delegated cgroup subtree (the runner unit has Delegate=yes);
+        # without one, rlimits (RLIMIT_AS for memory; no cpu share)
+        self.cg = sandbox.Cgroups.prepare() if cgroups else None
         self.rid = rid or f"runner:{os.getpid()}:{secrets.token_hex(3)}"
         self.pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="rhb-job")
         self.hostetc = ws.base / "hostetc"
@@ -387,12 +456,15 @@ class Runner:
         with self.lock:
             script.write_bytes(self.ws.g.get_blob(j["attrs"]["blob"]))
         interp = j["attrs"]["interpreter"]
+        limits = sandbox.Limits(memory_mb=int(pol["memory_mb"]), cpus=float(pol["cpus"]), tmp_mb=int(pol["tmp_mb"]),
+                                address_space=self.cg is None)
+        leaf = str(self.cg.leaf(j["id"][4:], limits)) if self.cg is not None else None
         return sandbox.Spec(
             argv=[f"/usr/bin/{interp}", "/job/script", *j["attrs"]["args"]],
             root=str(jobdir / "root"), work=str(self.ws.work), hostetc=str(self.hostetc),
             binds_ro=[(str(script), "/job/script")], network=bool(pol["network"]),
-            timeout=float(j["attrs"]["timeout"]), commands=list(pol["commands"]),
-            limits=sandbox.Limits(memory_mb=int(pol["memory_mb"]), cpus=float(pol["cpus"]), tmp_mb=int(pol["tmp_mb"])))
+            ports=list(pol.get("ports") or [80, 443]) if pol["network"] else None,
+            timeout=float(j["attrs"]["timeout"]), commands=list(pol["commands"]), limits=limits, cgroup=leaf)
 
     def _execute(self, j: dict[str, Any]) -> None:
         jobdir = self.ws.base / "jobs" / j["id"][4:]
@@ -401,35 +473,49 @@ class Runner:
         try:
             spec = self._spec(j, jobdir)
             (jobdir / "spec.json").write_text(spec.to_json())
+            with self.lock:
+                disk_mb = int(self.ws.policy(j["attrs"]["policy"])["attrs"]["disk_mb"])
             with open(jobdir / "stdout", "wb") as out, open(jobdir / "stderr", "wb") as err:
                 p = subprocess.Popen(sandbox.command(str(jobdir / "spec.json")), stdout=out, stderr=err,
                                      stdin=subprocess.DEVNULL, start_new_session=True)
+                ticks = 0
                 while True:
                     try:
                         code = p.wait(timeout=0.5)
                         break
                     except subprocess.TimeoutExpired:
+                        ticks += 1
                         with self.lock:
                             cancel = self.ws.g.node(j["id"])["attrs"].get("cancel")
-                        if cancel:
+                        if cancel and not result.get("cancelled"):
                             p.send_signal(signal.SIGTERM)  # the launcher kills the namespace's pid 1
                             result["cancelled"] = True
+                        if ticks % 10 == 0 and _du(self.ws.work) > disk_mb << 20 and not result.get("error"):
+                            p.send_signal(signal.SIGTERM)  # the workspace is over the policy's disk
+                            result["error"] = f"stopped: the workspace went over the policy's {disk_mb} MB"
             result["exit"] = code
-            state = "cancelled" if result.get("cancelled") else "done" if code == 0 else "failed"
+            state = ("cancelled" if result.get("cancelled") else "failed" if result.get("error")
+                     else "done" if code == 0 else "failed")
         except Exception as e:  # noqa: BLE001 — a runner never dies of one job
             state, result["error"] = "failed", f"{type(e).__name__}: {e}"
-        with self.lock:
-            for which in ("stdout", "stderr"):
-                f = jobdir / which
-                if f.exists():
-                    data = f.read_bytes()
-                    result[which] = self.ws.g.put_blob(_cap(data))
-                    result[f"{which}_bytes"] = len(data)
-            result["finished"] = time.time()
+        if self.cg is not None:
+            sandbox.Cgroups.remove(self.cg.base / j["id"][4:])
+        for attempt in range(5):  # the result must land: a busy store is waited out, not dropped
             try:
-                self.ws.g.update_node(j["id"], actor="kernel", state=state, attrs=result)
+                with self.lock:
+                    for which in ("stdout", "stderr"):
+                        f = jobdir / which
+                        if f.exists():
+                            data = f.read_bytes()
+                            result[which] = self.ws.g.put_blob(_cap(data))
+                            result[f"{which}_bytes"] = len(data)
+                    result["finished"] = time.time()
+                    self.ws.g.update_node(j["id"], actor="kernel", state=state, attrs=result)
+                break
             except KernelError:
-                pass
+                break  # the job moved on (reaped as lost): nothing to record
+            except sqlite3.OperationalError:
+                time.sleep(1 + attempt)
         shutil.rmtree(jobdir, ignore_errors=True)
 
     def close(self) -> None:

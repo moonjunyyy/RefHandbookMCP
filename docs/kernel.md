@@ -40,11 +40,12 @@ The rules are data, so they are reviewed like data (card `rs-rv`):
   A proposal is a kernel rule written by the model, so its authority is `proposed`: it runs at once
   on every ledger of the store, its findings shown as warnings, and it never blocks. The review
   prints its trial findings on the ledger at hand, so overconstraint shows before adoption.
-- **Adoption.** Only the user's channel approves: `refhandbook proposals` shows each proposal with
-  the hash of what it says, and `refhandbook approve rule <id> --seen <sha> [--retire <old>]`
-  seals that version only (a proposal revised since is refused); `refhandbook reject <id>` retires
-  it for good (the model cannot propose that id again). The approval page will do the same. A
-  sealed rule may not rest on a proposed one.
+- **Adoption.** Only the user's channel approves (`/agents`, or `refhandbook proposals` and
+  `refhandbook approve rule <id> --seen <approval>` on the server). The rules a proposal replaces
+  are recorded as data beside it (`replaces`), never read from the model's prose, and the approval
+  hash covers the proposal and each rule it retires: anything changed since the user looked is
+  refused. `refhandbook reject <id>` retires a proposal for good (the model cannot propose that id
+  again). A sealed rule may not rest on a proposed one.
 - **Cost.** Every evaluation is bounded: a proposed rule gets 1 s per evaluation, and one that
   exceeds it is refused at proposal or retired by the kernel when it meets a large ledger; the
   sealed rules of a phase together get 30 s, past which the call fails instead of hanging.
@@ -69,9 +70,27 @@ writes what governs.
 
 The sandbox (`agents/sandbox.py`) is user, mount, pid, net, ipc, uts and cgroup namespaces, a
 pivot_root onto a tmpfs root, Landlock, and seccomp: a deny-list of dangerous calls, and ENOSYS for
-any syscall newer than its table. Everything writable is mounted noexec, so nothing written runs
-as code except through an allowed interpreter. `tests/test_sandbox_escape.py` runs real sandboxes
-against each of these.
+any syscall newer than its table. `tests/test_sandbox_escape.py` runs real sandboxes against each
+rule below.
+
+- **Nothing written runs as code**, except through an allowed interpreter: every writable mount is
+  noexec, `/dev` is read-only and noexec, and memfds are noexec (`vm.memfd_noexec=2` in the
+  sandbox's pid namespace; where that cannot be set, `memfd_create` is refused).
+- **What runs is the view**: with a command list, Landlock grants execution only beneath `/usr/bin`
+  (the view) and the dynamic loader. The loader can still map any readable ELF, so the view bounds
+  the vocabulary and the namespaces bound the capability.
+- **The network is a list of ports**: a policy that grants the network shares the host's network,
+  and Landlock (ABI 4+) lets TCP connect only to the policy's `ports` (default 80 and 443) and
+  never bind, so the host's loopback services stay out of reach. UDP is not limited.
+- **Limits**: memory and cpu through a delegated cgroup leaf per job (the runner unit has
+  `Delegate=yes`), else RLIMIT_AS; the workspace's size is watched during a run and a job that takes
+  it over the policy's `disk_mb` is stopped.
+- **The host never follows a name the sandbox can write**: `sandbox_files` walks paths on directory
+  descriptors with O_NOFOLLOW, opens only regular files (O_NONBLOCK, then fstat), and removes a
+  symlink as a link.
+
+Open: every user's jobs run as the runner's uid outside the namespaces. `Spec.outside_uid` maps a
+per-user id, but it needs a runner with CAP_SETUID and per-user ownership of the workspaces.
 
 ## The approval page
 

@@ -275,7 +275,9 @@ class Graph:
         """An outermost transaction (BEGIN … COMMIT, ROLLBACK on an error)."""
         if self.db.in_transaction:
             raise KernelError("a transaction is already open on this connection; use tx() inside it")
-        self.db.execute("BEGIN")
+        # IMMEDIATE: take the write lock at the start, so a second process (the runner) waits on
+        # busy_timeout instead of failing at the first write of a transaction that read first
+        self.db.execute("BEGIN IMMEDIATE")
         try:
             yield
         except BaseException:

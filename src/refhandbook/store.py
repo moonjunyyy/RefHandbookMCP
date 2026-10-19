@@ -135,6 +135,7 @@ class Handbook:
         if self.path != ":memory:":  # the server and the runner share the file: readers never block a writer
             self.db.execute("PRAGMA journal_mode = WAL")
             self.db.execute("PRAGMA busy_timeout = 30000")
+            self.db.isolation_level = "IMMEDIATE"  # `with db:` takes the write lock first (see Graph.transaction)
         self.db.executescript(SCHEMA)
         with self.db:
             self.db.executemany(
