@@ -895,8 +895,9 @@ def check() -> list[tuple[str, bool, str]]:
         return [("architecture", False, str(e))]
     restrict = Path("/proc/sys/kernel/apparmor_restrict_unprivileged_userns")
     if restrict.exists() and restrict.read_text().strip() == "1":
-        out.append(("apparmor userns", False, "kernel.apparmor_restrict_unprivileged_userns=1: run the runner "
-                    "under deploy/apparmor/refhandbook-runner (AppArmorProfile=)"))
+        out.append(("userns restriction", False, "kernel.apparmor_restrict_unprivileged_userns=1 forbids "
+                    "unprivileged user namespaces: set it to 0 (echo 'kernel.apparmor_restrict_unprivileged_userns=0' "
+                    "> /etc/sysctl.d/60-userns.conf; sysctl --system). The sandbox uses no LSM profile."))
     r, w = os.pipe()
     uid = os.getuid()  # before the unshare: inside an unmapped namespace getuid() is the overflow id
     pid = os.fork()

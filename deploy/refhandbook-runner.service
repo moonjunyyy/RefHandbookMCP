@@ -37,9 +37,9 @@ SystemCallErrorNumber=EPERM
 SystemCallArchitectures=native
 LockPersonality=yes
 UMask=0077
-# Ubuntu >= 23.10 restricts unprivileged user namespaces: deploy/apparmor/refhandbook-runner grants
-# them to this unit only. Drop the line on a distribution without AppArmor.
-AppArmorProfile=refhandbook-runner
+# Kernel primitives and systemd only: no LSM profile. If the host forbids unprivileged user
+# namespaces (Ubuntu's kernel.apparmor_restrict_unprivileged_userns=1), `refhandbook sandbox-check`
+# says so and how to lift it with a sysctl.
 
 [Install]
 WantedBy=multi-user.target
