@@ -1,7 +1,9 @@
 # Autonomous agents
 
-Status: design. Nothing here is built yet. This is item 4 of `docs/kernel.md` ("the sandbox,
-`invoke`, and background runs"), widened to a team of agents.
+Status: partly built, untested. `src/refhandbook/agents/` holds a first sandbox, team, provider,
+key and layer implementation without tests. Next (item 4 of `docs/kernel.md`): one sandbox shared by
+Agent and Chat sessions, a seccomp allow-list, per-user subuid ranges, the script registry, and
+escape tests before anything runs on the server.
 
 A user who has registered their own API keys (Anthropic, OpenAI, Google) asks for a **run**: a goal,
 a grant (how many agents, how deep, how much), and a pruning policy. On the remote server, a

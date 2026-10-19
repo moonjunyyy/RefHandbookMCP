@@ -155,6 +155,8 @@ agree.
 | Volume | `research_begin` shows the rows changed in the last 3 turns and every live row (`view=recent`; `brief` and `full` too), and `research_end` prints only the rows the turn changed. `research_show(ids=…)` reads the rest. |
 | Configurations | `main` is the set of premises that are on, and only the user switches it. Named configurations switch premises on or off, swap alternatives, or add model premises, and the boundary report shows which single change flips a verdict. Model origin taints: nothing on the main line may rest on it. |
 | Propagation | Changing a row opens hits on everything that rests on it, verdict cells included. Switching a premise off reaches only the main line. Superseding or refuting a premise also reaches the exploration cells that contain it. |
+| Judge | The kernel's rules (`docs/kernel.md`) decide every check, obligation and end refusal; they are data, versioned with the package, and a user's change to one survives upgrades. |
+| Review | Every 7 turns, or sooner when refusals, UNAFFECTED disposals, carries and drops gather, `research_begin` lists REVIEW (card `rs-rv`). `research_review` records it and may propose rules, which run as warnings until the user approves them on the server. |
 | Documents | Each document has a role. `source` is the user's original: read-only and hash-checked. `deliverable` is for the reader: ids sit in hidden section markers, and a lint keeps ledger artefacts out of the prose. `working` is the model's own. A deliverable changes only through a committed change list: plan, then whole-section rewrites, then sync. Unplanned edits, appended corrections, and citations of replaced rows are refused. |
 
 The research tools are plain functions in `research_api.py`, with no import from `mcp`. The server
@@ -162,7 +164,8 @@ registers them, and `scripts/research.py` runs them through the CLI with JSON ar
 session with no connection to the server therefore runs the same code on a local database, and
 `research_ledgers` export and import move a ledger between the two. The CLI takes the arguments as
 JSON, `@FILE` or `-` (stdin), and an import's `data_file` names the export, so a large ledger never
-goes through argv. `export` takes `include_log=false`; `import` takes `to` (another name) and
+goes through argv. Through the tools, a long text goes once with `research_blob` (in pieces if
+needed) and is passed on as `ref`. `export` takes `include_log=false`; `import` takes `to` (another name) and
 `dry_run`; `copy` makes a sandbox copy, `rename` renames, and `research_ledger_delete` deletes with
 `confirm` set to the ledger id. `lookup` searches the ordinary cards unless `scope="research"` or
 `"all"`.
