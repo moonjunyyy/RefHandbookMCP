@@ -43,7 +43,10 @@ description: >
   K: `research_next` → run the card → push the exit's objects →
   `research_done` → `research_end`.
 
-  The reply transcribes that processing:
+  The ledger keeps the record of that processing (the K rows, and the Δ that
+  `research_end` prints). The reply is prose for the user: what was checked,
+  what changed, what it means, and what is asked of the user (card rs-n1
+  step 8). The ▶/◀ transcript of a K —
 
   ```
   ▶ K7 @FM on E2 H1   (from K5/b)
@@ -51,8 +54,8 @@ description: >
   ◀ FM/b → K8 @VF on H3 · K9 @EX on H3
   ```
 
-  After the transcript come the RECEIPT, the ledger, and Δ. The `NEXT:` line
-  is last.
+  — is given only when the user asks how a step was processed. The RECEIPT
+  line and then the `NEXT:` line close every reply, `NEXT:` last.
 - **Abnormal (X) takes precedence** over normal. When several X rows match, run
   the lowest number first. `◆` marks a memory item: do it at once, then run
   the card.

@@ -25,6 +25,7 @@ dependencies = [
     "python-pam>=2.1.0",  # remote mode: password check through the system's PAM stack (default)
     "ldap3>=2.9.1",  # remote mode: password check by LDAP bind (RHB_AUTH=ldap)
     "uvicorn>=0.54.0",  # remote mode: HTTP server
+    "pyjwt[crypto]>=2.15.1",  # remote mode, RHB_AUTH=sso: the site sign-in's EdDSA tokens
 ]
 
 [project.scripts]

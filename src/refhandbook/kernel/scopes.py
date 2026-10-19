@@ -15,6 +15,7 @@ none of them by name.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any
 
 from . import rules
@@ -67,7 +68,11 @@ def children(g: Graph, scope_id: str) -> list[dict[str, Any]]:
 
 
 def open_scope(g: Graph, scope_id: str, type_: str, *, actor: str, parent_id: str | None = None,
-               content: str = "", attrs: dict[str, Any] | None = None) -> dict[str, Any]:
+               content: str = "", attrs: dict[str, Any] | None = None,
+               links: Iterable[tuple[str, str]] = ()) -> dict[str, Any]:
+    """Create the scope and apply its `pre` gates. `links` are (edge type, target) pairs written
+    from the new scope, as the kernel, before the gates run: what the gates must see the scope
+    claim (a slot, a ticket). A refusal rolls them back with the scope."""
     _check_actor(actor)
     t = g.get_type(type_)
     if not t or t["kind"] != "scope":
@@ -81,6 +86,8 @@ def open_scope(g: Graph, scope_id: str, type_: str, *, actor: str, parent_id: st
         g.put_node(scope_id, type_, actor=K, state="open", content=content, attrs=attrs, origin=actor)
         if parent_id is not None:
             g.link(parent_id, CONTAINS, scope_id, actor=K)
+        for edge_type, dst in links:
+            g.link(scope_id, edge_type, dst, actor=K, origin=actor)
         pre = rules.evaluate(g, "pre", scope_id, type_)
         if any(f.severity == "block" for f in pre):
             raise ScopeRefused(scope_id, "open", pre)

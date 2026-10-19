@@ -80,7 +80,9 @@ class Config:
     host: str = "127.0.0.1"
     port: int = 8765
     # How passwords are checked: "pam" (the system's login stack, /etc/pam.d/<pam_service>) or
-    # "ldap" (a simple bind as the user; needs the password in the directory or {SASL} pass-through).
+    # "ldap" (a simple bind as the user; needs the password in the directory or {SASL} pass-through),
+    # or "sso": no password here; the site sign-in (nginx auth_request) vouches for the user with a
+    # signed token in X-Auth-Token, checked against sso_public_key_file.
     auth: str = "pam"
     pam_service: str = "refhandbook"
     require_group: str | None = None  # pam: a POSIX group (through NSS) the user must belong to
@@ -106,6 +108,15 @@ class Config:
     # forwards plain HTTP goes here too.
     trusted_proxies: tuple[str, ...] = ("127.0.0.1", "::1")
     extra_hosts: tuple[str, ...] = ()  # Host headers accepted besides the public host and loopback
+    # The account portal (ldap-portal): the sign-in page links to <this>/request (사용 신청) and
+    # <this>/expired (one-time and expired passwords). A path ("/account") is on this host.
+    account_url: str | None = None
+    # RHB_AUTH=sso: the site sign-in's public key, the issuer and audience its tokens carry, and
+    # where to send a browser that has not signed in yet.
+    sso_public_key_file: str = "/etc/m00nny-sso/sso-public.pem"
+    sso_issuer: str = ""  # default: public_url
+    sso_audience: str = "refhandbook"
+    login_url: str = "/auth/login"
 
     @property
     def resource_url(self) -> str:
@@ -127,8 +138,8 @@ class Config:
         starttls = _env("RHB_LDAP_STARTTLS", "0") in ("1", "true", "yes")
         host = urlparse(uri).hostname or ""
         auth = (_env("RHB_AUTH", "pam") or "pam").lower()
-        if auth not in ("pam", "ldap"):
-            raise SystemExit(f"RHB_AUTH must be pam or ldap, not {auth!r}")
+        if auth not in ("pam", "ldap", "sso"):
+            raise SystemExit(f"RHB_AUTH must be pam, ldap or sso, not {auth!r}")
         if auth == "ldap" and uri.startswith("ldap://") and not starttls and host not in ("localhost", "127.0.0.1", "::1") \
                 and _env("RHB_LDAP_ALLOW_CLEARTEXT", "0") not in ("1", "true", "yes"):
             raise SystemExit(f"{uri} without StartTLS would send passwords in clear: set RHB_LDAP_STARTTLS=1, "
@@ -157,7 +168,24 @@ class Config:
             session_ttl=int(_env("RHB_SESSION_TTL", str(90 * 86400))),  # type: ignore[arg-type]
             trusted_proxies=_list("RHB_TRUSTED_PROXIES", ("127.0.0.1", "::1")),
             extra_hosts=_list("RHB_ALLOWED_HOSTS", ()),
+            account_url=_account_url(_env("RHB_ACCOUNT_URL")),
+            sso_public_key_file=_env("RHB_SSO_PUBLIC_KEY_FILE", cls.sso_public_key_file),  # type: ignore[arg-type]
+            sso_issuer=_env("RHB_SSO_ISSUER", public),  # type: ignore[arg-type]
+            sso_audience=_env("RHB_SSO_AUDIENCE", cls.sso_audience),  # type: ignore[arg-type]
+            login_url=_env("RHB_LOGIN_URL", cls.login_url),  # type: ignore[arg-type]
         )
+
+
+def _account_url(v: str | None) -> str | None:
+    if v is None:
+        return None
+    v = v.rstrip("/")
+    p = urlparse(v)
+    if v.startswith("/") and not v.startswith("//") and not p.netloc:
+        return v
+    if p.scheme == "https" and p.netloc and not (p.username or p.password or p.query or p.fragment):
+        return v
+    raise SystemExit("RHB_ACCOUNT_URL must be https://host[/path] or a path on this host such as /account")
 
 
 def _list(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
@@ -226,6 +254,10 @@ def ascii_lower(name: str) -> str | None:
 
 class DirectoryUnavailable(Exception):
     """The LDAP server could not be reached or refused the service bind."""
+
+
+class PasswordChangeRequired(Exception):
+    """The password is right, but it is expired or one-time (+needchange) and must be changed first."""
 
 
 class LdapAuthenticator:
@@ -366,6 +398,78 @@ class LdapAuthenticator:
             raise DirectoryUnavailable(str(e)) from e
 
 
+# A password prompt that asks for a new password, not the current one (pam_krb5, pam_unix, pam_sss).
+NEW_PASSWORD_PROMPT = re.compile(r"\bnew\b|again|retype|re-?enter|confirm|repeat", re.IGNORECASE)
+PASSWORD_EXPIRED_TEXT = re.compile(r"expired|must change|change your password|password change required", re.IGNORECASE)
+
+
+def answer_prompt(echo_off: bool, text: str) -> str:
+    """What the sign-in conversation does with one PAM prompt: 'password', 'refuse' or 'blank'.
+
+    python-pam's own conversation answers every password prompt with the password, so a module
+    that wants to change an expired password (pam_krb5 does this inside pam_authenticate) would be
+    given the old password as the new one. Here a new-password prompt ends the conversation instead.
+    """
+    if not echo_off:
+        return "blank"  # username prompts and the like: PAM already has the name from pam_start
+    return "refuse" if NEW_PASSWORD_PROMPT.search(text) else "password"
+
+
+def pam_transaction(service: str, user: str, password: str) -> tuple[int, list[str], bool]:
+    """pam_authenticate, then pam_acct_mgmt, with the conversation above.
+
+    Returns (PAM code, every message PAM showed, whether a new password was asked for). Uses the
+    libpam bindings python-pam loads; no session is opened and no credentials are set.
+    """
+    from ctypes import POINTER, byref, c_char, cast, memmove, sizeof
+
+    from pam import __internals as pi
+
+    pi.PamAuthenticator._ensure_libs()
+    lib = pi.PamAuthenticator
+    secret = password.encode()
+    messages: list[str] = []
+    asked_new = False
+
+    @pi.conv_func
+    def conv(n, msgs, p_response, _appdata):  # noqa: ANN001, ANN202
+        nonlocal asked_new
+        plan = []
+        for i in range(n):
+            m = msgs[i].contents
+            text = (m.msg or b"").decode("utf-8", "replace")
+            messages.append(text)
+            plan.append(answer_prompt(m.msg_style == pi.PAM_PROMPT_ECHO_OFF, text))
+        if "refuse" in plan:
+            asked_new = True
+            return pi.PAM_CONV_ERR  # nothing allocated yet, so nothing for PAM to free
+        addr = lib.calloc(n, sizeof(pi.PamResponse))
+        if not addr:
+            return pi.PAM_BUF_ERR
+        resp = cast(addr, POINTER(pi.PamResponse))
+        for i, what in enumerate(plan):
+            if what == "password":
+                dst = lib.calloc(len(secret) + 1, sizeof(c_char))  # PAM frees each answer
+                memmove(dst, secret, len(secret))
+                resp[i].resp = dst
+            resp[i].resp_retcode = 0
+        p_response[0] = resp
+        return pi.PAM_SUCCESS
+
+    handle = pi.PamHandle()
+    pc = pi.PamConv(conv, None)
+    code = lib.pam_start(service.encode(), user.encode(), byref(pc), byref(handle))
+    if code != pi.PAM_SUCCESS:
+        return code, messages, False
+    try:
+        code = lib.pam_authenticate(handle, 0)
+        if code == pi.PAM_SUCCESS:
+            code = lib.pam_acct_mgmt(handle, 0)
+    finally:
+        lib.pam_end(handle, code)
+    return code, messages, asked_new
+
+
 class PamAuthenticator:
     """Checks the password through PAM, the way a system login does.
 
@@ -375,13 +479,20 @@ class PamAuthenticator:
     directory account from this non-root service. The account policy is ours instead: the name must
     resolve through NSS (which also gives the canonical name) and be in RHB_REQUIRE_GROUP if set.
     No session is opened and no credentials (ticket caches) are kept.
+
+    A password that must be changed first (expired, or an admin's one-time password) raises
+    PasswordChangeRequired: the stack asked for a new password, said so, or returned
+    PAM_NEW_AUTHTOK_REQD / PAM_AUTHTOK_EXPIRED. The password is never changed from here.
     """
 
     PAM_AUTHINFO_UNAVAIL = 9  # the backing service (KDC, directory) could not be reached
     PAM_SYSTEM_ERR = 4
+    PAM_NEW_AUTHTOK_REQD = 12
+    PAM_AUTHTOK_EXPIRED = 27
 
-    def __init__(self, cfg: Config):
+    def __init__(self, cfg: Config, transaction=pam_transaction):  # noqa: ANN001
         self.cfg = cfg
+        self._transaction = transaction  # tests pass a fake
         self._lock = threading.Lock()  # PAM modules are not all safe to run concurrently
 
     def _in_group(self, name: str) -> bool:
@@ -410,18 +521,19 @@ class PamAuthenticator:
             return None
 
     def authenticate(self, username: str, password: str) -> str | None:
-        import pam
-
         name = self._account(username)
-        if not password or name is None or not UID_RE.match(name):
+        if not password or name is None or not UID_RE.match(name) or "\x00" in password:
             return None
         with self._lock:
-            p = pam.PamAuthenticator()
-            ok = p.authenticate(name, password, service=self.cfg.pam_service, resetcreds=False)
-        if not ok:
-            if p.code in (self.PAM_AUTHINFO_UNAVAIL, self.PAM_SYSTEM_ERR):
-                raise DirectoryUnavailable(f"PAM: {p.reason}")
-            log.info("PAM refused %s: %s", name, p.reason)
+            code, messages, asked_new = self._transaction(self.cfg.pam_service, name, password)
+        if asked_new or code in (self.PAM_NEW_AUTHTOK_REQD, self.PAM_AUTHTOK_EXPIRED) \
+                or any(PASSWORD_EXPIRED_TEXT.search(m) for m in messages):
+            log.info("PAM: %s must change the password first (code %s)", name, code)
+            raise PasswordChangeRequired(name)
+        if code != 0:
+            if code in (self.PAM_AUTHINFO_UNAVAIL, self.PAM_SYSTEM_ERR):
+                raise DirectoryUnavailable(f"PAM error {code}")
+            log.info("PAM refused %s (code %s)", name, code)
             return None
         if not self._in_group(name):
             log.info("login refused for %s: not in group %s", name, self.cfg.require_group)
@@ -432,7 +544,43 @@ class PamAuthenticator:
         return self._account(uid) == uid and self._in_group(uid)
 
 
+class SsoAccounts(PamAuthenticator):
+    """RHB_AUTH=sso: the site sign-in checks passwords; here only the account policy remains, the
+    same as with PAM (the name resolves through NSS, RHB_REQUIRE_GROUP), checked before a grant and
+    on every refresh."""
+
+    def authenticate(self, username: str, password: str) -> str | None:
+        return None  # no passwords here
+
+
+class SsoTokens:
+    """Verifies the site sign-in's X-Auth-Token (an EdDSA JWT from the SSO's /auth/check)."""
+
+    def __init__(self, cfg: Config, public_key: object | None = None):
+        from cryptography.hazmat.primitives.serialization import load_pem_public_key
+
+        self.cfg = cfg
+        self.key = public_key or load_pem_public_key(Path(cfg.sso_public_key_file).read_bytes())
+
+    def uid(self, token: str) -> str | None:
+        import jwt
+
+        if not token:
+            return None
+        try:
+            claims = jwt.decode(token, self.key, algorithms=["EdDSA"], audience=self.cfg.sso_audience,
+                                issuer=self.cfg.sso_issuer or self.cfg.public_url, leeway=5,
+                                options={"require": ["exp", "iat", "sub", "aud", "iss"]})
+        except jwt.PyJWTError as e:
+            log.info("SSO token refused: %s", e)
+            return None
+        uid = ascii_lower(str(claims["sub"]))
+        return uid if uid and UID_RE.match(uid) else None
+
+
 def make_authenticator(cfg: Config) -> object:
+    if cfg.auth == "sso":
+        return SsoAccounts(cfg)
     return PamAuthenticator(cfg) if cfg.auth == "pam" else LdapAuthenticator(cfg)
 
 
@@ -721,24 +869,53 @@ label{{display:block;font-size:13px;margin:12px 0 4px}}
 input{{width:100%;box-sizing:border-box;padding:10px;border:1px solid var(--line);border-radius:8px;background:transparent;color:var(--fg);font-size:16px}}
 .row{{display:flex;flex-direction:row-reverse;gap:8px;margin-top:20px}} button{{flex:1;padding:10px;border-radius:8px;border:1px solid var(--acc);font-size:15px;cursor:pointer}}
 .go{{background:var(--acc);color:var(--card)}} .no{{background:transparent;color:var(--fg);border-color:var(--line)}}
-.err{{color:var(--err);font-size:14px;margin:0 0 8px}}
+.err{{color:var(--err);font-size:14px;margin:0 0 8px}} .err a{{color:inherit}}
+.who{{margin:12px 0 0;font-size:14px}} .who a{{color:var(--acc);font-size:13px}}
+.links{{margin:18px 0 0;font-size:13px;color:var(--mute);text-align:center}} .links a{{color:var(--acc)}}
 </style></head><body><main>
 <h1>refhandbook</h1>
 <p><b>{client}</b>이(가) 연구 원장 접근을 요청합니다.<br>돌아갈 곳: {dest}</p>
 {error}
 <form method="post" action="login">
 <input type="hidden" name="req" value="{req}">
-<label for="u">디렉터리 사용자명</label><input id="u" name="username" autocomplete="username" required autofocus>
-<label for="p">비밀번호</label><input id="p" name="password" type="password" autocomplete="current-password" required>
-<div class="row"><button class="go" type="submit" name="action" value="allow">로그인</button>
+{fields}
+<div class="row"><button class="go" type="submit" name="action" value="allow">{allow}</button>
 <button class="no" type="submit" name="action" value="deny" formnovalidate>취소</button></div>
-</form></main></body></html>"""
+</form>{links}</main></body></html>"""
 
 
-def _page(req: str, client: str, dest: str, error: str = "", status: int = 200, back: str = "") -> HTMLResponse:
-    """`back` is the client's redirect origin: CSP form-action also governs the redirect after the POST."""
-    err = f'<p class="err">{html.escape(error)}</p>' if error else ""
-    body = PAGE.format(req=html.escape(req), client=html.escape(client), dest=html.escape(dest), error=err)
+def _account_links(account: str | None) -> str:
+    if not account:
+        return ""
+    a = html.escape(account)
+    return (f'<p class="links"><a href="{a}/request" target="_blank" rel="noopener">계정이 없나요? 사용 신청</a>'
+            f' · <a href="{a}/expired" target="_blank" rel="noopener">임시·만료 비밀번호 변경</a></p>')
+
+
+PASSWORD_FIELDS = """<label for="u">디렉터리 사용자명</label><input id="u" name="username" autocomplete="username" required autofocus>
+<label for="p">비밀번호</label><input id="p" name="password" type="password" autocomplete="current-password" required>"""
+
+
+def _sso_fields(uid: str, switch_url: str) -> str:
+    return (f'<p class="who"><b>{html.escape(uid)}</b>(으)로 연결합니다. '
+            f'<a href="{html.escape(switch_url)}">다른 계정으로</a></p>')
+
+
+def _page(req: str, client: str, dest: str, error: str = "", status: int = 200, back: str = "",
+          account: str | None = None, change_password: bool = False, sso_uid: str | None = None,
+          switch_url: str = "") -> HTMLResponse:
+    """`back` is the client's redirect origin: CSP form-action also governs the redirect after the POST.
+    `account` is the account portal (RHB_ACCOUNT_URL); `change_password` adds a link to its
+    password-change page after the error. With `sso_uid` the user is already signed in to the site:
+    the page only asks to allow the client, and has no password fields."""
+    err = html.escape(error)
+    if change_password and account:
+        err += f' <a href="{html.escape(account)}/expired" target="_blank" rel="noopener">비밀번호 변경하기</a>'
+    err = f'<p class="err">{err}</p>' if error else ""
+    fields = _sso_fields(sso_uid, switch_url) if sso_uid else PASSWORD_FIELDS
+    body = PAGE.format(req=html.escape(req), client=html.escape(client), dest=html.escape(dest), error=err,
+                       fields=fields, allow="허용" if sso_uid else "로그인",
+                       links="" if sso_uid else _account_links(account))
     return HTMLResponse(body, status_code=status, headers={
         "Cache-Control": "no-store", "X-Frame-Options": "DENY",
         "Content-Security-Policy": f"default-src 'none'; style-src 'unsafe-inline'; form-action 'self' {back}; frame-ancestors 'none'",
@@ -759,7 +936,7 @@ def _message(text: str, status: int) -> HTMLResponse:
 # ── server ───────────────────────────────────────────────────────────────
 
 
-def build(cfg: Config, authenticator: object | None = None) -> MCPServer:
+def build(cfg: Config, authenticator: object | None = None, sso_tokens: SsoTokens | None = None) -> MCPServer:
     """The remote server: every handbook tool, OAuth endpoints, /login, /healthz.
 
     The result also carries `provider`, `http_app()` (the ASGI app with this server's host checks)
@@ -768,6 +945,8 @@ def build(cfg: Config, authenticator: object | None = None) -> MCPServer:
     from . import research_api, server
 
     auth_fn = authenticator or make_authenticator(cfg)
+    if cfg.auth == "sso" and sso_tokens is None:
+        sso_tokens = SsoTokens(cfg)
     provider = SQLiteOAuthProvider(cfg, auth_fn)
     stores = UserStores(cfg.data_dir)
     server._user_store = stores
@@ -820,7 +999,15 @@ def build(cfg: Config, authenticator: object | None = None) -> MCPServer:
             return _message(expired, 400)
         client = await provider.get_client(got[0])
         name = (client.client_name if client and client.client_name else got[0])
-        return _page(rid, name, urlparse(str(got[1].redirect_uri)).netloc, back=_origin(str(got[1].redirect_uri)))
+        dest, back = urlparse(str(got[1].redirect_uri)).netloc, _origin(str(got[1].redirect_uri))
+        if sso_tokens is not None:
+            uid = sso_tokens.uid(request.headers.get("x-auth-token", ""))
+            here = f"/login?req={rid}"
+            if uid is None:  # nginx normally sends the browser to the sign-in page before this
+                return RedirectResponse(f"{cfg.login_url}?next={here}", status_code=303)
+            return _page(rid, name, dest, back=back, sso_uid=uid,
+                         switch_url=f"{cfg.login_url}?switch=1&next={here}")
+        return _page(rid, name, dest, back=back, account=cfg.account_url)
 
     def client_addr(request: Request) -> str:
         peer = request.client.host if request.client else ""
@@ -842,7 +1029,9 @@ def build(cfg: Config, authenticator: object | None = None) -> MCPServer:
             log.info("sign-in cancelled by the user (client %s): access_denied sent back", client_id)
             return RedirectResponse(provider.deny(rid) or "/", status_code=303)
         if form.get("action") != "allow":
-            return _page(rid, name, dest, "로그인 버튼으로 제출해 주세요.", 400, back=back)
+            return _page(rid, name, dest, "로그인 버튼으로 제출해 주세요.", 400, back=back, account=cfg.account_url)
+        if sso_tokens is not None:
+            return await sso_grant(request, rid, client_id, name, dest, back)
         # Everything below up to the directory call runs without an await, so concurrent posts
         # cannot all pass the checks before one of them is counted.
         if not provider.reserve_attempt(rid):
@@ -851,26 +1040,61 @@ def build(cfg: Config, authenticator: object | None = None) -> MCPServer:
         user = ascii_lower(str(form.get("username", "")).strip()[:64])
         password = str(form.get("password", ""))[:1024]
         if not user or not UID_RE.match(user) or not password:
-            return _page(rid, name, dest, "사용자명 또는 비밀번호가 맞지 않습니다.", 401, back=back)
+            return _page(rid, name, dest, "사용자명 또는 비밀번호가 맞지 않습니다.", 401, back=back, account=cfg.account_url)
         addr = client_addr(request)
         if provider.locked(user, addr):
-            return _page(rid, name, dest, "잠시 잠겼습니다. 15분 뒤 다시 시도하세요.", 429, back=back)
+            return _page(rid, name, dest, "잠시 잠겼습니다. 15분 뒤 다시 시도하세요.", 429, back=back, account=cfg.account_url)
         stamp = provider.note_failure(user, addr)  # counted now, retracted on success
         try:
             uid = await anyio.to_thread.run_sync(auth_fn.authenticate, user, password)  # type: ignore[attr-defined]
         except DirectoryUnavailable as e:
             provider.retract_failure(user, addr, stamp)
             log.error("directory unavailable: %s", e)
-            return _page(rid, name, dest, "디렉터리 서버에 연결할 수 없습니다.", 503, back=back)
+            return _page(rid, name, dest, "디렉터리 서버에 연결할 수 없습니다.", 503, back=back, account=cfg.account_url)
+        except PasswordChangeRequired:
+            # The password was right, so this is not a failure; it just cannot be used yet.
+            provider.retract_failure(user, addr, stamp)
+            log.info("login for %s from %s needs a password change first", user, addr)
+            msg = ("비밀번호를 먼저 변경해야 합니다 (임시 비밀번호이거나 만료됨). 변경한 뒤 다시 로그인하세요."
+                   if cfg.account_url else
+                   "비밀번호를 먼저 변경해야 합니다 (임시 비밀번호이거나 만료됨). 관리자에게 변경 방법을 문의하세요.")
+            return _page(rid, name, dest, msg, 403, back=back, account=cfg.account_url, change_password=True)
         if not uid:
             log.info("login failed for %s from %s", user, addr)
-            return _page(rid, name, dest, "사용자명 또는 비밀번호가 맞지 않습니다.", 401, back=back)
+            return _page(rid, name, dest, "사용자명 또는 비밀번호가 맞지 않습니다.", 401, back=back, account=cfg.account_url)
         provider.retract_failure(user, addr, stamp)
         try:
             target = await provider.grant(rid, uid)
         except AuthorizeError:  # a concurrent submit already used this request
             return _message(expired, 400)
         log.info("login ok for %s from %s (client %s)", uid, addr, client_id)
+        return RedirectResponse(target, status_code=303)
+
+    async def sso_grant(request: Request, rid: str, client_id: str, name: str, dest: str, back: str) -> Response:
+        """RHB_AUTH=sso: the site sign-in vouches for the user; this server checks the token, that the
+        POST came from its own page, and its account policy, then issues the code."""
+        assert sso_tokens is not None
+        origin = request.headers.get("origin")
+        if origin is not None and origin.rstrip("/") != cfg.public_url:
+            log.warning("consent POST from foreign origin %s refused", origin)
+            return _message("다른 사이트에서 보낸 요청은 받지 않습니다.", 403)
+        uid = sso_tokens.uid(request.headers.get("x-auth-token", ""))
+        if uid is None:
+            return RedirectResponse(f"{cfg.login_url}?next=/login?req={rid}", status_code=303)
+        try:
+            allowed = await anyio.to_thread.run_sync(auth_fn.exists, uid)  # type: ignore[attr-defined]
+        except DirectoryUnavailable as e:
+            log.error("directory unavailable: %s", e)
+            return _page(rid, name, dest, "디렉터리 서버에 연결할 수 없습니다.", 503, back=back, sso_uid=uid)
+        if not allowed:
+            log.info("consent refused for %s: unknown here or not in the required group", uid)
+            return _page(rid, name, dest, "이 계정은 핸드북을 쓸 수 없습니다. 관리자에게 문의하세요.", 403,
+                         back=back, sso_uid=uid, switch_url=f"{cfg.login_url}?switch=1&next=/login?req={rid}")
+        try:
+            target = await provider.grant(rid, uid)
+        except AuthorizeError:
+            return _message(expired, 400)
+        log.info("consent given by %s (client %s, site sign-in)", uid, client_id)
         return RedirectResponse(target, status_code=303)
 
     @m.custom_route("/healthz", methods=["GET"])
