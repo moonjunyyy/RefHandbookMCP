@@ -437,33 +437,68 @@ class Research:
         out += self._obligations(ledger)
         return "\n".join(out)
 
-    def _obligations(self, ledger: str) -> list[str]:
+    def obligation_items(self, ledger: str) -> list[tuple[str, str, str, str]]:
+        """(kind, ref, src, line) for each obligation, in the order begin prints them. The kernel
+        package research reproduces the (kind, ref, src) part as rules."""
         out = []
         for src, hit in self.db.execute("SELECT src, hit FROM rl_pending WHERE ledger = ? ORDER BY src, hit", (ledger,)):
-            out.append(f"  PENDING   {hit} (from {src}): dispose")
+            out.append(("pending", hit, src, f"  PENDING   {hit} (from {src}): dispose"))
         rows = self._rows(ledger)
         for r in rows:
             k = key(r["status"])
             if r["sec"] == "K" and k in {"queued", "running", "blocked"}:
                 tag = "AWAITING USER" if k == "blocked" else k.upper()
-                out.append(f"  K-{tag:13} {r['id']}: {r['content'][:80]}")
+                out.append(("k", r["id"], "", f"  K-{tag:13} {r['id']}: {r['content'][:80]}"))
         for r in rows:
             k = key(r["status"])
             if r["sec"] == "U" and k in {"active", "question"}:
-                out.append(f"  DIRECTIVE {r['id']} ({k}): address it, or carry with a reason :: {r['content'][:70]}")
+                out.append(("directive", r["id"], "",
+                            f"  DIRECTIVE {r['id']} ({k}): address it, or carry with a reason :: {r['content'][:70]}"))
             elif r["sec"] not in ("K", "U") and k in {"stale", "proposed", "open"}:
-                out.append(f"  {k.upper():9} {r['id']}: re-judge :: {r['content'][:70]}")
+                out.append(("rejudge", r["id"], "", f"  {k.upper():9} {r['id']}: re-judge :: {r['content'][:70]}"))
         for c, h in self.db.execute("SELECT config, claim FROM rl_verdicts WHERE ledger = ? AND verdict = 'stale'", (ledger,)):
-            out.append(f"  STALE     {h}@{c}: recheck the verdict")
+            out.append(("stale_verdict", f"{h}@{c}", "", f"  STALE     {h}@{c}: recheck the verdict"))
         for d in self.db.execute("SELECT * FROM rl_docs WHERE ledger = ? AND role = 'deliverable'", (ledger,)):
             behind = self._changed_since(ledger, d["sync_clock"])
             if d["plan"]:
-                out.append(f"  DOC-PLAN  {d['id']} {d['label']}: planned changes not synced — rewrite, then research_doc sync")
+                out.append(("doc_plan", d["id"], "", f"  DOC-PLAN  {d['id']} {d['label']}: planned changes not synced — "
+                                                     "rewrite, then research_doc sync"))
             elif behind and d["sync_clock"]:
-                out.append(f"  DOC       {d['id']} {d['label']}: {len(behind)} ledger change(s) since its sync — "
-                           "plan before the next edit (research_doc plan)")
+                out.append(("doc_behind", d["id"], "", f"  DOC       {d['id']} {d['label']}: {len(behind)} ledger change(s) "
+                                                       "since its sync — plan before the next edit (research_doc plan)"))
+        return out
+
+    def _obligations(self, ledger: str) -> list[str]:
+        out = [line for *_, line in self.obligation_items(ledger)]
         out.append(f"  {len(out)} obligation(s). research_end refuses while PENDING, a running K, unaddressed "
                    "DIRECTIVES or an unsynced DOC-PLAN remain.")
+        return out
+
+    def blockers(self, ledger: str, turn: int, idle: str = "") -> list[tuple[str, str, str, str]]:
+        """(kind, ref, src, text) for everything that keeps turn `turn` from closing, check errors
+        included (kind 'check', ref = the message). The kernel package research reproduces these."""
+        out = [("pending", hit, src, f"PENDING {hit} (from {src})") for src, hit in self.db.execute(
+            "SELECT src, hit FROM rl_pending WHERE ledger = ?", (ledger,))]
+        touched = set(self._column("SELECT ref FROM rl_turnmarks WHERE ledger = ? AND turn = ? AND kind = 'touched'", ledger, turn))
+        carried = set(self._column("SELECT ref FROM rl_turnmarks WHERE ledger = ? AND turn = ? AND kind = 'carry'", ledger, turn))
+        rows = self._rows(ledger)
+        ks = [r for r in rows if r["sec"] == "K"]
+        for r in ks:
+            if key(r["status"]) == "running":
+                out.append(("running", r["id"], "", f"K {r['id']} is still running: finish its card with research_done"))
+        if ks and not any(key(r["status"]) in {"queued", "blocked"} for r in ks):
+            out.append(("no_continuation", "", "",
+                        "NO CONTINUATION: push the next K (a queued step, or @USER awaiting the user) before ending"))
+        for r in rows:
+            if r["sec"] == "U" and key(r["status"]) in {"active", "question"} and r["id"] not in touched | carried:
+                out.append(("directive", r["id"], "", f"DIRECTIVE {r['id']} neither addressed (set) nor carried"))
+        if not any(t.startswith("U") for t in touched) and not idle:
+            out.append(("no_directive", "", "", "NO DIRECTIVE this turn: register or update the user's message as U, "
+                                                "or end with idle=\"<why nothing was asked>\""))
+        for d in self.db.execute("SELECT id, label FROM rl_docs WHERE ledger = ? AND plan IS NOT NULL", (ledger,)):
+            out.append(("doc_plan", d["id"], "", f"DOC-PLAN {d['id']} {d['label']} committed but not synced"))
+        errors, _ = self.check(ledger)
+        out += [("check", e, "", f"CHECK {e}") for e in errors]
         return out
 
     def end(self, ledger: str, token: str | None, turn: int, idle: str = "") -> str:
@@ -471,27 +506,8 @@ class Research:
             lg = self._gate(ledger, token)
             if lg["turn"] != turn:
                 raise ResearchError(f"REFUSED: the open turn is {lg['turn']}, not {turn}")
-            blockers = [f"PENDING {hit} (from {src})" for src, hit in self.db.execute(
-                "SELECT src, hit FROM rl_pending WHERE ledger = ?", (ledger,))]
-            touched = set(self._column("SELECT ref FROM rl_turnmarks WHERE ledger = ? AND turn = ? AND kind = 'touched'", ledger, turn))
-            carried = set(self._column("SELECT ref FROM rl_turnmarks WHERE ledger = ? AND turn = ? AND kind = 'carry'", ledger, turn))
-            rows = self._rows(ledger)
-            ks = [r for r in rows if r["sec"] == "K"]
-            for r in ks:
-                if key(r["status"]) == "running":
-                    blockers.append(f"K {r['id']} is still running: finish its card with research_done")
-            if ks and not any(key(r["status"]) in {"queued", "blocked"} for r in ks):
-                blockers.append("NO CONTINUATION: push the next K (a queued step, or @USER awaiting the user) before ending")
-            for r in rows:
-                if r["sec"] == "U" and key(r["status"]) in {"active", "question"} and r["id"] not in touched | carried:
-                    blockers.append(f"DIRECTIVE {r['id']} neither addressed (set) nor carried")
-            if not any(t.startswith("U") for t in touched) and not idle:
-                blockers.append("NO DIRECTIVE this turn: register or update the user's message as U, "
-                                "or end with idle=\"<why nothing was asked>\"")
-            for d in self.db.execute("SELECT id, label FROM rl_docs WHERE ledger = ? AND plan IS NOT NULL", (ledger,)):
-                blockers.append(f"DOC-PLAN {d['id']} {d['label']} committed but not synced")
-            errors, warnings = self.check(ledger)
-            blockers += [f"CHECK {e}" for e in errors]
+            blockers = [text for *_, text in self.blockers(ledger, turn, idle)]
+            _, warnings = self.check(ledger)
             if blockers:
                 raise ResearchError("REFUSED: turn cannot close:\n  " + "\n  ".join(blockers))
             if idle:
