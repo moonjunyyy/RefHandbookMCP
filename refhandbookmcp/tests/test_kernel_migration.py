@@ -1,11 +1,11 @@
-"""Legacy stores on the kernel: round trips, and a ledger built to make every research rule fire,
-so the differential comparison (conftest.compare) is not vacuous for any of them."""
+"""Stores on the kernel: projections that round-trip, and a ledger built so that every research
+rule fires (so no rule of the package goes untested)."""
 
 import copy
 
 import pytest
 
-from conftest import compare, fresh_graph
+from conftest import fresh_graph, projected
 from refhandbook import Handbook, research
 from refhandbook.kernel import evaluate, findings, migrate
 from refhandbook.kernel.packages.research import RULES
@@ -29,7 +29,8 @@ ROWS = [
     row("T1", "a known result", "on", evidence="pointer: see the paper"),
     row("Z1", "an isolated unknown", "isolated"),
     row("E1", "a model object", "proposed", origin="model", evidence="computed"),
-    row("E2", "an accreting object", "established", evidence="computed; a; b; c", dep="int:A1", clock=3),
+    row("E2", "an accreting object", "established", evidence="computed · correction: a · correction: b",
+        dep="int:A1", clock=3),
     row("E3", "a search with no calls", "established", evidence="tried x · not found: "),
     row("E4", "rests on odd things", "established", evidence="followed", dep="Z1 T1 E99"),
     row("E5", "rests on a model premise", "established", evidence="followed", dep="A2"),
@@ -88,8 +89,8 @@ def everything():
                  marks=[(5, "touched", "E2", ""), (4, "carry", "U1", "later")])
 
 
-def test_every_research_rule_fires_and_matches_the_legacy_result(everything):
-    compare(everything, "everything")  # exact agreement: check messages, obligations, end blockers, round trip
+def test_every_research_rule_fires(everything):
+    projected(everything, "everything")
     g = fresh_graph()
     L = migrate.ledger_to_graph(g, everything.export("everything"))
     fired = {f.rule for f in evaluate(g, "check", L, "ledger")}
@@ -107,16 +108,17 @@ def test_references_to_nothing_become_missing_nodes_and_survive(everything):
     assert g.node("everything:c:nocfg")["type"] == "missing"
 
 
-def test_the_harness_catches_a_disagreement(everything, monkeypatch):
-    check = Research.check
+def test_the_harness_catches_a_projection_that_drifts(everything, monkeypatch):
+    rebuild = migrate.ledger_from_graph
 
-    def one_more(self, ledger):
-        errors, warnings = check(self, ledger)
-        return errors + ["E1: an error only the legacy code reports"], warnings
+    def lossy(g, L, include_log=True):
+        data = rebuild(g, L, include_log)
+        data["tables"]["rl_rows"] = data["tables"]["rl_rows"][1:]
+        return data
 
-    monkeypatch.setattr(Research, "check", one_more)
-    with pytest.raises(AssertionError, match="check errors differ"):
-        compare(everything, "everything")
+    monkeypatch.setattr(migrate, "ledger_from_graph", lossy)
+    with pytest.raises(AssertionError, match="table rl_rows differs"):
+        projected(everything, "everything")
 
 
 def test_handbook_round_trip_with_research_cards_and_a_dangling_goto():
@@ -148,7 +150,7 @@ def test_any_word_before_a_colon_stays_a_dep_relation():
     r = build("odd_rels", [row("A1", "p", "on"), row("E1", "x", "established", evidence="followed",
                                                     dep="on:A9 member:A9 pending_hit:A1 2x:A1 dép:A1 A9 A9")])
     errors, _ = r.check("odd_rels")
-    assert errors.count("E1: cites missing A9") == 4  # legacy repeats it per dep; the kernel reports it once
+    assert errors.count("E1: cites missing A9") == 1  # one finding however many edges name it
     g = fresh_graph()
     L = migrate.ledger_to_graph(g, r.export("odd_rels"))
     assert not g.edges(type_="pending_hit") and not g.edges(type_="on") and not g.edges(type_="member")
@@ -170,10 +172,21 @@ def test_kinds_have_separate_namespaces_and_an_imported_main_replaces_the_line()
     assert {e["dst"] for e in g.edges(src="names:c:main", type_="member")} == {"names:r:A1"}
 
 
-@pytest.mark.parametrize("evidence", ["ſourced: a talk", "sourcedſ x", "İrecall of it", "MAP-free int", "  Sourced"])
-def test_unicode_case_folding_matches_the_legacy_reading(evidence):
-    # compare() runs on import: the kernel must agree with key()/.lower() exactly, whatever it says
-    build("uni", [row("A1", "p", "on"), row("E1", "x", "established", evidence=evidence, dep="int:A1")])
+SOURCED = "E1: 'sourced' without a locator (chat:<uuid>, file:<path>, or a URL)"
+RECALL = "E1: recall is not evidence — retrieve it (RF) or mark [unverified]"
+INT = "E1: 'int' edge to A1 without an explicit map in evidence"
+
+
+@pytest.mark.parametrize("evidence, errors, warnings", [
+    ("ſourced: a talk", [], [INT]),  # the evidence key is the first run of ASCII letters: ſ ends it at once
+    ("sourcedſ x", [SOURCED], [INT]),  # … and here after "sourced"
+    ("  Sourced", [SOURCED], [INT]),
+    ("İrecall of it", [RECALL], [INT]),  # İ lowers to i + a combining dot, which is not a word character
+    ("MAP-free int", [], []),
+])
+def test_evidence_words_are_read_as_ascii_keys_and_lowered_text(evidence, errors, warnings):
+    r = build("uni", [row("A1", "p", "on"), row("E1", "x", "established", evidence=evidence, dep="int:A1")])
+    assert r.check("uni") == (errors, warnings)
 
 
 def test_handbook_relation_names_live_in_their_own_namespace():

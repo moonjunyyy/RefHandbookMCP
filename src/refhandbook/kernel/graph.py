@@ -657,7 +657,8 @@ class Graph:
                                   f"{', '.join(sorted(heads))}")
             if phase != "derive":  # a message names head positions, so they must agree across clauses
                 rules.check_message(message, rules.head_names(clauses))
-            prepared.append((rid, phase, applies_to, severity, body, message, spec.get("pkg") or "",
+            pkg = spec.get("pkg") or (old["pkg"] if old else "")  # an edited package rule stays the package's
+            prepared.append((rid, phase, applies_to, severity, body, message, pkg,
                              authority_for(actor, spec.get("authority")), bool(old)))
         new_ids = {p[0] for p in prepared}
         others = [r for r in self.active_rules() if r["id"] not in new_ids]

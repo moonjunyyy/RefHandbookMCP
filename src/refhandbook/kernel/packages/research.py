@@ -13,6 +13,9 @@ Node ids inside a ledger L: rows `L:<rid>`, verdict cells `L:<claim>@<config>`, 
 
 from __future__ import annotations
 
+import hashlib
+import json
+
 from ... import research as legacy
 from ..graph import Graph, encode_type
 
@@ -24,6 +27,7 @@ SEC_TYPE = {
 }
 TYPE_SEC = {t: s for s, t in SEC_TYPE.items()}
 DEP_RELS = sorted(legacy.RELS)
+LINK_RELS = sorted(legacy.LINK_RELS)
 
 # state classes: each is a set of status keys. The legacy sets are taken from research.py so the
 # two cannot drift apart; the rest name sets research.py writes inline.
@@ -49,8 +53,17 @@ def _row_states(sec: str) -> dict[str, list[str]]:
             for s in ALL_STATES}
 
 
-def install(g: Graph, actor: str = "kernel") -> None:
-    """Define the research vocabulary and rules (idempotent)."""
+def digest() -> str:
+    """The package's version: a hash of its rules and vocabulary. A store records the digest it has
+    installed, and runtime.upgrade_packages brings it to this one."""
+    spec = json.dumps([RULES, {s: sorted(v) for s, v in CLASSES.items()}, sorted(DEP_RELS), sorted(LINK_RELS)],
+                      sort_keys=True, default=sorted)
+    return hashlib.sha256(spec.encode()).hexdigest()[:16]
+
+
+def install(g: Graph, actor: str = "kernel", skip: set[str] | frozenset[str] = frozenset()) -> None:
+    """Define the research vocabulary and rules (idempotent). Rules named in `skip` are left as the
+    store has them (a user's change, kept across an upgrade)."""
     with g.tx():
         g.define_type("ledger", "scope", actor=actor, pkg=PKG, binding="manual",
                       description="One research question: its rows, configurations, verdicts and documents.")
@@ -66,8 +79,10 @@ def install(g: Graph, actor: str = "kernel") -> None:
         g.define_type("config", "node", actor=actor, pkg=PKG, description="A set of premises a claim is judged under.")
         g.define_type("document", "node", actor=actor, pkg=PKG, description="A registered document (source, deliverable, working).")
         for rel in DEP_RELS:  # in the dep namespace: dep_req, dep_sup, dep_int, dep_con, …
-            g.define_type(encode_type("dep", rel), "edge", actor=actor, pkg=PKG, classes=["dep"],
-                          description=f"a row rests on another ({rel})")
+            link = rel in LINK_RELS
+            g.define_type(encode_type("dep", rel), "edge", actor=actor, pkg=PKG,
+                          classes=["dep", "link" if link else "basis"],
+                          description=f"{'relates to' if link else 'rests on'} another row ({rel})")
         for name, inverse, desc in (
             ("on", "worked_on_by", "A plan object works on these rows (where it works, not what it rests on)."),
             ("member", "member_of", "A configuration contains this premise."),
@@ -76,7 +91,7 @@ def install(g: Graph, actor: str = "kernel") -> None:
             ("pending_hit", "pending_from", "A change to the source still awaits a disposition of the target."),
         ):
             g.define_type(name, "edge", actor=actor, pkg=PKG, inverse=inverse, description=desc)
-        g.define_rules(RULES, actor=actor)
+        g.define_rules([r for r in RULES if r["id"] not in skip], actor=actor)
 
 
 def key(*words: str) -> str:
@@ -97,6 +112,7 @@ RULES = [
        "rs_row(L, X, R, Sec) :- edge(L, contains, X), node(X, T, _), tclass(T, row), attr(X, rid, R), attr(X, sec, Sec)."),
     _r("rs_model", "derive", 'rs_model(X) :- origin(X, O), prefix(lower(O), "model").'),
     _r("rs_dep", "derive", "rs_dep(X, Rel, D) :- edge(X, Rel, D), tclass(Rel, dep)."),
+    _r("rs_basis_dep", "derive", "rs_basis_dep(X, Rel, D) :- edge(X, Rel, D), tclass(Rel, dep), not tclass(Rel, link)."),
     _r("rs_basis_row", "derive",
        'rs_basis_row(L, X, R) :- rs_row(L, X, R, Sec), Sec != "K", not class(X, finished), not node(X, _, stale).'),
     _r("rs_verdict", "derive",
@@ -106,7 +122,7 @@ RULES = [
        "rs_v_ok(V, H, C, HC, CN) :- rs_verdict(V, H, C, HC, CN), not node(H, missing, _), not node(C, missing, _)."),
     _r("rs_v_true", "derive", "rs_v_true(V, H, C, HC, CN) :- rs_v_ok(V, H, C, HC, CN), node(V, _, true)."),
     _r("rs_has_dep", "derive", "rs_has_dep(H) :- rs_dep(H, _, _)."),
-    _r("rs_has_nonsup", "derive", "rs_has_nonsup(H) :- rs_dep(H, Rel, _), Rel != dep_sup."),
+    _r("rs_has_basis", "derive", "rs_has_basis(H) :- rs_basis_dep(H, _, _)."),
     _r("rs_member", "derive", """
         rs_member(C, M) :- edge(C, member, M).
         rs_member(C, M) :- node(C, config, _), attr(C, synthetic, 1), edge(L, contains, C), rs_row(L, M, _, "A"), node(M, _, on).
@@ -142,29 +158,31 @@ RULES = [
        'rs_c_closure(R) :- rs_row(Self, X, R, Sec), Sec != "K", node(X, _, proposed), rs_model(X),'
        ' attr(X, evidence, E), not match(lower(E), "closure:").',
        "{R}: model-origin proposed without 'closure: <what the user givens were checked against>'", "ledger"),
+    # history appended into a cell: two or more correction/addendum markers, or two "turn N" stamps.
+    # (A long cell is not by itself history: VF/FM evidence names method, range, result and closure.)
     _r("rs_w_accreting", "check", """
-        rs_w_accreting(R) :- rs_row(Self, X, R, _), attr(X, evidence, E), len(E) > 240.
-        rs_w_accreting(R) :- rs_row(Self, X, R, _), attr(X, evidence, E), match(E, "(?s);.*;.*;").
+        rs_w_accreting(R) :- rs_row(Self, X, R, _), attr(X, evidence, E), match(lower(E), "(?s)(correction|addendum|update[ds]?|revised|edit(ed)?|was|정정|추가|수정|갱신)\\s*[:：].*(correction|addendum|update[ds]?|revised|edit(ed)?|was|정정|추가|수정|갱신)\\s*[:：]").
+        rs_w_accreting(R) :- rs_row(Self, X, R, _), attr(X, evidence, E), match(lower(E), "(?s)\\bturn\\s*\\d+\\b.*\\bturn\\s*\\d+\\b").
     """, "{R}: evidence cell is accreting; replace it with the current state (history is in the log)", "ledger", "warn"),
     _r("rs_c_missing", "check",
        "rs_c_missing(R, D) :- rs_basis_row(Self, X, R), rs_dep(X, _, Dn), node(Dn, missing, _), attr(Dn, rid, D).",
        "{R}: cites missing {D}", "ledger"),
     _r("rs_c_model_basis", "check",
-       "rs_c_model_basis(R, D, O) :- rs_basis_row(Self, X, R), rs_dep(X, _, Dn), not node(Dn, missing, _),"
+       "rs_c_model_basis(R, D, O) :- rs_basis_row(Self, X, R), rs_basis_dep(X, _, Dn), not node(Dn, missing, _),"
        " rs_model(Dn), not rs_model(X), origin(X, O), attr(Dn, rid, D).",
        "{R}: rests on model-origin {D}; a {O} row cannot (mark {R} model, or have the user adopt the premise)", "ledger"),
     _r("rs_c_bad_basis", "check", """
-        rs_c_bad_basis(R, D, S) :- rs_basis_row(Self, X, R), not rs_model(X), rs_dep(X, _, Dn),
+        rs_c_bad_basis(R, D, S) :- rs_basis_row(Self, X, R), not rs_model(X), rs_basis_dep(X, _, Dn),
             not node(Dn, missing, _), class(Dn, not_basis), attr(Dn, rid, D), attr(Dn, status, S).
-        rs_c_bad_basis(R, D, S) :- rs_basis_row(Self, X, R), rs_model(X), rs_dep(X, _, Dn),
+        rs_c_bad_basis(R, D, S) :- rs_basis_row(Self, X, R), rs_model(X), rs_basis_dep(X, _, Dn),
             not node(Dn, missing, _), class(Dn, withdrawn), attr(Dn, rid, D), attr(Dn, status, S).
     """, "{R}: rests on {D} with status {S!r} — mark {R} stale or re-derive", "ledger"),
     _r("rs_c_pointer", "check",
-       r'rs_c_pointer(R, D) :- rs_basis_row(Self, X, R), rs_dep(X, _, Dn), not node(Dn, missing, _),'
+       r'rs_c_pointer(R, D) :- rs_basis_row(Self, X, R), rs_basis_dep(X, _, Dn), not node(Dn, missing, _),'
        f' attr(Dn, evidence, DE), match(DE, "{key("pointer")}"), attr(Dn, rid, D).',
        "{R}: rests on {D}, which is only a pointer — retrieve the original (RF)", "ledger"),
     _r("rs_w_unknown", "check",
-       'rs_w_unknown(R, D) :- rs_basis_row(Self, X, R), rs_dep(X, _, Dn), not node(Dn, missing, _),'
+       'rs_w_unknown(R, D) :- rs_basis_row(Self, X, R), rs_basis_dep(X, _, Dn), not node(Dn, missing, _),'
        ' attr(Dn, rid, D), prefix(D, "Z").',
        "{R}: uses isolated unknown {D} — confirm it appears only as a symbol or gauge", "ledger", "warn"),
     _r("rs_w_int", "check",
@@ -172,7 +190,7 @@ RULES = [
        ' attr(X, evidence, E), not match(lower(E), "map"), attr(Dn, rid, D).',
        "{R}: 'int' edge to {D} without an explicit map in evidence", "ledger", "warn"),
     _r("rs_w_unverified", "check",
-       r'rs_w_unverified(R, E, D) :- rs_basis_row(Self, X, R), rs_dep(X, _, Dn), not node(Dn, missing, _),'
+       r'rs_w_unverified(R, E, D) :- rs_basis_row(Self, X, R), rs_basis_dep(X, _, Dn), not node(Dn, missing, _),'
        r' attr(Dn, evidence, DE), match(DE, "(?i)^\s*\[?unverified\b"), attr(X, evidence, E),'
        f' match(E, "{key("computed", "followed", "sourced")}"), attr(Dn, rid, D).',
        "{R}: evidence {E!r} rests on [unverified] {D}; the conclusion is at most [unverified]", "ledger", "warn"),
@@ -185,10 +203,10 @@ RULES = [
         rs_c_v_unknown(HC, CN) :- rs_verdict(V, H, C, HC, CN), edge(Self, contains, V), node(C, missing, _).
     """, "verdict {HC}@{CN}: unknown claim or configuration", "ledger"),
     _r("rs_c_sup_only", "check",
-       "rs_c_sup_only(HC, CN) :- rs_v_true(V, H, C, HC, CN), edge(Self, contains, V), rs_has_dep(H), not rs_has_nonsup(H).",
-       "{HC}@{CN}: true on 'sup' edges only — supports is evidence, not proof", "ledger"),
+       "rs_c_sup_only(HC, CN) :- rs_v_true(V, H, C, HC, CN), edge(Self, contains, V), rs_has_dep(H), not rs_has_basis(H).",
+       "{HC}@{CN}: true on link edges only (sup/con/ref) — a link is evidence or reference, not proof", "ledger"),
     _r("rs_c_external", "check",
-       'rs_c_external(HC, CN, D) :- rs_v_true(V, H, C, HC, CN), edge(Self, contains, V), rs_dep(H, _, Dn),'
+       'rs_c_external(HC, CN, D) :- rs_v_true(V, H, C, HC, CN), edge(Self, contains, V), rs_basis_dep(H, _, Dn),'
        ' attr(Dn, rid, D), prefix(D, "T"), not rs_member(C, Dn).',
        "{HC}@{CN}: true, but rests on external result {D}, which is not in configuration {CN!r}", "ledger"),
     _r("rs_c_contradicts", "check",
