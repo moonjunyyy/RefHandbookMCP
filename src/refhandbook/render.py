@@ -13,6 +13,24 @@ PHASE_HEADINGS = {
 }
 
 
+def device_note(tags: list[str] | str | None, running: str | None = None) -> str:
+    """A card tagged `device:<version>` describes the device as that version had it. Opened on a
+    server that runs another version, it says so: what it states about the device may have changed."""
+    if isinstance(tags, str):
+        tags = tags.split()
+    marked = sorted({t.split(":", 1)[1] for t in tags or [] if t.startswith("device:")})
+    if not marked:
+        return ""
+    if running is None:
+        from .manifest import project_version
+
+        running = project_version()
+    if running in marked:
+        return ""
+    return (f"DEVICE {', '.join(marked)}: written for that version; this server runs {running}. "
+            "Verify what it says about tools and rules before relying on it, then update the card and its tag.")
+
+
 def _ref(entry_id: str, title: str | None) -> str:
     return f"[{entry_id}] {title}" if title else f"[{entry_id}] (MISSING ENTRY)"
 
@@ -38,6 +56,8 @@ def card(entry: dict[str, Any], neighbors: list[dict[str, Any]]) -> str:
     out = [f"# {entry['title']}", f"[{entry['id']}] {entry['kind']} · rev {entry['revision']} · {entry['updated_at']}"]
     if entry["tags"]:
         out[-1] += " · " + " ".join(f"#{t}" for t in entry["tags"])
+    if note := device_note(entry["tags"]):
+        out.append(note)
     out.append("")
     if entry["condition"]:
         out.append(f"CONDITION  {entry['condition']}")
@@ -78,6 +98,8 @@ def candidates(situation: str, rows: list[dict[str, Any]]) -> str:
         out.append(f"[{r['id']}] {r['title']}  ({r['kind']})")
         if r["superseded_by"]:
             out.append(f"    SUPERSEDED BY {r['superseded_by']} — open that instead")
+        if note := device_note(r.get("device")):
+            out.append(f"    {note}")
         if r["condition"]:
             out.append(f"    condition: {r['condition']}")
         if r["objective"]:

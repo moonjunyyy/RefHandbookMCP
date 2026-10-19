@@ -300,7 +300,8 @@ class Handbook:
             f"SELECT e.id, e.kind, e.title, e.condition, e.objective,"
             f"       bm25(search, {SEARCH_WEIGHTS}) AS score,"
             f"       (SELECT group_concat(src, ', ') FROM relations"
-            f"         WHERE type = 'supersedes' AND dst = e.id) AS superseded_by"
+            f"         WHERE type = 'supersedes' AND dst = e.id) AS superseded_by,"
+            f"       (SELECT group_concat(tag, ' ') FROM tags WHERE entry_id = e.id AND tag LIKE 'device:%') AS device"
             f"  FROM search JOIN entries e ON e.id = search.entry_id"
             f" WHERE search MATCH ?{where}"
             # A superseded entry is still findable, but never ahead of a current one.

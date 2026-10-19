@@ -52,6 +52,12 @@ def main(argv: list[str] | None = None) -> int:
     rp.add_argument("tool", help="e.g. research_begin; 'list' prints the tools")
     rp.add_argument("arguments", nargs="?", default="{}",
                     help="JSON object of the tool's arguments, @FILE for a JSON file, or - for stdin")
+    ap = sub.add_parser("approve", help="the user's channel: approve a proposed rule or type (see `proposals`)")
+    ap.add_argument("what", choices=["rule", "type"])
+    ap.add_argument("name")
+    ap.add_argument("--retire", metavar="RULE", action="append", default=[],
+                    help="retire this rule in the same step (the one the proposal replaces)")
+    sub.add_parser("proposals", help="list the model's open rule proposals")
     ix = sub.add_parser("research-index", help="print (or --write into a SKILL.md) the research skill's abnormal index")
     ix.add_argument("--write", metavar="SKILL_MD", help="replace the generated index block in this file")
     hk = sub.add_parser("research-hook", help="Claude Code hook support: prompt | stop")
@@ -122,6 +128,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     hb = Handbook(args.db)
+    if args.command in ("approve", "proposals"):
+        return _approve(args, hb)
     if args.command in ("research", "research-index", "research-hook"):
         return _research(args, hb)
     if args.command in ("show", "lookup", "index"):
@@ -221,3 +229,25 @@ def _research(args, hb: Handbook) -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+def _approve(args: argparse.Namespace, hb: Handbook) -> int:
+    """The terminal on the server is the user's channel (as the approval page will be): the one place
+    a proposal becomes a rule that blocks."""
+    from . import research
+    r = research.Research(hb)
+    if args.command == "proposals":
+        print(r.proposals())
+        return 0
+    g = r.k.g
+    try:
+        with g.tx():
+            g.approve(args.what, args.name, actor="user")
+            for old in args.retire:
+                g.retire_rule(old, actor="user")
+    except HandbookError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    print(f"{args.what} {args.name} approved" + "".join(f"; {o} retired" for o in args.retire))
+    return 0
+

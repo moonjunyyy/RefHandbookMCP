@@ -44,6 +44,9 @@ user before recording anything specific to their systems.
   before the step it concerns. Use `when` for a conditional step, and `goto` in place of copying
   another card's steps.
 - **Deferred items**: actions that belong to a later moment, each with a `when`.
+- **Tags**: a card that describes this device itself (its tools, rules, files) carries
+  `device:<version>`, the server version it was checked against. Opened on another version, the
+  card says so: verify it, then update the card and the tag.
 
 Then link it: `relate` it to the cards it escalates to, requires, or supersedes. If none of the
 existing relation types says what you mean, add one with `define_relation_type`. Run `audit`

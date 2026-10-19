@@ -244,6 +244,15 @@ RULES = [
         rs_o_doc_behind(D) :- rs_doc(Self, Dn, D, "deliverable"), not rs_doc_planned(Dn), attr(Dn, sync_clock, C),
             C != 0, edge(Self, contains, V), node(V, verdict, _), attr(V, clock, K), K > C.
     """, "DOC {D}: the ledger changed since its sync — plan before the next edit", "ledger", "info"),
+    # a review of the rules against what happened (card rs-rv): every 7 turns, sooner when 3 signals
+    # (refusals, UNAFFECTED disposals, carries, drops: runtime.REVIEW_SIGNALS) gather since the last
+    # one. The thresholds are this rule's text: revising the rule retunes the cadence.
+    _r("rs_o_review", "obligation", """
+        rs_o_review(L, W) :- node(Self, ledger, _), L = Self, attr(Self, turn, T), attr(Self, derived_last_review, R),
+            N = T - R, N >= 7, W = "7 turns since the last review".
+        rs_o_review(L, W) :- node(Self, ledger, _), L = Self, attr(Self, derived_signals, S), S >= 3,
+            W = "3 or more signals since the last review (refusals, UNAFFECTED, carries, drops)".
+    """, "REVIEW {L}: {W}", "ledger", "info"),
 
     # ── the end of a turn (research_end); check errors of the ledger block it too ──
     _r("rs_b_pending", "close",

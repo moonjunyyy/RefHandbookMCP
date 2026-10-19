@@ -91,6 +91,7 @@ that rests on an external result `T` needs that `T` in the configuration.
 | `research_explore` | config · verdict · matrix |
 | `research_doc` | register · plan · sync · check (`text`, or `ref` for a staged blob) |
 | `research_blob` | put · append · info: send a long text once (in pieces if needed), then pass its `ref` |
+| `research_review` | done: record a review of the rules (`why`) and propose rule changes (`rules`), tried as warnings until the user adopts them · proposals: the open ones (card RV) |
 | `research_check` | consistency check, or the `closure` of ids |
 | `research_end` | close the turn: RECEIPT, ledger, Δ, NEXT |
 

@@ -7,12 +7,17 @@ This module imports nothing from `mcp`.
 
 from __future__ import annotations
 
+import functools
+import inspect
 import json
+import logging
 from collections.abc import Callable
 from typing import Any, Literal
 
 from . import research as rs
-from .store import Handbook
+from .store import Handbook, HandbookError
+
+log = logging.getLogger("refhandbook.research")
 
 _hb: Handbook | None = None
 _rs: rs.Research | None = None
@@ -159,7 +164,7 @@ def research_carry(ledger: str, token: str, uid: str, why: str) -> str:
 # ── plan objects ─────────────────────────────────────────────────────────
 
 def research_push(ledger: str, token: str, do: str, page: str, frm: str, on: str = "", exit: str = "") -> str:
-    """Push a plan object K: `do` on the `on` rows, to be run on card `page` (N1 N2 N3 N3b N4 RF EX
+    """Push a plan object K: `do` on the `on` rows, to be run on card `page` (N1 N2 N3 N3b N4 RF EX RV
     X1-X9 QM DV FM VF IM DOM-*, any handbook card id, or USER to wait for the user). frm: the K or U
     it comes from; exit: the exit of frm that returns it."""
     return R().push(ledger, token, do, page, frm, on, exit)
@@ -264,6 +269,19 @@ def research_blob(action: Literal["put", "append", "info"], text: str = "", ref:
     return f"ref {sha} · {size} bytes"
 
 
+def research_review(ledger: str, action: Literal["done", "proposals"] = "done", token: str | None = None,
+                    why: str = "", rules: list[dict[str, Any]] | None = None) -> str:
+    """Review the rules against what happened (card rs-rv), when begin lists REVIEW or a process
+    question exposes a gap. done: record the finding in `why` (resets REVIEW), and propose rule
+    changes in `rules`: [{id, phase (check|obligation|close|pre|derive), body, message, severity,
+    replaces}]. A proposal runs at once as a warning on every ledger and blocks nothing until the
+    user approves it. proposals: list the open proposals."""
+    r = R()
+    if action == "proposals":
+        return r.proposals()
+    return r.review(ledger, token, why, rules)
+
+
 def research_check(ledger: str, closure_of: list[str] | None = None) -> str:
     """Consistency check of the ledger, or, with closure_of, everything that depends on those ids."""
     r = R()
@@ -274,9 +292,35 @@ def research_check(ledger: str, closure_of: list[str] | None = None) -> str:
                      + [f"ERROR {e}" for e in errors] + [f"WARN  {w}" for w in warnings])
 
 
+def _signals(fn: Callable[..., str]) -> Callable[..., str]:
+    """Every tool on a ledger: a refusal of the work is logged on that ledger as a review signal
+    (Research.note_refusal), then raised unchanged."""
+    sig = inspect.signature(fn)
+    if "ledger" not in sig.parameters:
+        return fn
+
+    @functools.wraps(fn)
+    def tool(*args: Any, **kwargs: Any) -> str:
+        try:
+            return fn(*args, **kwargs)
+        except HandbookError as e:
+            ledger = sig.bind_partial(*args, **kwargs).arguments.get("ledger")
+            if ledger:
+                try:
+                    R().note_refusal(ledger, e)
+                except Exception:  # noqa: BLE001 — the signal is best-effort; the refusal is what the caller needs
+                    log.exception("could not log a refusal on %s", ledger)
+            raise
+
+    return tool
+
+
 READ_TOOLS = [research_show, research_check]
 DELETE_TOOLS = [research_ledger_delete]
 WRITE_TOOLS = [research_ledgers, research_begin, research_add, research_set, research_dispose, research_carry,
                research_push, research_next, research_done, research_drop, research_explore, research_doc,
-               research_end, research_blob]
+               research_end, research_blob, research_review]
+for _group in (READ_TOOLS, DELETE_TOOLS, WRITE_TOOLS):
+    _group[:] = [_signals(f) for f in _group]
+    globals().update({f.__name__: f for f in _group})
 TOOLS = {f.__name__: f for f in READ_TOOLS + WRITE_TOOLS + DELETE_TOOLS}
