@@ -1,7 +1,49 @@
 # The scope-graph kernel
 
-Status: step 1 of the migration. The kernel exists beside the legacy stores and reproduces the
-research ledger's semantics exactly; the MCP tools still run on the legacy code.
+Status (0.7.0): the kernel is live. Each store is migrated the first time the server opens it,
+and the research gates are decided by the kernel's rules. The legacy tables remain the write path.
+
+## Running on a server
+
+The first open of a user's store after the upgrade does the following:
+
+1. It copies the store to `users/<uid>.db.pre-kernel`.
+2. It loads the cards and every ledger into the kernel tables (`k_*`) of the same file.
+3. It verifies each ledger with `kernel/verify.compare`, which checks:
+   - the export round trip;
+   - the `check()` messages;
+   - the obligations;
+   - the end blockers of an open turn.
+4. It records `kernel_status` in `k_meta`:
+   - `active` when every ledger matches;
+   - `legacy: <differences>` otherwise. The store then keeps the legacy gates, and the server log
+     says why.
+
+After the migration, the graph stays current with every write:
+
+- a write that seals a ledger re-projects that ledger inside the same transaction, so a rollback
+  undoes both;
+- a card change re-projects the cards;
+- a rename or delete drops the old image;
+- the change log is carried over append-only.
+
+While a store is `active`, the kernel decides the gates:
+
+- `research_check`, and the CHECK lines of `research_end`, come from the package's check rules;
+- the obligations of `research_begin` come from its obligation rules;
+- the refusals of `research_end` come from its close rules.
+
+The legacy computation runs beside the kernel as a cross-check. A disagreement goes to the server
+log and to `k_log` (`divergence: …`), and the kernel's answer stands. The tests set
+`RHB_KERNEL_STRICT=1`, which turns a divergence into a failure.
+
+To turn the kernel off, set `RHB_KERNEL=0` in `/etc/refhandbook/env` and restart. The legacy
+engine then runs alone, and nothing is written to `k_*`. To undo the migration completely, stop
+the service and put `users/<uid>.db.pre-kernel` back in place.
+
+Cost: each sealed write re-projects the whole ledger. On the largest server ledger (565 rows) a
+call took 0.2–0.35 s on 2 vCPU. Projecting only the rows that changed is the obvious
+optimisation.
 
 ## What is fixed, and what is data
 
@@ -92,8 +134,8 @@ It also includes a test that the harness fails when the two sides disagree.
 
 ## Next
 
-1. Run the `research_*` tools on the kernel. Rows, edges and verdicts are then written as graph
-   rows, and the dep, status and evidence cells become renderings of that structure.
+1. Make the graph the write path. Rows, edges and verdicts would be written as graph rows, and
+   the dep, status and evidence cells would become renderings of that structure.
 2. Replace the global tool-call lock with a per-store lock, and deploy on free-threaded 3.14t.
 3. Build the approval page.
 4. Build the sandbox, `invoke`, and background runs.

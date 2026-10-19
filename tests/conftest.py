@@ -103,8 +103,37 @@ def compare(r: research.Research, ledger: str) -> None:
     STATS["compared"] += 1
 
 
+ENGINE_MODULES = {"test_research", "test_feedback"}
+
+
+def pytest_generate_tests(metafunc):
+    """The legacy research suites run twice: on the legacy engine, and on the engine whose gates the
+    kernel decides (kernel.runtime.KernelResearch), so the kernel path meets every legacy expectation."""
+    if "engine" in metafunc.fixturenames:
+        params = ["legacy", "kernel"] if metafunc.module.__name__ in ENGINE_MODULES else ["legacy"]
+        metafunc.parametrize("engine", params, indirect=True)
+
+
+@pytest.fixture
+def engine(request, monkeypatch):
+    if request.param == "kernel":
+        from refhandbook.kernel import runtime
+
+        class KernelEngine(runtime.KernelResearch):
+            def __init__(self, hb):
+                super().__init__(hb, runtime.attach(hb))
+
+        monkeypatch.setattr(request.module, "Research", KernelEngine)
+    return request.param
+
+
 @pytest.fixture(autouse=True)
-def kernel_differential(monkeypatch):
+def strict_kernel(monkeypatch):
+    monkeypatch.setenv("RHB_KERNEL_STRICT", "1")
+
+
+@pytest.fixture(autouse=True)
+def kernel_differential(monkeypatch, engine):
     if DIFF:
         seal = research.Research._seal
 

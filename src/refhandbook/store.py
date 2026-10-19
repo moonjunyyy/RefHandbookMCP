@@ -16,6 +16,8 @@ import os
 import re
 import sqlite3
 from collections import deque
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -125,6 +127,8 @@ class Handbook:
         self.path = str(path) if path is not None else str(default_db_path())
         if self.path != ":memory:":
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
+        self._hooks: list[Callable[[], None]] = []
+        self._quiet = 0
         self.db = sqlite3.connect(self.path, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA foreign_keys = ON")
@@ -136,6 +140,26 @@ class Handbook:
 
     def close(self) -> None:
         self.db.close()
+
+    # ── change notification: a mirror (the kernel graph) follows the cards ──
+
+    def on_change(self, fn: "Callable[[], None]") -> None:
+        self._hooks.append(fn)
+
+    def changed(self) -> None:
+        if not self._quiet:
+            for fn in self._hooks:
+                fn()
+
+    @contextmanager
+    def quiet(self) -> "Iterator[None]":
+        """Batch many writes into one change notification, sent at the end."""
+        self._quiet += 1
+        try:
+            yield
+        finally:
+            self._quiet -= 1
+        self.changed()
 
     # ── entries ──────────────────────────────────────────────────────────
 
@@ -211,6 +235,7 @@ class Handbook:
                     ],
                 )
             self._reindex(id)
+        self.changed()
         return self.get_entry(id)
 
     def _reindex(self, entry_id: str) -> None:
@@ -258,6 +283,7 @@ class Handbook:
         with self.db:
             self.db.execute("DELETE FROM entries WHERE id = ?", (entry_id,))
             self.db.execute("DELETE FROM search WHERE entry_id = ?", (entry_id,))
+        self.changed()
 
     # ── finding the right entry ──────────────────────────────────────────
 
@@ -316,6 +342,7 @@ class Handbook:
                 " ON CONFLICT(name) DO UPDATE SET inverse = excluded.inverse, description = excluded.description",
                 (name, inverse, description),
             )
+        self.changed()
         return {"name": name, "inverse": inverse, "description": description}
 
     def _orient(self, src: str, type: str, dst: str) -> tuple[str, str, str]:
@@ -342,6 +369,7 @@ class Handbook:
                 " ON CONFLICT(src, type, dst) DO UPDATE SET note = excluded.note",
                 (*edge, note),
             )
+        self.changed()
         return edge
 
     def unrelate(self, src: str, type: str, dst: str) -> bool:
@@ -352,6 +380,7 @@ class Handbook:
                 " OR (src = ? AND dst = ? AND type IN (SELECT name FROM relation_types WHERE name = inverse)))",
                 (t, s, d, d, s),
             )
+        self.changed()
         return cur.rowcount > 0
 
     def neighbors(self, entry_id: str) -> list[dict[str, Any]]:
@@ -454,6 +483,10 @@ class Handbook:
         }
 
     def load(self, data: dict[str, Any]) -> int:
+        with self.quiet():
+            return self._load(data)
+
+    def _load(self, data: dict[str, Any]) -> int:
         for rt in data.get("relation_types", []):
             if not self.db.execute("SELECT 1 FROM relation_types WHERE name = ?", (rt["name"],)).fetchone():
                 self.define_relation_type(rt["name"], rt.get("inverse"), rt.get("description", ""))

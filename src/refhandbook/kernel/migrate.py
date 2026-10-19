@@ -185,6 +185,21 @@ def _contained(g: Graph, L: str) -> list[dict[str, Any]]:
     return out
 
 
+def drop_ledger(g: Graph, L: str, keep_log: bool = False) -> None:
+    """Remove a ledger's image: its node and everything it contains, and (unless keep_log, for a
+    re-projection) its carried-over log."""
+    with g.tx():
+        g.db.execute("DELETE FROM k_nodes WHERE id IN (SELECT dst FROM k_edges WHERE src = ? AND type = ?)",
+                     (L, CONTAINS))
+        g.db.execute("DELETE FROM k_nodes WHERE id = ?", (L,))
+        if not keep_log:
+            g.db.execute("DELETE FROM k_log WHERE ref = ? AND actor = ?", (L, LOG_ACTOR))
+
+
+def ledgers_in_graph(g: Graph) -> list[str]:
+    return [r[0] for r in g.db.execute("SELECT id FROM k_nodes WHERE type = 'ledger' ORDER BY id")]
+
+
 def ledger_from_graph(g: Graph, L: str, include_log: bool = True) -> dict[str, Any]:
     """Rebuild the legacy export of one ledger."""
     lg = g.node(L)
@@ -260,9 +275,12 @@ def handbook_to_graph(g: Graph, data: dict[str, Any]) -> int:
         for rt in data.get("relation_types", []):
             # the relation vocabulary lives in its own namespace (rel_…): a relation named like a
             # structural edge (next, member, contains) can never collide with it
-            g.define_type(encode_type("rel", rt["name"]), "edge", actor=ACTOR, pkg=hb_pkg.PKG,
-                          inverse=encode_type("rel", rt["inverse"]) if rt["inverse"] else None,
-                          description=rt.get("description", ""))
+            name = encode_type("rel", rt["name"])
+            inverse = encode_type("rel", rt["inverse"]) if rt["inverse"] else name
+            old = g.get_type(name)
+            if old is None or (old["inverse"], old["description"]) != (inverse, rt.get("description", "")):
+                g.define_type(name, "edge", actor=ACTOR, pkg=hb_pkg.PKG, inverse=inverse,
+                              description=rt.get("description", ""))
         entries = data.get("entries", [])
         for e in entries:
             g.put_node(_card(e["id"]), "card", actor=ACTOR, content=e["title"], attrs={k: e[k] for k in ENTRY_KEYS})
@@ -285,6 +303,13 @@ def handbook_to_graph(g: Graph, data: dict[str, Any]) -> int:
             g.link(_card(r["src"]), encode_type("rel", r["type"]), _card(r["dst"]), actor=ACTOR,
                    attrs={"note": r["note"]})
     return len(entries)
+
+
+def drop_handbook(g: Graph) -> None:
+    """Remove the cards' image (cards, steps, and placeholders for cards a GO TO named)."""
+    with g.tx():
+        g.db.execute("DELETE FROM k_nodes WHERE type IN ('card', 'step') OR (type = ? AND id LIKE 'card:%')",
+                     (MISSING,))
 
 
 def handbook_from_graph(g: Graph) -> dict[str, Any]:
@@ -313,5 +338,5 @@ def handbook_from_graph(g: Graph) -> dict[str, Any]:
     return {"relation_types": types, "entries": entries, "relations": relations}
 
 
-__all__ = ["MISSING", "ensure_turn", "handbook_from_graph", "handbook_to_graph", "install", "ledger_from_graph",
+__all__ = ["MISSING", "drop_handbook", "drop_ledger", "ensure_turn", "ledgers_in_graph", "handbook_from_graph", "handbook_to_graph", "install", "ledger_from_graph",
            "ledger_to_graph"]
