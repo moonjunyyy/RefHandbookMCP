@@ -253,10 +253,11 @@ class Research:
         self.db.execute("INSERT INTO rl_log (ledger, turn, ts, msg) VALUES (?, ?, ?, ?)", (ledger, turn, _now(), msg))
 
     def note_refusal(self, ledger: str, err: Exception) -> None:
-        """A refusal of the work is a review signal: log it on the ledger (`refused: …`), in its own
-        transaction since the refused write rolled back. Protocol refusals are not logged."""
-        if isinstance(err, ProtocolRefused) or not isinstance(err, HandbookError):
-            return
+        """A refusal of the work (the device's `REFUSED:`) is a review signal: log it on the ledger
+        (`refused: …`), in its own transaction since the refused write rolled back. Protocol refusals
+        and usage errors are not logged."""
+        if isinstance(err, ProtocolRefused) or not str(err).lstrip().startswith("REFUSED"):
+            return  # a protocol refusal, or a usage error (bad arguments): neither says anything about the rules
         row = self.db.execute("SELECT turn FROM rl_ledgers WHERE id = ?", (ledger,)).fetchone()
         if row is None or (self.k is not None and self.k.meta(f"quarantine:{ledger}")):
             return
@@ -797,19 +798,19 @@ class Research:
         it is evaluated at once on every ledger of the store, its findings shown as warnings (a
         proposed rule never blocks), until the user approves or the model withdraws it."""
         if not why.strip():
-            raise ResearchError("REFUSED: a review needs its finding in `why` (what happened, and the rule it shows "
+            raise ResearchError("a review needs its finding in `why` (what happened, and the rule it shows "
                                 "missing, ambiguous, conflicting or stale — or 'no gap found' with the signals read)")
         if self.k is None:
-            raise ResearchError("REFUSED: reviews need the kernel")
+            raise ResearchError("reviews need the kernel")
         specs = [dict(r) for r in rules or []]
         for spec in specs:
             for k in ("id", "phase", "body"):
                 if not str(spec.get(k, "")).strip():
-                    raise ResearchError(f"REFUSED: a proposed rule needs {k} (id, phase, body, message; see card rs-rv)")
+                    raise ResearchError(f"a proposed rule needs {k} (id, phase, body, message; see card rs-rv)")
             spec.setdefault("applies_to", "ledger")
 
         def fn(lg):
-            from .kernel.rules import evaluate
+            from .kernel.rules import OVER_BUDGET, evaluate
 
             g = self.k.g
             self._log(ledger, lg["turn"], f"review: {why.strip()}")
@@ -825,12 +826,15 @@ class Research:
                 self._log(ledger, lg["turn"], f"proposed rule {rid}{note}")
                 if s["phase"] in ("check", "obligation"):
                     hits = [f.message for f in evaluate(g, s["phase"], ledger, "ledger") if f.rule == rid]
+                    if any(h.startswith(OVER_BUDGET) for h in hits):
+                        raise ResearchError(f"proposed rule {rid} is too costly to run on every ledger: {hits[0]}")
                     trial = f"{len(hits)} finding(s) on {ledger} now" + "".join(f"\n      {h}" for h in hits[:5])
                 else:
                     trial = f"evaluated when a {s['phase']} gate runs"
                 out.append(f"  PROPOSED {rid}{note} [{s['phase']}]: {trial}")
-            out.append("  A proposal warns and never blocks until the user approves it (the approval page, or "
-                       "`refhandbook approve rule <id>` on the server). Push `await adoption of <ids>` @USER.")
+            out.append("  A proposal warns and never blocks until the user approves the version shown (the approval "
+                       "page, or `refhandbook proposals` then `approve rule <id> --seen <sha>` on the server). "
+                       "Push `await adoption of <ids>` @USER.")
             return "\n".join(out)
 
         return self._write(ledger, token, fn)
@@ -840,15 +844,19 @@ class Research:
         if self.k is None:
             return "no kernel"
         g = self.k.g
-        rows = g.db.execute("SELECT id, phase, severity, message, body FROM k_rules WHERE authority = 'proposed' "
-                            "AND state = 'active' ORDER BY id").fetchall()
+        from .kernel.graph import rule_sha
+
+        rows = [dict(r) for r in g.db.execute("SELECT * FROM k_rules WHERE authority = 'proposed' AND state = 'active' "
+                                              "ORDER BY id")]
         if not rows:
             return "No open proposals."
-        out = [f"{len(rows)} open proposal(s):"]
-        for rid, phase, sev, message, body in rows:
+        out = [f"{len(rows)} open proposal(s) (approve with: refhandbook approve rule <id> --seen <sha>):"]
+        for rule in rows:
+            rid, body = rule["id"], rule["body"]
             why = g.db.execute("SELECT event FROM k_log WHERE ref = ? AND event LIKE 'proposal %' ORDER BY seq DESC "
                                "LIMIT 1", (rid,)).fetchone()
-            out.append(f"  {rid} [{phase}, {sev} once approved] {message}")
+            out.append(f"  {rid} sha {rule_sha(rule)[:12]} [{rule['phase']}, {rule['severity']} once approved] "
+                       f"{rule['message']}")
             out.append(f"      {why[0] if why else '(no review recorded)'}")
             out += ["      " + line.strip() for line in body.strip().splitlines()]
         return "\n".join(out)
@@ -1443,12 +1451,6 @@ class Research:
         return out.replace("imported ledger", "copied to ledger", 1)
 
     def rename(self, ledger: str, to: str) -> str:
-        out = self._rename(ledger, to)
-        if self.k is not None:
-            self.k.sync_ledger(self, ledger)  # gone: its image is dropped
-        return out
-
-    def _rename(self, ledger: str, to: str) -> str:
         lg = self._ledger(ledger)
         new = slugify(to)
         if self.db.execute("SELECT 1 FROM rl_ledgers WHERE id = ?", (new,)).fetchone():
@@ -1462,17 +1464,12 @@ class Research:
             self.db.execute("DELETE FROM rl_ledgers WHERE id = ?", (ledger,))
             self._log(new, lg["turn"], f"renamed from {ledger!r}")
             self._seal(new)
+            self._sealed(ledger)  # gone: its image is dropped, in the same transaction
         return (f"renamed ledger {ledger!r} → {new!r}"
                 + (f"; turn {lg['turn']} is open: re-read with research_begin(ledger={new!r}, turn={lg['turn']})"
                    if lg["open"] else ""))
 
     def delete(self, ledger: str, confirm: str) -> str:
-        out = self._delete(ledger, confirm)
-        if self.k is not None:
-            self.k.sync_ledger(self, ledger)
-        return out
-
-    def _delete(self, ledger: str, confirm: str) -> str:
         lg = self._ledger(ledger)
         if confirm != ledger:
             raise ResearchError(f"REFUSED: deleting is permanent; pass confirm={ledger!r} (the ledger id) to proceed. "
@@ -1482,6 +1479,7 @@ class Research:
             for t in self.CHILD_TABLES:
                 self.db.execute(f"DELETE FROM {t} WHERE ledger = ?", (ledger,))
             self.db.execute("DELETE FROM rl_ledgers WHERE id = ?", (ledger,))
+            self._sealed(ledger)
         return f"deleted ledger {ledger!r} ({n} rows, last closed turn {lg['last_closed']})"
 
 

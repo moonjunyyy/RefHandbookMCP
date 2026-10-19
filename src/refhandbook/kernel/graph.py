@@ -21,6 +21,7 @@ import itertools
 import json
 import re
 import sqlite3
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any, Iterable
@@ -190,6 +191,15 @@ def authority_for(actor: str, requested: str | None = None) -> str:
     return requested or "sealed"
 
 
+RULE_SPEC = ("phase", "applies_to", "severity", "body", "message")
+
+
+def rule_sha(rule: dict[str, Any]) -> str:
+    """The hash of what a rule says (not who wrote it or when): what a user approves, and what a
+    package upgrade compares."""
+    return hashlib.sha256(json.dumps([rule.get(k) or "" for k in RULE_SPEC]).encode()).hexdigest()
+
+
 def may_change(actor: str, authority: str) -> bool:
     """Whether an actor may change or remove a definition with this authority."""
     if actor == "kernel":
@@ -216,6 +226,7 @@ class Graph:
         self.db.create_function("rhb_regexp", 2, _regexp, deterministic=True)
         self.db.create_function("rhb_lower", 1, lambda v: v.lower() if isinstance(v, str) else v, deterministic=True)
         self._program_cache: tuple[Any, Any] | None = None
+        self._deadlines: list[float] = []
         with self.tx():
             self.db.execute("INSERT OR IGNORE INTO k_meta VALUES ('clock', '0')")
             self.db.execute("INSERT OR IGNORE INTO k_meta VALUES ('rules_rev', '0')")
@@ -271,6 +282,21 @@ class Graph:
             self._undo("ROLLBACK")
             raise
         self.db.execute("COMMIT")
+
+    @contextmanager
+    def budget(self, seconds: float) -> Iterator[None]:
+        """Bound the SQL run inside: past `seconds`, the running statement is interrupted
+        (sqlite3.OperationalError 'interrupted'). Nested budgets keep the tighter deadline."""
+        deadline = time.monotonic() + seconds
+        outer = self._deadlines[-1] if self._deadlines else None
+        self._deadlines.append(min(deadline, outer) if outer else deadline)
+        self.db.set_progress_handler(lambda: int(time.monotonic() > self._deadlines[-1]), 20_000)
+        try:
+            yield
+        finally:
+            self._deadlines.pop()
+            if not self._deadlines:
+                self.db.set_progress_handler(None, 0)
 
     @contextmanager
     def scratch(self) -> Iterator[None]:
@@ -661,6 +687,8 @@ class Graph:
             if old and not may_change(actor, old["authority"]):
                 raise Forbidden(f"rule {rid!r} is {old['authority']}: only "
                                 f"{'a release' if old['authority'] == 'kernel' else 'the user'} can change it")
+            if old and actor == "model" and old["state"] == "retired" and old["origin"] == "user":
+                raise Forbidden(f"rule {rid!r} was rejected by the user; propose a different rule under a new id")
             clauses = rules.parse(body)
             heads = {c.head.pred for c in clauses}
             if heads != {rid}:
@@ -711,15 +739,23 @@ class Graph:
         if dependents:
             raise KernelError(f"rule {rule_id!r} is used by {', '.join(dependents)}; retire those first")
         with self.tx():
-            self.db.execute("UPDATE k_rules SET state = 'retired', version = version + 1 WHERE id = ?", (rule_id,))
+            self.db.execute("UPDATE k_rules SET state = 'retired', origin = ?, version = version + 1 WHERE id = ?",
+                            (actor, rule_id))
             self.log(actor, f"rule {rule_id} retired", rule_id)
             self._bump_rules()
 
-    def approve(self, what: str, name: str, *, actor: str) -> None:
-        """Promote a proposed rule or type to sealed. Only the user approves."""
+    def approve(self, what: str, name: str, *, actor: str, seen: str | None = None) -> None:
+        """Promote a proposed rule or type to sealed. Only the user approves. `seen` is the hash the
+        user was shown (rule_sha, 8+ hex digits): a proposal revised since is not approved."""
         _check_actor(actor)
         if actor != "user":
             raise Forbidden("only the user approves a proposal (through the approval page, not a tool call)")
+        if what == "rule" and seen is not None:
+            r = self.get_rule(name)
+            now = rule_sha(r) if r else ""
+            if len(seen) < 8 or not now.startswith(seen.lower()):
+                raise KernelError(f"rule {name!r} is not the version shown ({seen}); it is now {now[:12]}: "
+                                  "review it again")
         table = {"rule": "k_rules", "type": "k_types"}.get(what)
         if table is None:
             raise KernelError("approve what: rule or type")
@@ -768,9 +804,20 @@ class Graph:
         return self.db.execute("SELECT data FROM k_blobs WHERE sha = ?", (self.blob_sha(ref),)).fetchone()[0]
 
     def append_blob(self, ref: str, data: bytes | str) -> str:
-        """A new blob: the named one followed by data (the old one is kept: blobs never change)."""
+        """A new blob: the named one followed by data. The named one is consumed (deleted): pieces
+        are transport, so a long text sent in n pieces is stored once, not n times."""
         tail = data.encode() if isinstance(data, str) else data
-        return self.put_blob(self.get_blob(ref) + tail)
+        sha = self.blob_sha(ref)
+        with self.tx():
+            new = self.put_blob(self.get_blob(sha) + tail)
+            if new != sha:
+                self.db.execute("DELETE FROM k_blobs WHERE sha = ?", (sha,))
+        return new
+
+    def prune_blobs(self, days: int = 7) -> int:
+        """Blobs carry arguments between calls; none is kept past `days`."""
+        with self.tx():
+            return self.db.execute("DELETE FROM k_blobs WHERE created < datetime('now', ?)", (f"-{days} days",)).rowcount
 
     def active_rules(self) -> list[dict[str, Any]]:
         return [dict(r) for r in self.db.execute("SELECT * FROM k_rules WHERE state = 'active' ORDER BY id")]

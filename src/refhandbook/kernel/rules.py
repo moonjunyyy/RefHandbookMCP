@@ -36,6 +36,7 @@ import hashlib
 import itertools
 import math
 import re
+import sqlite3
 import string
 from dataclasses import dataclass, field
 from typing import Any
@@ -634,6 +635,12 @@ class Program:
 
 # ── findings ─────────────────────────────────────────────────────────────
 
+# what one evaluation may cost: a proposal is advice and must stay cheap on every ledger; the
+# sealed rules of a phase together get a bound that only a broken rule reaches
+PROPOSED_BUDGET = 1.0
+FIRM_BUDGET = 30.0
+OVER_BUDGET = "OVER BUDGET"
+
 
 @dataclass(frozen=True)
 class Finding:
@@ -691,10 +698,30 @@ def evaluate(graph: Any, phase: str, self_id: str, scope_type: str) -> list[Find
         return []
     firm = [r for r in targets if r["authority"] != "proposed"]
     soft = [r for r in targets if r["authority"] == "proposed"]
-    out = _findings(graph, _program(graph, rows), firm, self_id) if firm else []
+    out = []
+    if firm:
+        try:
+            with graph.budget(FIRM_BUDGET):
+                out = _findings(graph, _program(graph, rows), firm, self_id)
+        except sqlite3.OperationalError as e:
+            if "interrupt" not in str(e):
+                raise
+            raise KernelError(f"the {phase} rules took over {FIRM_BUDGET:.0f} s on {self_id}; a sealed rule needs a "
+                              "cheaper body (refhandbook proposals / the approval page)") from e
     for r in soft:
         try:
-            out += _findings(graph, _program(graph, rows), [r], self_id)
+            with graph.budget(PROPOSED_BUDGET):
+                out += _findings(graph, _program(graph, rows), [r], self_id)
+        except sqlite3.OperationalError as e:
+            if "interrupt" not in str(e):
+                out.append(Finding(r["id"], "warn", f"proposed rule {r['id']} failed to evaluate: {e}", (), True))
+                continue
+            try:
+                graph.retire_rule(r["id"], actor="kernel")  # it would tax every call on every ledger
+            except KernelError:
+                pass  # another proposal builds on it: both stay, and both warn until revised
+            out.append(Finding(r["id"], "warn", f"{OVER_BUDGET}: proposed rule {r['id']} took over "
+                               f"{PROPOSED_BUDGET:g} s on {self_id} and was retired; propose a cheaper body", (), True))
         except Exception as e:  # noqa: BLE001 — a proposal's failure is information, not an outage
             out.append(Finding(r["id"], "warn", f"proposed rule {r['id']} failed to evaluate: {e}", (), True))
     return out

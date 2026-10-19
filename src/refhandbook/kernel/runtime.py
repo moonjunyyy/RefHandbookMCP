@@ -37,11 +37,21 @@ _ATTACH = threading.Lock()
 SCHEMA_VERSION = 1
 # log lines that say the rules and the work rubbed (rs_o_review counts them since the last review):
 # a refusal of the work, a hit disposed as unaffected, a directive carried, a plan object dropped
-REVIEW_SIGNALS = ("refused:%", "%: UNAFFECTED%", "carry %", "%dropped (%")
+# (GLOB: case-sensitive, anchored at the start of the line research.py writes)
+REVIEW_SIGNALS = ("refused: *", "dispose * of *: UNAFFECTED*", "carry *: *", "~*: dropped (*")
 
 
 class Quarantined(legacy.ResearchError):
     pass
+
+
+class NotLoadable(legacy.ResearchError):
+    """A ledger whose data the kernel cannot hold exactly (its round trip differs)."""
+
+    def __init__(self, L: str, diffs: list[str]):
+        self.diffs = diffs
+        super().__init__(f"REFUSED: ledger {L!r} does not load into the kernel exactly ({'; '.join(diffs)[:300]}); "
+                         "nothing was stored. Export the source ledger and report the problem.")
 
 
 class Mirror:
@@ -88,16 +98,22 @@ class Mirror:
         self.sync_ledger(r, L)
 
     def sync_ledger(self, r: legacy.Research, L: str, force: bool = False) -> None:
-        """Re-project ledger L if it changed since the last projection (or drop it if it is gone)."""
-        if self.meta(f"quarantine:{L}"):
-            return
+        """Re-project ledger L if it changed since the last projection, or drop it if it is gone.
+
+        A quarantine belongs to the data, not the name: deleting the ledger lifts it, and every
+        first projection of an id (an import, a copy, a rename, the migration) is admitted only by
+        round trip, so quarantined data cannot come back under another name. A first projection
+        that does not round-trip refuses the write that made it."""
         with self.g.tx():
             if not r.db.execute("SELECT 1 FROM rl_ledgers WHERE id = ?", (L,)).fetchone():
                 if self.g.get_node(L) is not None:
                     migrate.drop_ledger(self.g, L)
-                for k in (f"sync:{L}", f"logseq:{L}"):
+                for k in (f"sync:{L}", f"logseq:{L}", f"quarantine:{L}"):
                     self.set_meta(k, None)
                 return
+            if self.meta(f"quarantine:{L}"):
+                return
+            first = self.g.get_node(L) is None
             fp = self._fingerprint(r, L)
             if not force and self.meta(f"sync:{L}") == fp and self.g.get_node(L) is not None:
                 if self._log_behind(r, L):  # only the log moved (a refusal, say): its facts, not the rows
@@ -108,17 +124,21 @@ class Mirror:
             if self.g.get_node(L) is not None:
                 migrate.drop_ledger(self.g, L, keep_log=True)
             migrate.ledger_to_graph(self.g, data)
+            if first:
+                diffs = verify.roundtrip(r, self.g, L)
+                if diffs:
+                    raise NotLoadable(L, diffs)
             self._append_log(r, L)
             self._derive(r, L)
             self.set_meta(f"sync:{L}", fp)
 
     def _derive(self, r: legacy.Research, L: str) -> None:
         """Facts the rules need that are counts over the log (the rule language has no aggregates)."""
-        turn, seq = r.db.execute("SELECT max(turn), max(seq) FROM rl_log WHERE ledger = ? AND msg LIKE 'review:%'",
+        turn, seq = r.db.execute("SELECT max(turn), max(seq) FROM rl_log WHERE ledger = ? AND msg GLOB 'review: *'",
                                  (L,)).fetchone()
         signals = r.db.execute(
             "SELECT count(*) FROM rl_log WHERE ledger = ? AND seq > ? AND (" + " OR ".join(
-                "msg LIKE ?" for _ in REVIEW_SIGNALS) + ")", (L, seq or 0, *REVIEW_SIGNALS)).fetchone()[0]
+                "msg GLOB ?" for _ in REVIEW_SIGNALS) + ")", (L, seq or 0, *REVIEW_SIGNALS)).fetchone()[0]
         self.g.update_node(L, actor="kernel", validate=False,
                            attrs={"derived_last_review": turn or 0, "derived_signals": signals})
 
@@ -142,7 +162,12 @@ class Mirror:
         for L in set(migrate.ledgers_in_graph(self.g)) - live:
             self.sync_ledger(r, L)
         for L in sorted(live):
-            self.sync_ledger(r, L)
+            try:
+                self.sync_ledger(r, L)
+            except NotLoadable as e:
+                with self.g.tx():
+                    self.set_meta(f"quarantine:{L}", "; ".join(e.diffs)[:500])
+                log.warning("ledger %s in %s quarantined at open: %s", L, self.hb.path, e.diffs)
 
     def sync_handbook(self) -> None:
         fp = self._handbook_fingerprint()
@@ -168,14 +193,16 @@ class Mirror:
         bad = []
         for L in sorted(r._column("SELECT id FROM rl_ledgers")):
             try:
-                self.sync_ledger(r, L, force=True)
-                diffs = verify.roundtrip(r, self.g, L)
+                self.sync_ledger(r, L, force=True)  # a first projection: admitted by round trip
+                continue
+            except NotLoadable as e:
+                diffs = e.diffs
             except Exception as e:  # noqa: BLE001 — any failure quarantines this ledger, not the store
                 diffs = [f"{type(e).__name__}: {e}"]
-            if diffs:
+            with self.g.tx():
                 self.set_meta(f"quarantine:{L}", "; ".join(diffs)[:500])
-                bad.append(L)
-                log.warning("kernel migration of %s: ledger %s quarantined: %s", self.hb.path, L, diffs)
+            bad.append(L)
+            log.warning("kernel migration of %s: ledger %s quarantined: %s", self.hb.path, L, diffs)
         with self.g.tx():
             self.set_meta("schema", "1")
             self.set_meta("kernel_status", "active")
@@ -184,45 +211,73 @@ class Mirror:
         return bad
 
     def upgrade_packages(self) -> list[str]:
-        """Bring the installed package rules to this code's version. A rule unchanged since its
-        install is replaced; a rule the user changed is kept, and the conflict is logged."""
-        from .packages import handbook as hb_pkg
+        """Bring the installed package rules to this code's version, without ever making the store
+        unopenable. Returns the rules kept against a new package version.
+
+        A package rule the user changed or retired (its origin is no longer the kernel) is kept, and
+        if the package changed it too the conflict is logged. A rule unchanged since install is
+        replaced. A rule the package dropped is retired, unless another rule still uses it. If the
+        new rules cannot stand beside the store's other rules, the model's proposals are retired
+        first (they are advice, and say so in the log); if the user's own rules are what conflicts,
+        the upgrade is deferred and logged, and the store keeps its installed version."""
         from .packages import research as rs_pkg
 
         digest = rs_pkg.digest()
         if self.meta("package:research") == digest:
             return []
+        try:
+            with self.g.tx():
+                return self._upgrade(digest)
+        except legacy.HandbookError as first:
+            proposals = [r["id"] for r in self.g.active_rules() if r["authority"] == "proposed"]
+            try:
+                if not proposals:
+                    raise
+                with self.g.tx():
+                    for rid in proposals:
+                        self.g.db.execute("UPDATE k_rules SET state = 'retired', origin = 'kernel' WHERE id = ?", (rid,))
+                        self.g.log("kernel", f"proposal {rid} retired: the package upgrade conflicts with the "
+                                             f"proposals ({first}); re-propose against the new package", rid)
+                    self.g._bump_rules()
+                    return self._upgrade(digest)
+            except legacy.HandbookError as e:
+                with self.g.tx():
+                    self.g.log("kernel", f"package upgrade deferred: {e}", "package:research")
+                log.error("package research upgrade deferred in %s: %s", self.hb.path, e)
+                return []
+
+    def _upgrade(self, digest: str) -> list[str]:
+        from .graph import rule_sha
+        from .packages import handbook as hb_pkg
+        from .packages import research as rs_pkg
+
+        installed = {r["id"]: dict(r) for r in self.g.db.execute("SELECT * FROM k_rules WHERE pkg = ?", (rs_pkg.PKG,))}
+        keep = {rid for rid, row in installed.items() if row["origin"] != "kernel"}  # the user's decision stands
+        new = {r["id"]: r for r in rs_pkg.RULES}
+        for rid in sorted(set(installed) - set(new) - keep):
+            if installed[rid]["state"] == "retired":
+                continue
+            try:
+                self.g.retire_rule(rid, actor="kernel")
+                self.set_meta(f"pkgbase:{rid}", None)
+            except legacy.HandbookError as e:  # another rule still uses it: it stays, as a rule of the store
+                self.g.log("kernel", f"package dropped rule {rid}, kept: {e}", rid)
+        rs_pkg.install(self.g, skip=keep)
+        hb_pkg.install(self.g)
         conflicts = []
-        with self.g.tx():
-            installed = {r["id"]: dict(r) for r in self.g.db.execute("SELECT * FROM k_rules WHERE pkg = ?", (rs_pkg.PKG,))}
-            keep, base = set(), {}
-            for rid, row in installed.items():
-                base[rid] = self.meta(f"pkgbase:{rid}")
-                if base[rid] is not None and (row["state"] == "retired" or base[rid] != _sha(row["body"] + row["message"])):
-                    keep.add(rid)  # changed or retired after install: the user's decision stands
-            new = {r["id"] for r in rs_pkg.RULES}
-            for rid in sorted(set(installed) - new - keep):
-                self.g.db.execute("UPDATE k_rules SET state = 'retired' WHERE id = ?", (rid,))
-                self.set_meta(f"pkgbase:{rid}", None)  # the package dropped it: no longer the package's to track
-            rs_pkg.install(self.g, skip=keep)
-            hb_pkg.install(self.g)
-            for spec in rs_pkg.RULES:
-                if spec["id"] in keep:
-                    if base[spec["id"]] != _sha(spec["body"] + spec["message"]):
-                        conflicts.append(spec["id"])  # both changed it: the user's stands, the package's is reported
-                    continue
-                self.set_meta(f"pkgbase:{spec['id']}", _sha(spec["body"] + spec["message"]))
-            for rid in conflicts:
-                self.g.log("kernel", f"package conflict: rule {rid} kept as the user changed it; the package "
-                                     "has a new version", rid)
-            self.set_meta("package:research", digest)
+        for rid, spec in new.items():
+            if rid in keep:
+                if self.meta(f"pkgbase:{rid}") != rule_sha(spec) and rule_sha(installed[rid]) != rule_sha(spec):
+                    conflicts.append(rid)  # both changed it: the user's stands, the package's is reported
+                continue
+            self.set_meta(f"pkgbase:{rid}", rule_sha(spec))
+        for rid in conflicts:
+            self.g.log("kernel", f"package conflict: rule {rid} kept as the user changed or retired it; the package "
+                                 "has a new version", rid)
+        self.set_meta("package:research", digest)
         if conflicts:
             log.warning("package research upgraded in %s with %d conflict(s): %s", self.hb.path, len(conflicts), conflicts)
-        return conflicts
-
-
-def _sha(text: str) -> str:
-    return hashlib.sha256(text.encode()).hexdigest()
+        return sorted(conflicts)
 
 
 def _backup(hb: Handbook, tag: str) -> None:
@@ -249,6 +304,11 @@ def attach(hb: Handbook) -> Mirror:
         if m is not None:
             return m
         fresh = not hb.db.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'k_meta'").fetchone()
+        if not fresh:  # before anything writes to it: a newer store is left exactly as it is
+            row = hb.db.execute("SELECT value FROM k_meta WHERE key = 'schema'").fetchone()
+            if row and int(row[0]) > SCHEMA_VERSION:
+                raise RuntimeError(f"{hb.path} has kernel schema {row[0]}, newer than this code "
+                                   f"({SCHEMA_VERSION}); upgrade the server instead of opening it")
         if fresh:
             _backup(hb, "pre-kernel")
         legacy.ensure_cards(hb)
@@ -257,12 +317,12 @@ def attach(hb: Handbook) -> Mirror:
         if m.schema() < 1:
             m.migrate_v1(r)
         else:
-            if m.schema() > SCHEMA_VERSION:
-                raise RuntimeError(f"{hb.path} has kernel schema {m.schema()}, newer than this code "
-                                   f"({SCHEMA_VERSION}); upgrade the server instead of opening it")
             m.upgrade_packages()
             m.reconcile(r)
             m.sync_handbook()
+        m.g.prune_blobs()
+        if hb.db.in_transaction:  # opening is a boundary: what it decided is durable before any tool runs
+            hb.db.commit()
         hb.on_change(m.sync_handbook)
         hb._kernel = m  # type: ignore[attr-defined]
         return m

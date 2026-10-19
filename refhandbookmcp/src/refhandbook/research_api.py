@@ -252,10 +252,10 @@ def _text_or_ref(r: rs.Research, text: str, ref: str) -> str:
 
 def research_blob(action: Literal["put", "append", "info"], text: str = "", ref: str = "") -> str:
     """Content-addressed text in your store, so a large argument is sent once and then named by its
-    hash. put: store text, get its ref. append: a new blob = the blob `ref` followed by `text` (to
-    send something larger than one call in pieces: put the first piece, append the rest, use the
-    last ref). info: the size of `ref`. Tools that take a long text (research_doc, research_ledgers
-    import) take `ref` in its place."""
+    hash. put: store text, get its ref. append: a new blob = the blob `ref` followed by `text`; the
+    old ref is consumed (to send something larger than one call in pieces: put the first piece,
+    append the rest, use the last ref). info: the size of `ref`. Tools that take a long text
+    (research_doc, research_ledgers import) take `ref` in its place. Blobs are kept 7 days."""
     g = R().k.g
     if action == "put":
         sha = g.put_blob(text)

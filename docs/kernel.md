@@ -13,8 +13,9 @@ Opening a store runs its migrations once each, in order, and records the schema 
 |---|---|
 | backup | the first open copies the store to `users/<uid>.db.pre-kernel` |
 | schema 1 | loads the cards and every ledger into `k_*`, and checks each ledger by round trip (the export rebuilt from the graph must equal the export). A ledger that does not round-trip is **quarantined**: its tools refuse with the reason, its rows stay intact in `rl_*` and export normally, and the other ledgers work. Stores migrated by 0.7.0 are recognised as schema 1. |
-| packages | every open compares the installed package rules with the code's (three-way, against the hash recorded at install): a rule unchanged since install is replaced; a rule the user changed or retired is kept, and the conflict is logged (`package conflict: …` in `k_log`); a rule the package dropped is retired |
-| newer schema | a store whose schema is newer than the code is refused: upgrade the server instead |
+| quarantine | belongs to the data, not the name. Every first projection of a ledger id (import, copy, rename, migration) is admitted only by round trip, so a copy or rename of quarantined data is refused; deleting the ledger lifts its quarantine. |
+| packages | every open compares the installed package rules with the code's: a rule still as installed (its last writer is the kernel) is replaced; a rule the user changed in any field or retired is kept, and if the package changed it too the conflict is logged (`package conflict: …` in `k_log`); a rule the package dropped is retired unless another rule still uses it. If the new rules cannot stand beside the store's own, the model's proposals are retired first; if the user's rules conflict, the upgrade is deferred and logged. The store always opens. |
+| newer schema | a store whose schema is newer than the code is refused before anything is written to it: upgrade the server instead |
 
 After that the graph follows every write: a seal re-projects its ledger (only when its
 fingerprint changed), a card change re-projects the cards, a rename or delete drops the old image,
@@ -39,14 +40,21 @@ The rules are data, so they are reviewed like data (card `rs-rv`):
   A proposal is a kernel rule written by the model, so its authority is `proposed`: it runs at once
   on every ledger of the store, its findings shown as warnings, and it never blocks. The review
   prints its trial findings on the ledger at hand, so overconstraint shows before adoption.
-- **Adoption.** Only the user's channel approves (`refhandbook approve rule <id> [--retire <old>]`
-  on the server; the approval page later). A sealed rule may not rest on a proposed one.
+- **Adoption.** Only the user's channel approves: `refhandbook proposals` shows each proposal with
+  the hash of what it says, and `refhandbook approve rule <id> --seen <sha> [--retire <old>]`
+  seals that version only (a proposal revised since is refused); `refhandbook reject <id>` retires
+  it for good (the model cannot propose that id again). The approval page will do the same. A
+  sealed rule may not rest on a proposed one.
+- **Cost.** Every evaluation is bounded: a proposed rule gets 1 s per evaluation, and one that
+  exceeds it is refused at proposal or retired by the kernel when it meets a large ledger; the
+  sealed rules of a phase together get 30 s, past which the call fails instead of hanging.
 
 ## Large arguments
 
 A long text (a document, an export) is sent once with `research_blob` (put, then append for the
 pieces), stored by its sha256 in `k_blobs`, and passed to `research_doc` and `research_ledgers`
-as `ref` (12 or more hex digits of the hash).
+as `ref` (12 or more hex digits of the hash). An append consumes the blob it extends, so a text
+sent in pieces is stored once, and blobs older than 7 days are pruned when a store opens.
 
 ## What is fixed, and what is data
 

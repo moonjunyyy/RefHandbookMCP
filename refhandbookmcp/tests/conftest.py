@@ -54,6 +54,9 @@ def fresh_graph() -> Graph:
 def projected(r: research.Research, ledger: str) -> None:
     if r.k is None or r.k.meta(f"quarantine:{ledger}"):
         return
+    if not r.db.execute("SELECT 1 FROM rl_ledgers WHERE id = ?", (ledger,)).fetchone():
+        assert r.k.g.get_node(ledger) is None, f"deleted ledger {ledger!r} still has an image"
+        return
     diffs = verify.roundtrip(r, r.k.g, ledger)
     assert not diffs, f"projection of {ledger!r} differs from its rows: {diffs}"
     STATS["checked"] += 1
