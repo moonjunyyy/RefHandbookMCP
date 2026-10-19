@@ -1,0 +1,6 @@
+[Unit]
+Description=Create /data/<uid> WebDAV directories for new accounts
+
+[Service]
+Type=oneshot
+ExecStart=/opt/ldap-portal/deploy/site/dav-homes.sh user

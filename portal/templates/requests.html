@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Account requests{% endblock %}
+{% block content %}
+<h1>Account requests</h1>
+<p class="muted">Approving creates the account and shows its one-time password; rejecting deletes the request.
+  Either way the request (and the personal data in it) is removed. Unanswered requests are deleted after {{ settings.request_ttl_days }} days.</p>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Username</th><th>Name</th><th>Email</th><th>Purpose</th><th>Received</th><th></th></tr></thead>
+  <tbody>
+  {% for r in items %}
+    <tr>
+      <td><code>{{ r.uid }}</code></td>
+      <td>{{ r.name }}</td>
+      <td>{{ r.mail }}</td>
+      <td class="wrap">{{ r.purpose }}</td>
+      <td>{{ r.created_text }}</td>
+      <td>
+        <form method="post" action="{{ settings.root_path }}/admin/requests/{{ r.id }}/approve" class="row">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <select name="loginShell">{% for sh in settings.allowed_shells %}<option>{{ sh }}</option>{% endfor %}</select>
+          <button>Approve</button>
+        </form>
+        <form method="post" action="{{ settings.root_path }}/admin/requests/{{ r.id }}/reject" class="inline">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <button class="link danger-text">reject</button>
+        </form>
+      </td>
+    </tr>
+  {% else %}
+    <tr><td colspan="6" class="muted">No pending requests.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endblock %}

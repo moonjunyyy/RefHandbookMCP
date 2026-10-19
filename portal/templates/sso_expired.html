@@ -1,0 +1,16 @@
+{% extends "sso_base.html" %}
+{% block title %}비밀번호 변경{% endblock %}
+{% block content %}
+<section class="card narrow">
+  <h1>새 비밀번호 정하기</h1>
+  <p class="muted">관리자에게 받은 임시 비밀번호나 만료된 비밀번호를 새 비밀번호로 바꿉니다. 12자 이상.</p>
+  <form method="post" action="/auth/expired">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>사용자명 <input name="uid" value="{{ uid }}" autocomplete="username" autocapitalize="none" required></label>
+    <label>지금(임시) 비밀번호 <input name="old" type="password" autocomplete="current-password" required></label>
+    <label>새 비밀번호 <input name="new" type="password" minlength="12" autocomplete="new-password" required></label>
+    <label>새 비밀번호 확인 <input name="confirm" type="password" minlength="12" autocomplete="new-password" required></label>
+    <button>비밀번호 변경</button>
+  </form>
+</section>
+{% endblock %}

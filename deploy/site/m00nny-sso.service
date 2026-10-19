@@ -1,0 +1,30 @@
+# /etc/systemd/system/m00nny-sso.service: the site sign-in for www.m00nny.kr (nginx auth_request).
+# Runs as its own user with only the HTTP/www.m00nny.kr keytab and the token signing key; it never
+# sees the portal's kadmin keytab.
+[Unit]
+Description=m00nny site sign-in (Kerberos SSO for nginx auth_request)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=m00nny-sso
+Group=m00nny-sso
+EnvironmentFile=/etc/m00nny-sso/sso.env
+WorkingDirectory=/opt/ldap-portal
+# One worker: the sign-in throttle and the WebDAV Basic cache are in memory.
+ExecStart=/opt/ldap-portal/.venv/bin/uvicorn portal.sso:create_app --factory \
+          --host 127.0.0.1 --port 8090 --workers 1 --proxy-headers --forwarded-allow-ips 127.0.0.1
+Restart=on-failure
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ReadWritePaths=/var/log/m00nny-sso
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallFilter=@system-service
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,17 @@
+{% extends "sso_base.html" %}
+{% block content %}
+<section class="card narrow">
+  <h1>로그인</h1>
+  {% if current %}<p class="muted">지금 <code>{{ current }}</code>(으)로 로그인되어 있습니다. 다른 계정으로 바꾸려면 아래에서 로그인하세요.</p>
+  {% else %}<p class="muted">Kerberos 사용자명과 비밀번호로 로그인합니다. 계정, 파일(WebDAV), 핸드북에 모두 쓰입니다.</p>{% endif %}
+  {% if error %}<div class="flash error">{{ error }}</div>{% endif %}
+  <form method="post" action="/auth/login">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="next" value="{{ next }}">
+    <label>사용자명 <input name="uid" value="{{ uid or '' }}" autocomplete="username" autocapitalize="none" required autofocus></label>
+    <label>비밀번호 <input name="password" type="password" autocomplete="current-password" required></label>
+    <button>로그인</button>
+  </form>
+  <p class="muted small"><a href="/auth/expired">임시·만료 비밀번호 변경</a> · <a href="/account/request">계정이 없나요? 사용 신청</a></p>
+</section>
+{% endblock %}

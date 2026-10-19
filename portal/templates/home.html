@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}My account{% endblock %}
+{% block content %}
+<h1>{{ me.display_name or me.uid }}</h1>
+<div class="grid">
+  <section class="card">
+    <h2>Account</h2>
+    <dl>
+      <dt>Username</dt><dd><code>{{ me.uid }}</code></dd>
+      <dt>Kerberos</dt><dd>{% for p in me.principals %}<code>{{ p }}</code><br>{% endfor %}</dd>
+      <dt>UID / GID</dt><dd>{{ me.uid_number }} / {{ me.gid_number }}</dd>
+      <dt>Home</dt><dd><code>{{ me.home }}</code></dd>
+      <dt>Groups</dt><dd>{% for g in me.groups %}<span class="tag">{{ g }}</span>{% endfor %}</dd>
+      <dt>Portal role</dt><dd>{{ actor.roles | reject("equalto", "user") | join(", ") or "user" }}</dd>
+    </dl>
+  </section>
+  <section class="card">
+    <h2>Profile</h2>
+    <form method="post" action="{{ settings.root_path }}/profile">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label>Display name <input name="displayName" value="{{ me.display_name }}" maxlength="64"></label>
+      <label>Email <input name="mail" type="email" value="{{ me.mail }}"></label>
+      <label>Login shell
+        <select name="loginShell">
+          {% for sh in settings.allowed_shells %}<option {% if sh == me.login_shell %}selected{% endif %}>{{ sh }}</option>{% endfor %}
+        </select>
+      </label>
+      <button>Save</button>
+    </form>
+  </section>
+  <section class="card">
+    <h2>Change password</h2>
+    <form method="post" action="{{ settings.root_path }}/password">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label>Current password <input name="old" type="password" autocomplete="current-password" required></label>
+      <label>New password <input name="new" type="password" minlength="12" autocomplete="new-password" required></label>
+      <label>Repeat new password <input name="confirm" type="password" minlength="12" autocomplete="new-password" required></label>
+      <button>Change password</button>
+    </form>
+    <p class="muted small">Changes your Kerberos password, which is also your LDAP/SSH password.</p>
+  </section>
+</div>
+{% endblock %}

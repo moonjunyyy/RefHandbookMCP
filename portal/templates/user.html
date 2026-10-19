@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}{{ target.uid }}{% endblock %}
+{% block content %}
+<p><a href="{{ settings.root_path }}/admin/users">&larr; Users</a></p>
+<h1>{{ target.display_name or target.uid }} <code>{{ target.uid }}</code>
+  {% if target.disabled %}<span class="tag bad">disabled</span>{% endif %}</h1>
+<div class="grid">
+  <section class="card">
+    <h2>Details</h2>
+    <dl>
+      <dt>DN</dt><dd><code>{{ target.dn }}</code></dd>
+      <dt>Kerberos</dt><dd>{% for p in target.principals %}<code>{{ p }}</code><br>{% else %}<span class="muted">none</span>{% endfor %}</dd>
+      <dt>Email</dt><dd>{{ target.mail }}</dd>
+      <dt>UID / GID</dt><dd>{{ target.uid_number }} / {{ target.gid_number }}</dd>
+      <dt>Shell</dt><dd><code>{{ target.login_shell }}</code></dd>
+      <dt>Failed logins</dt><dd>{{ target.failed_logins }}</dd>
+    </dl>
+  </section>
+  <section class="card">
+    <h2>Actions</h2>
+    {% if can("reset_password", target) %}
+    <form method="post" action="{{ settings.root_path }}/admin/users/{{ target.uid }}/reset">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button>Reset password</button>
+      <span class="muted small">Sets a one-time password; the user must change it at next sign-in.</span>
+    </form>
+    {% endif %}
+    {% if can("unlock", target) %}
+    <form method="post" action="{{ settings.root_path }}/admin/users/{{ target.uid }}/unlock">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button class="secondary">Unlock after failed logins</button>
+    </form>
+    {% endif %}
+    {% if can("set_enabled", target) %}
+    <form method="post" action="{{ settings.root_path }}/admin/users/{{ target.uid }}/enabled">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      {% if target.disabled %}
+        <input type="hidden" name="enabled" value="1"><button class="secondary">Enable account</button>
+      {% else %}
+        <input type="hidden" name="enabled" value="0"><button class="danger">Disable account</button>
+      {% endif %}
+    </form>
+    {% endif %}
+    {% if not (can("reset_password", target) or can("unlock", target) or can("set_enabled", target)) %}
+      <p class="muted">You can't change this account{% if target.uid == actor.uid %} here; use <a href="{{ settings.root_path }}/">My account</a>{% endif %}.</p>
+    {% endif %}
+  </section>
+  <section class="card">
+    <h2>Groups</h2>
+    {% set manage = can("manage_groups", target) %}
+    <ul class="groups">
+    {% for g in target.groups %}
+      <li><span class="tag">{{ g }}</span>
+        {% if manage and g != target.uid %}
+        <form method="post" action="{{ settings.root_path }}/admin/users/{{ target.uid }}/groups" class="inline">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="hidden" name="group" value="{{ g }}"><input type="hidden" name="op" value="remove">
+          <button class="link danger-text">remove</button>
+        </form>
+        {% endif %}
+      </li>
+    {% endfor %}
+    </ul>
+    {% if manage and addable %}
+    <form method="post" action="{{ settings.root_path }}/admin/users/{{ target.uid }}/groups" class="row">
+      <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="op" value="add">
+      <select name="group">{% for g in addable %}<option>{{ g }}</option>{% endfor %}</select>
+      <button class="secondary">Add to group</button>
+    </form>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}사용 신청{% endblock %}
+{% block content %}
+<section class="card narrow">
+  <h1>계정 사용 신청</h1>
+  <p class="muted">관리자가 신청을 확인한 뒤 계정을 만들고 임시 비밀번호를 전달합니다. 처음 로그인할 때 비밀번호를 새로 정해야 합니다.</p>
+  <form method="post" action="{{ settings.root_path }}/request">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>사용자명 <span class="muted small">(필수 · 영문 소문자로 시작, 2–32자)</span>
+      <input name="uid" value="{{ values.uid }}" pattern="[a-z][a-z0-9_\-]{1,31}" autocapitalize="none" autocomplete="username" required></label>
+    <label>사용 목적 <span class="muted small">(필수 · 소속이나 누구의 안내로 신청하는지 함께 적어 주세요)</span>
+      <textarea name="purpose" rows="3" maxlength="500" required>{{ values.purpose }}</textarea></label>
+    <label>이름 <span class="muted small">(선택)</span> <input name="name" value="{{ values.name }}" maxlength="64" autocomplete="name"></label>
+    <label>이메일 <span class="muted small">(선택 · 비밀번호 분실 등 계정 관련 연락용)</span>
+      <input name="mail" type="email" value="{{ values.mail }}" autocomplete="email"></label>
+
+    <details class="consent" open>
+      <summary>개인정보 수집·이용 안내</summary>
+      <dl>
+        <dt>수집 항목</dt><dd>필수: 사용자명, 사용 목적 · 선택: 이름, 이메일</dd>
+        <dt>목적</dt><dd>계정 발급 심사와 발급, 계정 관련 연락</dd>
+        <dt>보유 기간</dt><dd>신청서는 승인·반려 즉시 삭제하며, 처리되지 않은 신청은 {{ settings.request_ttl_days }}일 뒤 자동 삭제합니다.
+          승인되면 이름과 이메일은 계정이 삭제될 때까지 디렉터리에 보관되며, 본인과 관리자만 볼 수 있습니다.
+          계정 화면에서 언제든 고치거나 지울 수 있습니다.</dd>
+        <dt>거부할 권리</dt><dd>동의를 거부할 수 있으며, 이 경우 신청할 수 없습니다. 선택 항목은 비워 두어도 됩니다.</dd>
+        {% if settings.privacy_contact %}<dt>문의</dt><dd>{{ settings.privacy_contact }}</dd>{% endif %}
+      </dl>
+    </details>
+    <label class="check"><input type="checkbox" name="consent" value="1" required> 위 내용을 확인했고, 개인정보 수집·이용에 동의합니다.</label>
+    <button>신청하기</button>
+  </form>
+  <p class="muted small"><a href="{{ settings.root_path }}/login">이미 계정이 있으면 로그인</a></p>
+</section>
+{% endblock %}

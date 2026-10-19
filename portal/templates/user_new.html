@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}New user{% endblock %}
+{% block content %}
+<section class="card narrow">
+  <h1>New user</h1>
+  <p class="muted">Creates the LDAP entry, a private group, membership in <code>{{ settings.default_group }}</code>, and the Kerberos principal <code>{{ settings.principal_format.format(uid="&lt;username&gt;") | safe }}@{{ settings.realm }}</code>.</p>
+  <form method="post" action="{{ settings.root_path }}/admin/users/new">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>Username <input name="uid" value="{{ values.uid }}" pattern="[a-z][a-z0-9_\-]{1,31}" autocapitalize="none" required></label>
+    <label>Name <span class="muted small">(optional)</span> <input name="name" value="{{ values.name }}" maxlength="64"></label>
+    <label>Email <span class="muted small">(optional)</span> <input name="mail" type="email" value="{{ values.mail }}"></label>
+    <label>Login shell
+      <select name="loginShell">{% for sh in settings.allowed_shells %}<option {% if sh == values.loginShell %}selected{% endif %}>{{ sh }}</option>{% endfor %}</select>
+    </label>
+    <button>Create user</button>
+  </form>
+</section>
+{% endblock %}

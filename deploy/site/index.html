@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>m00nny</title>
+<style>
+:root { --bg:#f6f7f9; --card:#fff; --text:#1d2330; --muted:#667085; --line:#e2e5ea; --accent:#2f5bd3; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg:#12151b; --card:#1b2029; --text:#e6e9ef; --muted:#98a2b3; --line:#2c3340; --accent:#6b8cff; }
+}
+* { box-sizing: border-box; }
+body { margin:0; background:var(--bg); color:var(--text);
+       font:15px/1.6 system-ui,-apple-system,"Segoe UI","Noto Sans KR",sans-serif; }
+main { max-width:880px; margin:0 auto; padding:40px 16px 56px; }
+h1 { font-size:1.6rem; margin:0 0 4px; } h2 { font-size:1.05rem; margin:0 0 8px; }
+.lead { color:var(--muted); margin:0 0 28px; }
+.grid { display:grid; gap:16px; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); }
+.card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:20px; }
+.card p { margin:0 0 10px; color:var(--muted); font-size:.95em; }
+a { color:var(--accent); }
+code { font-family:ui-monospace,"SF Mono",Menlo,monospace; font-size:.88em; overflow-wrap:anywhere; }
+.row { display:flex; gap:14px; flex-wrap:wrap; margin-top:4px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>m00nny</h1>
+  <p class="lead">계정 하나(Kerberos)로 아래 서비스를 모두 씁니다.</p>
+  <div class="grid">
+    <section class="card">
+      <h2>계정</h2>
+      <p>프로필, 비밀번호 변경. 관리자는 사용자와 사용 신청을 관리합니다.</p>
+      <div class="row"><a href="/account/">내 계정</a><a href="/auth/login">로그인</a><a href="/auth/logout">로그아웃</a></div>
+    </section>
+    <section class="card">
+      <h2>계정이 없거나 임시 비밀번호를 받았다면</h2>
+      <p>사용 신청은 관리자가 확인한 뒤 계정을 만들고 임시 비밀번호를 전달합니다. 처음 쓸 때 새 비밀번호로 바꿔야 합니다.</p>
+      <div class="row"><a href="/account/request">사용 신청</a><a href="/auth/expired">임시·만료 비밀번호 변경</a></div>
+    </section>
+    <section class="card">
+      <h2>파일 (WebDAV)</h2>
+      <p>탐색기, Finder, rclone, davfs2 등에서 아래 주소에 사용자명과 Kerberos 비밀번호로 연결합니다.</p>
+      <p><code>https://www.m00nny.kr/dav/&lt;사용자명&gt;/</code></p>
+    </section>
+    <section class="card">
+      <h2>핸드북 (Claude MCP)</h2>
+      <p>Claude에서 커스텀 커넥터로 추가하고 Connect를 누르면, 이 사이트 로그인 후 허용 화면이 나옵니다.</p>
+      <p><code>https://www.m00nny.kr/mcp</code></p>
+    </section>
+  </div>
+</main>
+</body>
+</html>

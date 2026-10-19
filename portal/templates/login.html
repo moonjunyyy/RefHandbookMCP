@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Sign in{% endblock %}
+{% block content %}
+<section class="card narrow">
+  <h1>Sign in</h1>
+  <p class="muted">Use your Kerberos username and password.</p>
+  <form method="post" action="{{ settings.root_path }}/login">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>Username <input name="uid" autocomplete="username" autocapitalize="none" required autofocus></label>
+    <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
+    <button>Sign in</button>
+  </form>
+  <p class="muted small"><a href="{{ settings.root_path }}/expired">Change an expired or one-time password</a>
+  {% if requests_enabled %}· <a href="{{ settings.root_path }}/request">계정이 없나요? 사용 신청</a>{% endif %}</p>
+</section>
+{% endblock %}

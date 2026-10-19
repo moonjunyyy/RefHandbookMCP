@@ -1,0 +1,15 @@
+{% extends "sso_base.html" %}
+{% block title %}로그아웃{% endblock %}
+{% block content %}
+<section class="card narrow">
+  <h1>로그아웃</h1>
+  {% if current %}
+  <p>사이트 전체(계정, 핸드북 연결 화면)에서 <code>{{ current }}</code> 로그인을 끝냅니다.
+     이미 연결된 Claude 커넥터와 WebDAV 클라이언트는 그대로 유지됩니다.</p>
+  <form method="post" action="/auth/logout">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button>로그아웃</button>
+  </form>
+  {% else %}<p class="muted">로그인되어 있지 않습니다. <a href="/">처음으로</a></p>{% endif %}
+</section>
+{% endblock %}

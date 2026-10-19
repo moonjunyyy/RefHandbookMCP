@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Account Portal{% endblock %} · {{ settings.realm }}</title>
+  <link rel="stylesheet" href="{{ settings.root_path }}/static/style.css">
+</head>
+<body>
+<header>
+  <a class="brand" href="{{ settings.root_path }}/">Account Portal <span>{{ settings.realm }}</span></a>
+  {% if actor %}
+  <nav>
+    <a href="{{ settings.root_path }}/">My account</a>
+    {% if can("view_users") %}<a href="{{ settings.root_path }}/admin/users">Users</a>{% endif %}
+    {% if can("create_user") %}<a href="{{ settings.root_path }}/admin/users/new">New user</a>{% endif %}
+    {% if requests_enabled and can("review_requests") %}{% set n = pending_requests() %}<a href="{{ settings.root_path }}/admin/requests">Requests{% if n %} <span class="tag warn">{{ n }}</span>{% endif %}</a>{% endif %}
+    {% if sso %}<a href="/auth/logout">Sign out {{ actor.uid }}</a>{% else %}
+    <form method="post" action="{{ settings.root_path }}/logout" class="inline">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button class="link">Sign out {{ actor.uid }}</button>
+    </form>{% endif %}
+  </nav>
+  {% endif %}
+</header>
+<main>
+  {% for kind, msg in flashes %}<div class="flash {{ kind }}">{{ msg }}</div>{% endfor %}
+  {% block content %}{% endblock %}
+</main>
+</body>
+</html>

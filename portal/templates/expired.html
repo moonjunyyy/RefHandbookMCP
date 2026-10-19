@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Change password{% endblock %}
+{% block content %}
+<section class="card narrow">
+  <h1>Set a new password</h1>
+  <form method="post" action="{{ settings.root_path }}/expired">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>Username <input name="uid" value="{{ uid }}" autocomplete="username" required></label>
+    <label>Current (or temporary) password <input name="old" type="password" autocomplete="current-password" required></label>
+    <label>New password <input name="new" type="password" minlength="12" autocomplete="new-password" required></label>
+    <label>Repeat new password <input name="confirm" type="password" minlength="12" autocomplete="new-password" required></label>
+    <button>Change password</button>
+  </form>
+</section>
+{% endblock %}
