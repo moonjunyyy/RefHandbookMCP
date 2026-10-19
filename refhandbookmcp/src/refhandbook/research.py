@@ -241,7 +241,12 @@ class Research:
     def _seal(self, ledger: str) -> str:
         token = self._digest(ledger)
         self.db.execute("UPDATE rl_ledgers SET token = ? WHERE id = ?", (token, ledger))
+        self._sealed(ledger)
         return token
+
+    def _sealed(self, ledger: str) -> None:
+        """Called after every write that seals the ledger, inside its transaction (a subclass keeps
+        a mirror current here)."""
 
     def _touch(self, ledger: str, turn: int, *ids: str) -> None:
         self.db.executemany("INSERT OR IGNORE INTO rl_turnmarks VALUES (?, ?, 'touched', ?, '')",
@@ -497,7 +502,7 @@ class Research:
                                                 "or end with idle=\"<why nothing was asked>\""))
         for d in self.db.execute("SELECT id, label FROM rl_docs WHERE ledger = ? AND plan IS NOT NULL", (ledger,)):
             out.append(("doc_plan", d["id"], "", f"DOC-PLAN {d['id']} {d['label']} committed but not synced"))
-        errors, _ = self.check(ledger)
+        errors, _ = self._legacy_check(ledger)
         out += [("check", e, "", f"CHECK {e}") for e in errors]
         return out
 
@@ -934,6 +939,9 @@ class Research:
                          + [f"  {y:10} via {x}" for y, x in hits])
 
     def check(self, ledger: str) -> tuple[list[str], list[str]]:
+        return self._legacy_check(ledger)
+
+    def _legacy_check(self, ledger: str) -> tuple[list[str], list[str]]:
         err: list[str] = []
         warn: list[str] = []
         lg = self._ledger(ledger)
@@ -1536,6 +1544,11 @@ def ensure_cards(hb: Handbook) -> str:
     row = hb.db.execute("SELECT value FROM rl_meta WHERE key = 'cards'").fetchone()
     if row and row[0] == digest and hb.exists("rs-n1"):
         return "research cards up to date"
+    with hb.quiet():  # one change notification for the whole reload
+        return _load_cards(hb, digest, data)
+
+
+def _load_cards(hb: Handbook, digest: str, data: dict[str, Any]) -> str:
     for rt in data["relation_types"]:
         if not hb.db.execute("SELECT 1 FROM relation_types WHERE name = ?", (rt["name"],)).fetchone():
             hb.define_relation_type(rt["name"], rt["inverse"], rt["description"])

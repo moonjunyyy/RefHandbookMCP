@@ -700,6 +700,9 @@ class UserStores:
             from .research import ensure_cards
 
             ensure_cards(hb)  # the rs-* cards are there before the first lookup, index or open_entry
+            from .kernel import runtime
+
+            runtime.attach(hb)  # the first open after an upgrade migrates this user's store
             self._open[uid] = hb
         return hb
 

@@ -12,6 +12,7 @@ from collections.abc import Callable
 from typing import Any, Literal
 
 from . import research as rs
+from .kernel import runtime
 from .store import Handbook
 
 _hb: Handbook | None = None
@@ -23,7 +24,7 @@ def bind(hb: Handbook) -> None:
     global _hb, _rs
     _hb = hb
     rs.ensure_cards(hb)
-    _rs = rs.Research(hb)
+    _rs = runtime.research_for(hb)
 
 
 _resolver: Callable[[], Handbook] | None = None
@@ -43,7 +44,7 @@ def R() -> rs.Research:
         r = _per_store.get(id(hb))
         if r is None or r.hb is not hb:
             rs.ensure_cards(hb)
-            r = _per_store[id(hb)] = rs.Research(hb)
+            r = _per_store[id(hb)] = runtime.research_for(hb)
         return r
     if _rs is None:
         bind(Handbook())

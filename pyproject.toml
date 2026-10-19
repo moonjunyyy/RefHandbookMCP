@@ -1,9 +1,13 @@
 name = "refhandbookmcp"
 <<<<<<< HEAD
+<<<<<<< HEAD
 version = "0.10.0"
 description = "A quick reference handbook for agents, served over MCP: condition-indexed cards linked by runtime-defined relations, with a research ledger and its Self-service and admin portal for OpenLDAP + MIT Kerberos (kldap backend)"
 =======
 version = "0.6.1"
+=======
+version = "0.7.0"
+>>>>>>> a277554 (Run the server on the kernel: migrate stores on first open)
 description = "A quick reference handbook for agents, served over MCP: condition-indexed cards linked by runtime-defined relations, with a research ledger."
 >>>>>>> 5d568f6 (Version step up. Several vulnerability resolved by Claude.)
 readme = "README.md"
