@@ -28,15 +28,26 @@ device.
 
 The map `M` is free text, replaced whole with `research_set(id="M")`.
 
-**dep.** A `dep` cell holds tokens of the form `[rel:]ID`. `rel` is one of:
-- `req` (the default);
-- `der`;
-- `sup`, which is evidence, not proof;
-- `eq`;
-- `iso`, which needs the map;
-- `spec`, a special case;
-- `int`, which needs the map;
-- `con`, contradicts.
+**dep.** A `dep` cell holds tokens of the form `[rel:]ID`. Each `rel` is either a
+**basis** (the row rests on the target) or a **link** (it relates to the target
+without resting on it):
+
+| class | rel | meaning |
+|---|---|---|
+| basis | `req` (the default) | requires |
+| basis | `der` | derived from |
+| basis | `eq` | equivalent to |
+| basis | `iso` | isomorphic to; needs the map |
+| basis | `spec` | a special case of |
+| basis | `int` | interprets; needs the map |
+| link | `sup` | supports: evidence, not proof |
+| link | `con` | contradicts |
+| link | `ref` | refers to, without resting on it |
+
+Basis checks (a stale, replaced, model-origin or pointer-only target) and
+propagation (PENDING) follow basis edges only. Record a relation honestly as a
+link instead of deleting it to pass a gate. A relation the device does not know
+counts as a basis.
 
 A claim's premises come from its configuration, not from `dep`. A true verdict
 that rests on an external result `T` needs that `T` in the configuration.

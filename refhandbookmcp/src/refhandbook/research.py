@@ -132,7 +132,12 @@ CREATE TRIGGER IF NOT EXISTS rl_rows_ins AFTER INSERT ON rl_rows BEGIN
     UPDATE rl_rows SET clock_updated = (SELECT clock FROM rl_ledgers WHERE id = NEW.ledger)
      WHERE ledger = NEW.ledger AND id = NEW.id;
 END;
-CREATE TRIGGER IF NOT EXISTS rl_rows_upd AFTER UPDATE OF content, origin, status, evidence, dep, grp ON rl_rows BEGIN
+-- a row's or a verdict's clock moves only when its value changes: re-recording the same value (a
+-- backfill) is not a change a document must follow
+DROP TRIGGER IF EXISTS rl_rows_upd;
+CREATE TRIGGER IF NOT EXISTS rl_rows_upd_v2 AFTER UPDATE OF content, origin, status, evidence, dep, grp ON rl_rows
+WHEN OLD.content IS NOT NEW.content OR OLD.origin IS NOT NEW.origin OR OLD.status IS NOT NEW.status
+  OR OLD.evidence IS NOT NEW.evidence OR OLD.dep IS NOT NEW.dep OR OLD.grp IS NOT NEW.grp BEGIN
     UPDATE rl_rows SET clock_updated = (SELECT clock FROM rl_ledgers WHERE id = NEW.ledger)
      WHERE ledger = NEW.ledger AND id = NEW.id;
 END;
@@ -140,7 +145,9 @@ CREATE TRIGGER IF NOT EXISTS rl_verdicts_ins AFTER INSERT ON rl_verdicts BEGIN
     UPDATE rl_verdicts SET clock = (SELECT clock FROM rl_ledgers WHERE id = NEW.ledger)
      WHERE ledger = NEW.ledger AND claim = NEW.claim AND config = NEW.config;
 END;
-CREATE TRIGGER IF NOT EXISTS rl_verdicts_upd AFTER UPDATE OF verdict, evidence ON rl_verdicts BEGIN
+DROP TRIGGER IF EXISTS rl_verdicts_upd;
+CREATE TRIGGER IF NOT EXISTS rl_verdicts_upd_v2 AFTER UPDATE OF verdict ON rl_verdicts
+WHEN OLD.verdict IS NOT NEW.verdict BEGIN
     UPDATE rl_verdicts SET clock = (SELECT clock FROM rl_ledgers WHERE id = NEW.ledger)
      WHERE ledger = NEW.ledger AND claim = NEW.claim AND config = NEW.config;
 END;
@@ -951,9 +958,12 @@ class Research:
                 raise ResearchError("REFUSED: a decided verdict needs evidence (computed / followed / sourced: … / measured)")
             old = self.db.execute("SELECT verdict FROM rl_verdicts WHERE ledger = ? AND claim = ? AND config = ?",
                                   (ledger, claim, config)).fetchone()
-            self.db.execute("INSERT OR REPLACE INTO rl_verdicts VALUES (?, ?, ?, ?, ?, ?, 0)",
+            self.db.execute("INSERT INTO rl_verdicts VALUES (?, ?, ?, ?, ?, ?, 0) ON CONFLICT(ledger, claim, config)"
+                            " DO UPDATE SET verdict = excluded.verdict, evidence = excluded.evidence, turn = excluded.turn",
                             (ledger, claim, config, verdict, ev, lg["turn"]))
-            if config == "main":
+            if config == "main" and key(h["status"]) not in FINISHED:
+                # a verdict is a judgment of the claim, not a way back into the live set: a finished row
+                # (history, superseded, refuted) keeps its status and the verdict is recorded beside it
                 self.db.execute("UPDATE rl_rows SET status = ?, turn_updated = ? WHERE ledger = ? AND id = ?",
                                 (verdict, lg["turn"], ledger, claim))
             self._log(ledger, lg["turn"], f"verdict {claim}@{config}: {old[0] if old else '·'} → {verdict}")
@@ -1073,12 +1083,21 @@ class Research:
 
     def _changed_since(self, ledger: str, clock: int) -> set[str]:
         """Rows and claims changed by any device write after the given write clock."""
-        ch = set(self._column("SELECT id FROM rl_rows WHERE ledger = ? AND clock_updated > ? AND sec != 'K'", ledger, clock))
+        # process rows (U directives, K plan objects) are not content a document follows
+        ch = set(self._column("SELECT id FROM rl_rows WHERE ledger = ? AND clock_updated > ? AND sec NOT IN ('K', 'U')",
+                              ledger, clock))
         ch |= set(self._column("SELECT claim FROM rl_verdicts WHERE ledger = ? AND clock > ?", ledger, clock))
         return ch
 
+    def _need_text(self, d: dict[str, Any], text: str) -> None:
+        """A tool never reads a missing document as an empty one."""
+        if not (text or "").strip() and (d["sections"] not in ("", "{}") or d["sha"]):
+            raise ResearchError(f"REFUSED: {d['id']} has a registered text; pass the document's current text "
+                                "(or its staged ref) — an empty text would read as a document with no sections")
+
     def doc_check(self, ledger: str, did: str, text: str) -> str:
         d = self._doc(ledger, did)
+        self._need_text(d, text)
         if d["role"] == "source":
             ok = hashlib.sha256(text.encode()).hexdigest() == d["sha"]
             return (f"{did} source unchanged" if ok else
@@ -1094,12 +1113,29 @@ class Research:
                     problems.append(f"section {sid}: basis cites missing {b}")
                 elif key(rows[b]["status"]) in NOT_CITABLE:
                     problems.append(f"section {sid}: basis cites {b}, which is {rows[b]['status']}")
-        return "\n".join([f"{did}: {len(problems)} problem(s)"] + [f"  {p}" for p in problems])
+        notes = self._bare_ids(text, rows)
+        head = f"{did}: {len(problems)} problem(s)" + (f", {len(notes)} note(s)" if notes else "")
+        return "\n".join([head] + [f"  {p}" for p in problems] + [f"  note: {n}" for n in notes])
+
+    def _bare_ids(self, text: str, rows: dict[str, Any], limit: int = 5) -> list[str]:
+        """Prose tokens that spell an existing ledger id: a reader cannot resolve them, and a label
+        that only looks like one (a region R1, a group E8) reads as a row. A note, never a refusal."""
+        seen: dict[str, int] = {}
+        for n, line in enumerate(self.visible(text).split("\n"), 1):
+            for m in ID_RE.finditer(line):
+                if m.group(1) in rows and m.group(1) not in seen:
+                    seen[m.group(1)] = n
+        out = [f"line {n}: {i} is also a ledger id — name the thing, or rename a label that only looks like an id"
+               for i, n in list(seen.items())[:limit]]
+        if len(seen) > limit:
+            out.append(f"… and {len(seen) - limit} more")
+        return out
 
     def doc_plan(self, ledger: str, token: str | None, did: str, text: str,
                  items: list[dict[str, Any]] | None = None) -> str:
         """Without items: a read-only draft of the change list. With items: commit it (needs the token)."""
         d = self._doc(ledger, did)
+        self._need_text(d, text)
         if d["role"] != "deliverable":
             raise ResearchError(f"{did} is {d['role']}; plans apply to deliverables")
         secs = self.parse_sections(text)
@@ -1143,7 +1179,8 @@ class Research:
                    f"  merge candidates (basis overlap ≥ 0.5): {' '.join(merge) or 'none'}"]
             if drift:
                 out.append(f"  WARNING sections edited since the last sync without a plan: {' '.join(drift)}")
-            out += ["", "Decide one op per item — rewrite | merge (into) | add (rows) | retire | keep (why) | omit (rows, why) —",
+            out += ["", "Decide one op per item — rewrite | extend (sec, rows: new rows into an existing section) | merge (into) | "
+                    "add (rows: a new section) | retire | keep (why) | omit (rows, why) —",
                     "then commit with research_doc(action='plan', items=[…], token=…). Draft:",
                     json.dumps(draft, ensure_ascii=False, indent=1)]
             return "\n".join(out)
@@ -1152,7 +1189,7 @@ class Research:
             covered_secs, covered_rows, problems = set(), set(), []
             for it in items:
                 op = it.get("op")
-                if op not in {"rewrite", "merge", "add", "retire", "keep", "omit"}:
+                if op not in {"rewrite", "extend", "merge", "add", "retire", "keep", "omit"}:
                     problems.append(f"bad op {op!r}")
                     continue
                 for s in str(it.get("sec", "")).replace("+", ",").split(","):
@@ -1166,6 +1203,8 @@ class Research:
                         problems.append(f"merge needs into=<existing section>, got {it.get('into')!r}")
                     else:
                         covered_secs.add(it["into"])
+                if op == "extend" and not it.get("rows"):
+                    problems.append(f"extend on {it.get('sec')} needs the rows it brings in")
                 if op in {"keep", "omit"} and not it.get("why"):
                     problems.append(f"{op} on {it.get('sec') or it.get('rows')} needs a why")
                 covered_rows |= set(it.get("rows") or [])
@@ -1191,6 +1230,7 @@ class Research:
             d = self._doc(ledger, did)
             if d["role"] != "deliverable":
                 raise ResearchError(f"{did} is {d['role']}; only deliverables are synced")
+            self._need_text(d, text)
             secs = self.parse_sections(text)
             stored = json.loads(d["sections"])
             plan = json.loads(d["plan"]) if d["plan"] else None
@@ -1218,11 +1258,15 @@ class Research:
                         problems.append(f"section {sid} disappeared without a plan item")
                     elif _h(now["text"]) != info["hash"] and sid != "_pre":
                         problems.append(f"section {sid} changed without a plan item (unplanned edit)")
-                elif op == "rewrite":
+                elif op in ("rewrite", "extend"):
                     if now is None:
-                        problems.append(f"section {sid} planned as rewrite but missing")
+                        problems.append(f"section {sid} planned as {op} but missing")
                     elif _h(now["text"]) == info["hash"]:
-                        problems.append(f"section {sid} planned as rewrite but unchanged")
+                        problems.append(f"section {sid} planned as {op} but unchanged")
+                    elif op == "extend":
+                        missing = [r for r in it.get("rows") or [] if r not in now["basis"]]
+                        if missing:
+                            problems.append(f"section {sid} extended with {' '.join(missing)}, but its basis does not cite them")
                 elif op == "retire" or (op == "merge" and sid != it.get("into")):
                     if now is not None:
                         problems.append(f"section {sid} planned as {op} but still present")
@@ -1237,7 +1281,7 @@ class Research:
                         problems.append(f"row {r} planned as add but no section cites it in its basis")
             report = self.doc_check(ledger, did, text)
             if not report.startswith(f"{did}: 0 problem"):
-                problems += [line.strip() for line in report.splitlines()[1:]]
+                problems += [line.strip() for line in report.splitlines()[1:] if not line.strip().startswith("note:")]
             if problems:
                 raise ResearchError("REFUSED: document does not match its plan:\n  " + "\n  ".join(problems))
             new = {k: {"hash": _h(v["text"]), "basis": v["basis"]} for k, v in secs.items()}

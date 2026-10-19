@@ -240,7 +240,7 @@ RULES = [
        "DOC-PLAN {D}: planned changes not synced", "ledger", "info"),
     _r("rs_o_doc_behind", "obligation", """
         rs_o_doc_behind(D) :- rs_doc(Self, Dn, D, "deliverable"), not rs_doc_planned(Dn), attr(Dn, sync_clock, C),
-            C != 0, rs_row(Self, X, _, Sec), Sec != "K", attr(X, clock, K), K > C.
+            C != 0, rs_row(Self, X, _, Sec), Sec != "K", Sec != "U", attr(X, clock, K), K > C.
         rs_o_doc_behind(D) :- rs_doc(Self, Dn, D, "deliverable"), not rs_doc_planned(Dn), attr(Dn, sync_clock, C),
             C != 0, edge(Self, contains, V), node(V, verdict, _), attr(V, clock, K), K > C.
     """, "DOC {D}: the ledger changed since its sync — plan before the next edit", "ledger", "info"),
