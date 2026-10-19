@@ -131,7 +131,7 @@ def kernel_differential(monkeypatch):
 
 
 def pytest_terminal_summary(terminalreporter):
-    if DIFF:
+    if DIFF and STATS["compared"]:
         from refhandbook.kernel.packages.research import RULES
 
         gates = {r["id"] for r in RULES if r["phase"] != "derive"}

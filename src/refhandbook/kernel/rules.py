@@ -14,9 +14,15 @@ Body literals
                   content(Id, Text)       state_decl(Type, State)
     derived atoms any predicate another clause defines
     negation      not <atom>  ·  not match(...)  ·  not prefix(...)
-    builtins      match(T, "regex")  (Python re.search)   prefix(T, "text")
-    comparisons   A = B, A != B, A < B, A <= B, A > B, A >= B over terms, + and -, len(T);
-                  `V = expr` with V not yet bound binds V. `X = null` / `X != null` test for null.
+    builtins      match(E, "regex")  (Python re.search; false on null)   prefix(E, E2)  (false on null)
+    functions     len(E)   lower(E)  (Python str.lower)
+    comparisons   = and != are null-safe equality (null = null holds). < <= > >= hold only between
+                  two numbers (a text value is never ordered against a number). + and - on numbers.
+                  `V = expr` with V not yet bound binds V.
+    authorship    author(Id, A): who actually wrote the node (kernel | user | model), set by the
+                  kernel; origin(Id, O) is the provenance the row claims.
+    classes       class/tclass see only the classes of types that are not proposed: a model's new
+                  vocabulary cannot change what a sealed rule quantifies over.
 
 Safety and evaluation
     Every head variable, and every variable in a negation, builtin or comparison, must be bound by a
@@ -26,7 +32,9 @@ Safety and evaluation
 
 from __future__ import annotations
 
+import hashlib
 import itertools
+import math
 import re
 import string
 from dataclasses import dataclass, field
@@ -93,9 +101,11 @@ class Clause:
     text: str = ""
 
 
-EDB_ARITY = {"node": 3, "class": 2, "tclass": 2, "edge": 3, "attr": 3, "origin": 2, "content": 2, "state_decl": 2}
+EDB_ARITY = {"node": 3, "class": 2, "tclass": 2, "edge": 3, "attr": 3, "origin": 2, "author": 2, "content": 2,
+             "state_decl": 2}
 BUILTINS = {"match": 2, "prefix": 2}
-FUNCS = {"len"}
+FUNCS = {"len", "lower"}
+INT_LIMIT = 2 ** 63
 RESERVED = set(EDB_ARITY) | set(BUILTINS) | FUNCS | {"not", "null", "Self"}
 
 TOKEN = re.compile(r"""
@@ -121,8 +131,10 @@ def _tokens(text: str) -> list[tuple[str, str, int]]:
 
 
 def _unquote(s: str) -> str:
-    body = s[1:-1]
-    return re.sub(r'\\(["\\])', r"\1", body)
+    body = re.sub(r'\\(["\\])', r"\1", s[1:-1])
+    if "\x00" in body:
+        raise KernelError("rule syntax: a string may not contain a NUL character")
+    return body
 
 
 class _Parser:
@@ -191,7 +203,10 @@ class _Parser:
             return Const(_unquote(val))
         if kind == "num":
             self.i += 1
-            return Const(float(val) if "." in val else int(val))
+            v = float(val) if "." in val else int(val)
+            if (isinstance(v, float) and not math.isfinite(v)) or (isinstance(v, int) and abs(v) >= INT_LIMIT):
+                raise KernelError(f"rule syntax: number {val} is out of range")
+            return Const(v)
         if kind == "id":
             self.i += 1
             if val == "_":
@@ -233,12 +248,27 @@ class _Parser:
             self.take("not")
             negated = True
         t, n = self.peek(), self.peek(1)
+        if t and t[0] == "id" and t[1] in BUILTINS and n and n[1] == "(":
+            name = self.take()[1]
+            self.take("(")
+            args = [self.expr()]
+            while self.peek() and self.peek()[1] == ",":  # type: ignore[index]
+                self.take(",")
+                args.append(self.expr())
+            self.take(")")
+            if len(args) != BUILTINS[name]:
+                raise KernelError(f"{name} takes {BUILTINS[name]} arguments")
+            if name == "match":
+                pat = args[1]
+                if not (isinstance(pat, Const) and isinstance(pat.value, str)):
+                    raise KernelError("match: the pattern must be a string constant")
+                try:
+                    re.compile(pat.value)
+                except re.error as e:
+                    raise KernelError(f"match: bad pattern {pat.value!r}: {e}") from e
+            return Literal("builtin", atom=Atom(name, tuple(args)), negated=negated)
         if t and t[0] == "id" and n and n[1] == "(" and t[1] not in FUNCS:
             a = self.atom()
-            if a.pred in BUILTINS:
-                if len(a.args) != BUILTINS[a.pred]:
-                    raise KernelError(f"{a.pred} takes {BUILTINS[a.pred]} arguments")
-                return Literal("builtin", atom=a, negated=negated)
             return Literal("neg" if negated else "pos", atom=a, negated=negated)
         if negated:
             raise KernelError("rule syntax: `not` applies to an atom or a builtin, not a comparison; "
@@ -272,12 +302,22 @@ def head_names(clauses: list[Clause]) -> list[str | None]:
 
 
 def check_message(message: str, names: list[str | None]) -> None:
+    """A message may name head variables, optionally with !r or !s, and nothing else: a format
+    spec ({X:d}) could fail on a value of another type at evaluation time."""
     if not message:
         raise KernelError("a gate rule needs a message: it is what the reader sees")
     known = {n for n in names if n}
-    for _, fname, _, _ in string.Formatter().parse(message):
-        if fname is not None and fname not in known:
+    try:
+        parts = list(string.Formatter().parse(message))
+    except ValueError as e:
+        raise KernelError(f"message: {e}") from e
+    for _, fname, spec, conv in parts:
+        if fname is None:
+            continue
+        if fname not in known:
             raise KernelError(f"message field {{{fname}}} is not a head variable; known: {sorted(known)}")
+        if spec or conv not in (None, "r", "s"):
+            raise KernelError(f"message field {{{fname}}}: only !r or !s may follow a name")
 
 
 # ── compilation ──────────────────────────────────────────────────────────
@@ -298,16 +338,20 @@ def _edb(pred: str, a: str) -> tuple[list[str], list[str], list[str]]:
     if pred == "node":
         return [f"k_nodes AS {a}"], [], [f"{a}.id", f"{a}.type", f"{a}.state"]
     if pred == "class":
-        return ([f"k_nodes AS {a}", f"k_state_class AS {a}c"],
-                [f"{a}c.type = {a}.type", f"{a}c.state = {a}.state"], [f"{a}.id", f"{a}c.class"])
+        return ([f"k_nodes AS {a}", f"k_state_class AS {a}c", f"k_types AS {a}t"],
+                [f"{a}c.type = {a}.type", f"{a}c.state = {a}.state", f"{a}t.name = {a}.type",
+                 f"{a}t.authority <> 'proposed'"], [f"{a}.id", f"{a}c.class"])
     if pred == "tclass":
-        return [f"k_type_class AS {a}"], [], [f"{a}.type", f"{a}.class"]
+        return ([f"k_type_class AS {a}", f"k_types AS {a}t"], [f"{a}t.name = {a}.type", f"{a}t.authority <> 'proposed'"],
+                [f"{a}.type", f"{a}.class"])
     if pred == "edge":
         return [f"k_edges AS {a}"], [], [f"{a}.src", f"{a}.type", f"{a}.dst"]
     if pred == "attr":
         return [f"k_nodes AS {a}", f"json_each({a}.attrs) AS {a}j"], [], [f"{a}.id", f"{a}j.key", f"{a}j.value"]
     if pred == "origin":
         return [f"k_nodes AS {a}"], [], [f"{a}.id", f"{a}.origin"]
+    if pred == "author":
+        return [f"k_nodes AS {a}"], [], [f"{a}.id", f"{a}.author"]
     if pred == "content":
         return [f"k_nodes AS {a}"], [], [f"{a}.id", f"{a}.content"]
     if pred == "state_decl":
@@ -349,15 +393,14 @@ class _Compiler:
         if isinstance(t, Arith):
             return f"({self.expr(t.left, binds)} {t.op} {self.expr(t.right, binds)})"
         if isinstance(t, Func):
-            return f"length({self.expr(t.arg, binds)})"
+            fn = {"len": "length", "lower": "rhb_lower"}[t.name]
+            return f"{fn}({self.expr(t.arg, binds)})"
         raise KernelError("`_` cannot be used here")
 
     def cond(self, col: str, t: Any, binds: dict[str, str]) -> str | None:
         if isinstance(t, Anon):
             return None
-        if isinstance(t, Const) and t.value is None:
-            return f"{col} IS NULL"
-        return f"{col} = {self.expr(t, binds)}"
+        return f"{col} IS {self.expr(t, binds)}"  # null-safe: a null value matches a null
 
     def clause(self, c: Clause) -> str:
         froms: list[str] = []
@@ -427,27 +470,21 @@ class _Compiler:
 
     def literal(self, lit: Literal, binds: dict[str, str]) -> str:
         if lit.kind == "cmp":
-            left, right = lit.left, lit.right
-            if isinstance(right, Const) and right.value is None and lit.op in ("=", "!="):
-                return f"{self.expr(left, binds)} IS {'NOT ' if lit.op == '!=' else ''}NULL"
-            if isinstance(left, Const) and left.value is None and lit.op in ("=", "!="):
-                return f"{self.expr(right, binds)} IS {'NOT ' if lit.op == '!=' else ''}NULL"
-            op = "<>" if lit.op == "!=" else lit.op
-            return f"{self.expr(left, binds)} {op} {self.expr(right, binds)}"
+            x, y = self.expr(lit.left, binds), self.expr(lit.right, binds)
+            if lit.op == "=":
+                return f"({x} IS {y})"
+            if lit.op == "!=":
+                return f"({x} IS NOT {y})"
+            num = "IN ('integer', 'real')"
+            return f"(typeof({x}) {num} AND typeof({y}) {num} AND {x} {lit.op} {y})"
         a = lit.atom
         assert a is not None
         if lit.kind == "builtin":
             x, y = (self.expr(t, binds) for t in a.args)
             if a.pred == "match":
-                if not isinstance(a.args[1], Const):
-                    raise KernelError("match: the pattern must be a string constant")
-                try:
-                    re.compile(str(a.args[1].value))
-                except re.error as e:
-                    raise KernelError(f"match: bad pattern {a.args[1].value!r}: {e}") from e
                 s = f"rhb_regexp({y}, {x})"
-            else:
-                s = f"(substr({x}, 1, length({y})) = {y})"
+            else:  # null on either side: false, so `not prefix(null, …)` holds, as for match
+                s = f"coalesce(substr({x}, 1, length({y})) = {y}, 0)"
             return f"NOT {s}" if lit.negated else s
         f, jc, cols, _ = self.source(a.pred)
         conds = list(jc)
@@ -559,7 +596,7 @@ class Program:
 
     _runs = itertools.count(1)
 
-    def evaluate(self, db: Any, self_id: str, targets: set[str], max_rounds: int = 10000) -> dict[str, list[tuple]]:
+    def evaluate(self, db: Any, self_id: str, targets: set[str], max_rounds: int = 1000) -> dict[str, list[tuple]]:
         """Evaluate what the targets need, with Self bound, and return each target's tuples."""
         need = self.needed(targets)
         run = next(self._runs)
@@ -612,20 +649,24 @@ def _format(message: str, names: list[str | None], values: tuple) -> str:
     return string.Formatter().vformat(message, (), env)
 
 
-def evaluate(graph: Any, phase: str, self_id: str, scope_type: str) -> list[Finding]:
-    """The findings of every active rule of this phase that applies to scope_type, with Self bound.
-    A proposed rule's `block` is reported as `warn`: the model cannot gate the user's work."""
-    rows = graph.active_rules()
-    rev = graph.rules_rev()
-    if graph._program_cache and graph._program_cache[0] == rev:
-        program = graph._program_cache[1]
-    else:
-        program = Program.from_rules(rows)
-        graph._program_cache = (rev, program)
-    targets = [r for r in rows if r["phase"] == phase and r["applies_to"] in ("*", scope_type)]
-    if not targets:
-        return []
-    results = program.evaluate(graph.db, self_id, {r["id"] for r in targets})
+def _program(graph: Any, rows: list[dict[str, Any]]) -> Program:
+    """The compiled program for exactly these rules. Keyed by content, not a counter: a rolled-back
+    definition must not leave its program behind."""
+    key = hashlib.sha256(json_key(rows).encode()).hexdigest()
+    if graph._program_cache and graph._program_cache[0] == key:
+        return graph._program_cache[1]
+    program = Program.from_rules(rows)
+    graph._program_cache = (key, program)
+    return program
+
+
+def json_key(rows: list[dict[str, Any]]) -> str:
+    return "\x1e".join(f"{r['id']}\x1f{r['body']}" for r in sorted(rows, key=lambda r: r["id"]))
+
+
+def _findings(graph: Any, program: Program, targets: list[dict[str, Any]], self_id: str) -> list[Finding]:
+    with graph.scratch():  # temp tables and all: nothing of the evaluation survives it
+        results = program.evaluate(graph.db, self_id, {r["id"] for r in targets})
     out = []
     for r in targets:
         names = head_names(program.by_pred[r["id"]])
@@ -634,4 +675,26 @@ def evaluate(graph: Any, phase: str, self_id: str, scope_type: str) -> list[Find
         for values in sorted(results.get(r["id"], []), key=repr):
             out.append(Finding(r["id"], sev, _format(r["message"], names, values) if r["message"] else "", values,
                                proposed))
+    return out
+
+
+def evaluate(graph: Any, phase: str, self_id: str, scope_type: str) -> list[Finding]:
+    """The findings of every active rule of this phase that applies to scope_type, with Self bound.
+
+    Sealed and kernel rules are evaluated first, on their own: they cannot rest on a proposed rule
+    (define_rules refuses it), so nothing the model wrote can change or break them. Proposed rules
+    are evaluated after, and a proposed rule that fails is reported as a warning about itself: the
+    model's advice never blocks the user's work, not even by crashing."""
+    rows = graph.active_rules()
+    targets = [r for r in rows if r["phase"] == phase and r["applies_to"] in ("*", scope_type)]
+    if not targets:
+        return []
+    firm = [r for r in targets if r["authority"] != "proposed"]
+    soft = [r for r in targets if r["authority"] == "proposed"]
+    out = _findings(graph, _program(graph, rows), firm, self_id) if firm else []
+    for r in soft:
+        try:
+            out += _findings(graph, _program(graph, rows), [r], self_id)
+        except Exception as e:  # noqa: BLE001 — a proposal's failure is information, not an outage
+            out.append(Finding(r["id"], "warn", f"proposed rule {r['id']} failed to evaluate: {e}", (), True))
     return out

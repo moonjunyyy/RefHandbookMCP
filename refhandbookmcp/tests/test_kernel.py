@@ -200,3 +200,138 @@ def test_touch_records_an_edge(g):
     item(g, "a")
     touch(g, "t", "a", actor="model")
     assert [e["dst"] for e in g.edges(src="t", type_="touched")] == ["a"]
+
+
+# ── review findings: transactions, CAS, authority, robustness, null semantics ──
+
+def test_evaluation_leaves_no_transaction_and_later_writes_persist(tmp_path):
+    path = tmp_path / "k.db"
+    g = Graph(sqlite3.connect(path))
+    g.define_type("task", "scope", actor="kernel")
+    g.define_rule("never", "close", "never(X) :- node(X, missing, _).", actor="kernel", applies_to="task", message="{X}")
+    open_scope(g, "t1", "task", actor="model")
+    findings(g, "t1")
+    assert not g.db.in_transaction
+    open_scope(g, "t2", "task", actor="model")
+    g.db.close()
+    again = Graph(sqlite3.connect(path))
+    assert again.get_node("t1") and again.get_node("t2")
+
+
+def test_kernel_work_rolls_back_with_the_callers_transaction(g):
+    g.db.execute("CREATE TABLE other (x)")
+    with pytest.raises(RuntimeError):
+        with g.transaction():
+            g.db.execute("INSERT INTO other VALUES (1)")
+            with g.tx():
+                item(g, "inside")
+            raise RuntimeError("caller fails")
+    assert g.get_node("inside") is None
+    assert g.db.execute("SELECT count(*) FROM other").fetchone()[0] == 0
+
+
+def test_opening_a_graph_does_not_commit_a_pending_transaction(g):
+    g.db.execute("CREATE TABLE other (x)")
+    g.db.commit()
+    g.db.execute("BEGIN")
+    g.db.execute("INSERT INTO other VALUES (1)")
+    Graph(g.db)
+    g.db.execute("ROLLBACK")
+    assert g.db.execute("SELECT count(*) FROM other").fetchone()[0] == 0
+
+
+def test_compare_and_swap_is_atomic(g, monkeypatch):
+    item(g, "a")
+    stale = g.node("a")
+    g.update_node("a", actor="model", attrs={"x": 1})  # another writer moves it on
+    monkeypatch.setattr(g, "node", lambda _id: stale)  # this writer read before that write
+    with pytest.raises(Conflict, match="changed while it was being written"):
+        g.update_node("a", actor="model", attrs={"x": 2})
+
+
+@pytest.mark.parametrize("attempt", [
+    lambda g: g.update_node("a", actor="model", state="dropped", validate=False),
+    lambda g: g.put_node("b", "item", actor="model", state="weird", validate=False),
+    lambda g: g.update_node("t", actor="model", state="closed"),
+    lambda g: g.unlink("goal", "contains", "t", actor="model"),
+    lambda g: g.link("goal", "carry", "t", actor="model"),
+    lambda g: g.delete_node("t", actor="model"),
+    lambda g: g.delete_node("u", actor="model"),
+    lambda g: g.put_node("s", "task", actor="model", state="open"),
+])
+def test_the_model_has_no_side_door_around_the_gates(g, attempt):
+    open_scope(g, "goal", "task", actor="kernel")
+    open_scope(g, "t", "task", actor="kernel", parent_id="goal")
+    item(g, "a")
+    g.put_node("u", "item", actor="user", state="todo")
+    with pytest.raises(Forbidden):
+        attempt(g)
+
+
+def test_a_sealed_rule_cannot_rest_on_a_proposal(g):
+    g.define_rule("soft", "derive", "soft(X) :- node(X, item, todo).", actor="model")
+    with pytest.raises(Forbidden, match="rest on proposed rule"):
+        g.define_rule("gate", "check", "gate(X) :- soft(X).", actor="user", message="{X}")
+    g.define_rule("gate", "check", "gate(X) :- soft(X).", actor="model", message="{X}")
+    with pytest.raises(Forbidden, match="rest on proposed rule"):
+        g.approve("rule", "gate", actor="user")
+    g.approve("rule", "soft", actor="user")
+    g.approve("rule", "gate", actor="user")
+
+
+def test_a_proposed_types_classes_are_invisible_to_rules(g):
+    g.define_type("sneaky", "edge", actor="model", classes=["dep"])
+    item(g, "a")
+    item(g, "b")
+    g.link("a", "sneaky", "b", actor="model")
+    g.define_rule("deps", "check", "deps(X) :- edge(X, T, _), tclass(T, dep).", actor="user", message="{X}")
+    assert evaluate(g, "check", "a", "task") == []
+    g.approve("type", "sneaky", actor="user")
+    assert [f.values for f in evaluate(g, "check", "a", "task")] == [("a",)]
+
+
+@pytest.mark.parametrize("body, message, err", [
+    ("r(X) :- node(X, _, _), match(X, 5).", "{X}", "string constant"),
+    ("r(X) :- node(X, _, _).", "{X:d}", "only !r or !s"),
+    ("r(X) :- node(X, _, S), S = 1e999.", "{X}", "syntax"),
+    ("r(X) :- node(X, _, S), S = 9999999999999999999999.", "{X}", "out of range"),
+    ('r(X) :- node(X, _, S), S = "a\x00b".', "{X}", "NUL"),
+])
+def test_rules_that_could_only_fail_later_are_refused_now(g, body, message, err):
+    with pytest.raises(KernelError, match=err):
+        g.define_rule("r", "check", body, actor="model", message=message)
+
+
+def test_a_failing_proposal_is_a_warning_not_an_outage(g):
+    open_scope(g, "t", "task", actor="kernel")
+    item(g, "a", n=1)
+    g.define_rules([dict(id="count", phase="derive",
+                         body="count(N) :- attr(a, n, N). count(M) :- count(N), M = N + 1.")], actor="model")
+    g.define_rule("runaway", "close", "runaway(N) :- count(N), N < 0.", actor="model", applies_to="task", message="{N}")
+    (f,) = findings(g, "t")
+    assert f.severity == "warn" and "failed to evaluate" in f.message
+    close(g, "t", actor="model")
+
+
+def test_a_rolled_back_rule_does_not_linger_in_the_program_cache(g):
+    item(g, "a")
+    g.define_rule("r", "check", "r(X) :- node(X, item, todo).", actor="kernel", message="{X}")
+    assert [f.values for f in evaluate(g, "check", "x", "task")] == [("a",)]
+    with pytest.raises(RuntimeError):
+        with g.transaction():
+            g.define_rule("r", "check", "r(X) :- node(X, item, done).", actor="kernel", message="{X}")
+            evaluate(g, "check", "x", "task")
+            raise RuntimeError
+    assert [f.values for f in evaluate(g, "check", "x", "task")] == [("a",)]
+
+
+def test_null_is_a_value_and_ordering_is_numeric_only(g):
+    g.put_node("a", "item", actor="kernel", state="todo", attrs={"v": None, "n": "10"})
+    g.define_rules([
+        dict(id="has_v", phase="derive", body="has_v(X, V) :- attr(X, v, V)."),
+        dict(id="no_null_v", phase="check", message="{X}", body="no_null_v(X) :- node(X, item, _), not has_v(X, null)."),
+        dict(id="no_prefix", phase="check", message="{X}", body='no_prefix(X) :- attr(X, v, V), not prefix(V, "x").'),
+        dict(id="text_big", phase="check", message="{X}", body="text_big(X) :- attr(X, n, N), N > 300."),
+    ], actor="kernel")
+    fired = {f.rule for f in evaluate(g, "check", "x", "task")}
+    assert fired == {"no_prefix"}  # has_v(a, null) holds; prefix(null) is false; "10" is not ordered against 300

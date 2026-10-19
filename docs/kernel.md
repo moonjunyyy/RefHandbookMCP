@@ -41,6 +41,24 @@ close while the enclosing scope keeps the duty.
 The actor of a write is decided by the server, not by the caller's arguments. A tool call is
 `model`. `user` must come from a channel the model cannot drive: the approval page.
 
+What the model cannot do, whatever the arguments:
+
+- write unvalidated data;
+- set a scope's state, or delete a scope;
+- write the scope edges `contains`, `carry` and `touched` directly (those go through
+  `open_scope`, `carry`, `touch` and `detach`);
+- delete a node it did not write;
+- change what a sealed rule means.
+
+The last point holds in two ways. A sealed rule may not rest on a proposed rule, and
+`class`/`tclass` ignore proposed types.
+
+`origin` is the provenance a row claims. `author` is who actually wrote the node, and rules read it
+with `author(Id, A)`.
+
+A proposed rule that fails at evaluation becomes a warning about itself. The sealed rules are
+evaluated apart from it.
+
 ## The rule language
 
 A Datalog fragment, compiled to SQLite. The full grammar is in the docstring of
@@ -55,6 +73,9 @@ rs_c_bad_basis(R, D, S) :- rs_basis_row(Self, X, R), not rs_model(X), rs_dep(X, 
 - **Builtins:** `match` (regex), `prefix`, comparisons, `+` `-` and `len`.
 - **Evaluation:** rules are safety-checked and stratified, then evaluated to a fixpoint.
 - **Messages:** a gate rule's message formats its head variables.
+- **Null and ordering:** `=` and `!=` are null-safe, and ordering applies only between two numbers.
+- **Refused at definition time:** a rule that could only fail later (a non-string pattern, a
+  format spec, an out-of-range number) is refused when it is defined.
 
 ## How equivalence is checked
 

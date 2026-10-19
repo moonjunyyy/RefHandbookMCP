@@ -78,6 +78,7 @@ CREATE TABLE IF NOT EXISTS k_nodes (
     content TEXT NOT NULL DEFAULT '',
     attrs   TEXT NOT NULL DEFAULT '{}',
     origin  TEXT NOT NULL DEFAULT 'kernel',
+    author  TEXT NOT NULL DEFAULT 'kernel' CHECK (author IN ('kernel', 'user', 'model')),
     version INTEGER NOT NULL DEFAULT 1,
     created INTEGER NOT NULL DEFAULT 0,
     updated INTEGER NOT NULL DEFAULT 0
@@ -120,6 +121,19 @@ CREATE INDEX IF NOT EXISTS k_log_ref ON k_log(ref, seq);
 
 ID_RE = re.compile(r"^[\w.:@#/+-]{1,200}$")
 NAME_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
+
+
+def encode_type(prefix: str, raw: str) -> str:
+    """A legacy relation name as an edge type name in its own namespace, reversibly: `<prefix>_name`
+    when the name is plain lowercase, else `<prefix>x_<hex of its UTF-8>`."""
+    plain = f"{prefix}_{raw}"
+    return plain if NAME_RE.match(plain) and not raw.startswith("x_") else f"{prefix}x_{raw.encode().hex()}"
+
+
+def decode_type(prefix: str, name: str) -> str:
+    if name.startswith(f"{prefix}x_"):
+        return bytes.fromhex(name[len(prefix) + 2:]).decode()
+    return name[len(prefix) + 1:]
 
 
 class KernelError(HandbookError):
@@ -184,9 +198,13 @@ class Graph:
         self.db = db
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA foreign_keys = ON")
-        self.db.executescript(SCHEMA)
+        # one statement at a time: executescript would first COMMIT a caller's open transaction
+        for stmt in SCHEMA.split(";"):
+            if stmt.strip():
+                self.db.execute(stmt)
         self.db.create_function("rhb_regexp", 2, _regexp, deterministic=True)
-        self._program_cache: tuple[int, Any] | None = None
+        self.db.create_function("rhb_lower", 1, lambda v: v.lower() if isinstance(v, str) else v, deterministic=True)
+        self._program_cache: tuple[Any, Any] | None = None
         with self.tx():
             self.db.execute("INSERT OR IGNORE INTO k_meta VALUES ('clock', '0')")
             self.db.execute("INSERT OR IGNORE INTO k_meta VALUES ('rules_rev', '0')")
@@ -209,17 +227,67 @@ class Graph:
 
     @contextmanager
     def tx(self) -> Iterator[None]:
-        """A savepoint: nests inside a caller's transaction (it commits only when it is the
-        outermost one), and rolls back only its own work on an error."""
-        name = f"k_sp{next(self._savepoints)}"
-        self.db.execute(f"SAVEPOINT {name}")
+        """One atomic unit of kernel work.
+
+        Inside an open transaction it is a savepoint: its work commits or rolls back with the
+        caller's transaction, and an error rolls back only this unit. With no transaction open it
+        is the transaction (BEGIN … COMMIT). A caller that wants several kernel calls, or kernel
+        and other writes, to be one transaction opens it first: `with g.transaction(): …`.
+        (Python's sqlite3 opens its implicit transaction only at the first INSERT/UPDATE/DELETE,
+        so `with db:` alone does not count as open until then.)"""
+        if self.db.in_transaction:
+            name = f"k_sp{next(self._savepoints)}"
+            self.db.execute(f"SAVEPOINT {name}")
+            try:
+                yield
+            except BaseException:
+                self._undo(f"ROLLBACK TO {name}", f"RELEASE {name}")
+                raise
+            self.db.execute(f"RELEASE {name}")
+        else:
+            with self.transaction():
+                yield
+
+    @contextmanager
+    def transaction(self) -> Iterator[None]:
+        """An outermost transaction (BEGIN … COMMIT, ROLLBACK on an error)."""
+        if self.db.in_transaction:
+            raise KernelError("a transaction is already open on this connection; use tx() inside it")
+        self.db.execute("BEGIN")
         try:
             yield
         except BaseException:
-            self.db.execute(f"ROLLBACK TO {name}")
-            self.db.execute(f"RELEASE {name}")
+            self._undo("ROLLBACK")
             raise
-        self.db.execute(f"RELEASE {name}")
+        self.db.execute("COMMIT")
+
+    @contextmanager
+    def scratch(self) -> Iterator[None]:
+        """Work that must leave nothing behind (rule evaluation's temp tables): always undone."""
+        if self.db.in_transaction:
+            name = f"k_sc{next(self._savepoints)}"
+            self.db.execute(f"SAVEPOINT {name}")
+            try:
+                yield
+            finally:
+                self._undo(f"ROLLBACK TO {name}", f"RELEASE {name}")
+        else:
+            self.db.execute("BEGIN")
+            try:
+                yield
+            finally:
+                self._undo("ROLLBACK")
+
+    def _undo(self, *stmts: str) -> None:
+        """Roll back without masking the error that caused it: if SQLite already aborted the
+        transaction, the savepoint is gone and there is nothing left to undo."""
+        for st in stmts:
+            try:
+                self.db.execute(st)
+            except sqlite3.OperationalError:
+                if self.db.in_transaction:
+                    raise
+                return
 
     # ── clock and log ────────────────────────────────────────────────────
 
@@ -339,6 +407,14 @@ class Graph:
         raise Forbidden(f"{actor} may not move a {type_!r} from {old!r} to {new!r}; "
                         f"allowed from here: {', '.join(allowed) or 'none'}")
 
+    @staticmethod
+    def _check_write(actor: str, validate: bool, origin: str | None) -> None:
+        """`origin` is the provenance a row claims (the model transcribes the user's words as
+        origin 'user'); it cannot be verified over a tool call. `author`, set by the kernel from the
+        actor, is what actually wrote the node, and rules can read it with author(Id, A)."""
+        if not validate and actor != "kernel":
+            raise Forbidden("only the kernel stores unvalidated data (an import)")
+
     # ── nodes ────────────────────────────────────────────────────────────
 
     def get_node(self, node_id: str) -> dict[str, Any] | None:
@@ -355,7 +431,7 @@ class Graph:
             raise KernelError(f"no node {node_id!r}")
         return n
 
-    def put_node(
+    def _put_node(
         self,
         node_id: str,
         type_: str,
@@ -368,8 +444,9 @@ class Graph:
         validate: bool = True,
     ) -> dict[str, Any]:
         """Create a node. `validate=False` stores a state the type does not declare (an import keeps
-        what it found; the rules then report it)."""
+        what it found; the rules then report it): the kernel's alone."""
         _check_actor(actor)
+        self._check_write(actor, validate, origin)
         if not ID_RE.match(node_id):
             raise KernelError(f"bad node id {node_id!r}")
         t = self._require_type(type_, ("node", "scope"))
@@ -380,14 +457,16 @@ class Graph:
         if self.db.execute("SELECT 1 FROM k_nodes WHERE id = ?", (node_id,)).fetchone():
             raise KernelError(f"node {node_id!r} exists; update it instead")
         c = self.clock()
+        if t["kind"] == "scope" and actor != "kernel":
+            raise Forbidden("a scope is created with open_scope(), which applies its gates")
         self.db.execute(
-            "INSERT INTO k_nodes (id, type, state, content, attrs, origin, version, created, updated)"
-            " VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)",
+            "INSERT INTO k_nodes (id, type, state, content, attrs, origin, author, version, created, updated)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
             (node_id, t["name"], state, content, json.dumps(attrs or {}, ensure_ascii=False),
-             origin if origin is not None else actor, c, c))
+             origin if origin is not None else actor, actor, c, c))
         return self.node(node_id)
 
-    def update_node(
+    def _update_node(
         self,
         node_id: str,
         *,
@@ -404,10 +483,15 @@ class Graph:
         write is refused (compare-and-swap). `attrs` merges into the stored attributes unless
         `replace_attrs`; a key set to None is removed."""
         _check_actor(actor)
+        self._check_write(actor, validate, origin)
         n = self.node(node_id)
         if expect is not None and n["version"] != expect:
             raise Conflict(f"{node_id} is at version {n['version']}, not {expect}: re-read it, then write")
         new_state = n["state"] if state is None else state
+        if state is not None and new_state != n["state"] and actor != "kernel" \
+                and self._require_type(n["type"], ("node", "scope"))["kind"] == "scope":
+            raise Forbidden(f"{node_id} is a scope: it opens and closes through its gates (close()), "
+                            "not by a state write")
         if state is not None and validate:
             declared = self.states(n["type"])
             if declared and new_state not in declared:
@@ -422,21 +506,30 @@ class Graph:
                     merged.pop(k, None)
                 else:
                     merged[k] = v
-        self.db.execute(
+        cur = self.db.execute(
             "UPDATE k_nodes SET state = ?, content = ?, attrs = ?, origin = ?, version = version + 1, updated = ?"
-            " WHERE id = ?",
+            " WHERE id = ? AND version = ?",  # the version read above: the write is a compare-and-swap
             (new_state, n["content"] if content is None else content, json.dumps(merged, ensure_ascii=False),
-             n["origin"] if origin is None else origin, self.clock(), node_id))
+             n["origin"] if origin is None else origin, self.clock(), node_id, n["version"]))
+        if cur.rowcount != 1:
+            raise Conflict(f"{node_id} changed while it was being written (another session): re-read it, then write")
         return self.node(node_id)
 
-    def delete_node(self, node_id: str, *, actor: str, expect: int | None = None) -> None:
+    def _delete_node(self, node_id: str, *, actor: str, expect: int | None = None) -> None:
         _check_actor(actor)
         n = self.node(node_id)
         if expect is not None and n["version"] != expect:
             raise Conflict(f"{node_id} is at version {n['version']}, not {expect}")
-        self.db.execute("DELETE FROM k_nodes WHERE id = ?", (node_id,))
+        if actor != "kernel":
+            if self._require_type(n["type"], ("node", "scope"))["kind"] == "scope":
+                raise Forbidden(f"{node_id} is a scope: deleting it would drop what it holds open")
+            if actor == "model" and n["author"] != "model":
+                raise Forbidden(f"{node_id} was written by {n['author']}: the model deletes only its own nodes")
+        cur = self.db.execute("DELETE FROM k_nodes WHERE id = ? AND version = ?", (node_id, n["version"]))
+        if cur.rowcount != 1:
+            raise Conflict(f"{node_id} changed while it was being deleted: re-read it")
 
-    def ensure_missing(self, node_id: str, *, actor: str, attrs: dict[str, Any]) -> str:
+    def _ensure_missing(self, node_id: str, *, actor: str, attrs: dict[str, Any]) -> str:
         """A placeholder for a reference to nothing, so the reference survives as an edge."""
         if not self.db.execute("SELECT 1 FROM k_nodes WHERE id = ?", (node_id,)).fetchone():
             self.put_node(node_id, MISSING, actor=actor, attrs=attrs, validate=False)
@@ -444,10 +537,10 @@ class Graph:
 
     # ── edges ────────────────────────────────────────────────────────────
 
-    def link(self, src: str, type_: str, dst: str, *, actor: str, attrs: dict[str, Any] | None = None,
+    def _link(self, src: str, type_: str, dst: str, *, actor: str, attrs: dict[str, Any] | None = None,
              origin: str | None = None) -> None:
         _check_actor(actor)
-        self._require_type(type_, ("edge",))
+        self._check_edge_actor(type_, actor)
         for n in (src, dst):
             if not self.db.execute("SELECT 1 FROM k_nodes WHERE id = ?", (n,)).fetchone():
                 raise KernelError(f"no node {n!r}")
@@ -457,10 +550,42 @@ class Graph:
             (src, type_, dst, json.dumps(attrs or {}, ensure_ascii=False),
              origin if origin is not None else actor, self.clock()))
 
-    def unlink(self, src: str, type_: str, dst: str, *, actor: str) -> bool:
+    def _unlink(self, src: str, type_: str, dst: str, *, actor: str) -> bool:
         _check_actor(actor)
+        self._check_edge_actor(type_, actor)
         return self.db.execute("DELETE FROM k_edges WHERE src = ? AND type = ? AND dst = ?",
                                (src, type_, dst)).rowcount > 0
+
+    def _check_edge_actor(self, type_: str, actor: str) -> None:
+        t = self._require_type(type_, ("edge",))
+        if t["authority"] == "kernel" and actor != "kernel":
+            raise Forbidden(f"{type_!r} edges are the scope machinery's: use open_scope, carry, touch or detach")
+
+    # Every write is one atomic unit: alone it commits, inside a caller's transaction it is a
+    # savepoint (so no write ever leaves Python's implicit transaction open behind it).
+    def put_node(self, *a: Any, **k: Any) -> dict[str, Any]:
+        with self.tx():
+            return self._put_node(*a, **k)
+
+    def update_node(self, *a: Any, **k: Any) -> dict[str, Any]:
+        with self.tx():
+            return self._update_node(*a, **k)
+
+    def delete_node(self, *a: Any, **k: Any) -> None:
+        with self.tx():
+            self._delete_node(*a, **k)
+
+    def ensure_missing(self, *a: Any, **k: Any) -> str:
+        with self.tx():
+            return self._ensure_missing(*a, **k)
+
+    def link(self, *a: Any, **k: Any) -> None:
+        with self.tx():
+            self._link(*a, **k)
+
+    def unlink(self, *a: Any, **k: Any) -> bool:
+        with self.tx():
+            return self._unlink(*a, **k)
 
     def edges(self, src: str | None = None, type_: str | None = None, dst: str | None = None) -> list[dict[str, Any]]:
         where, args = [], []
@@ -536,7 +661,11 @@ class Graph:
                              authority_for(actor, spec.get("authority")), bool(old)))
         new_ids = {p[0] for p in prepared}
         others = [r for r in self.active_rules() if r["id"] not in new_ids]
-        rules.Program.from_rules(others + [{"id": p[0], "body": p[4]} for p in prepared])
+        program = rules.Program.from_rules(others + [{"id": p[0], "body": p[4]} for p in prepared])
+        authority = {r["id"]: r["authority"] for r in others} | {p[0]: p[7] for p in prepared}
+        for p in prepared:
+            if p[7] != "proposed":
+                self._sealed_closure(program, p[0], authority)
         with self.tx():
             for rid, phase, applies_to, severity, body, message, pkg, auth, existed in prepared:
                 self.db.execute(
@@ -548,6 +677,15 @@ class Graph:
                     (rid, phase, applies_to, severity, body, message, pkg, auth, actor))
                 self.log(actor, f"rule {rid} {'revised' if existed else 'defined'} ({auth})", rid)
             self._bump_rules()
+
+    @staticmethod
+    def _sealed_closure(program: Any, rule_id: str, authority: dict[str, str]) -> None:
+        """A sealed rule means what the user approved: it may not rest on a predicate the model can
+        still rewrite."""
+        weak = sorted(q for q in program.needed({rule_id}) if q != rule_id and authority.get(q) == "proposed")
+        if weak:
+            raise Forbidden(f"rule {rule_id!r} would rest on proposed rule(s) {', '.join(weak)}, which the model "
+                            "can rewrite; approve those first")
 
     def retire_rule(self, rule_id: str, *, actor: str) -> None:
         _check_actor(actor)
@@ -579,6 +717,12 @@ class Graph:
             raise KernelError(f"no {what} {name!r}")
         if r[0] != "proposed":
             raise KernelError(f"{what} {name!r} is {r[0]}, not proposed")
+        if what == "rule":
+            from . import rules
+
+            active = self.active_rules()
+            self._sealed_closure(rules.Program.from_rules(active), name,
+                                 {x["id"]: x["authority"] for x in active})
         with self.tx():
             self.db.execute(f"UPDATE {table} SET authority = 'sealed' WHERE {key} = ?", (name,))
             self.log(actor, f"{what} {name} approved", name)
