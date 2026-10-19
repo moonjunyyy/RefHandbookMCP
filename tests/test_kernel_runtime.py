@@ -1,132 +1,163 @@
-"""The kernel in the server: migration on first open, the mirror, the switch, divergence handling."""
+"""The kernel in the server: migration on first open, quarantine, the projection, package upgrades."""
 
 import json
 import sqlite3
+from pathlib import Path
 
 import pytest
 
 from refhandbook import Handbook, research, research_api
 from refhandbook.kernel import migrate, runtime, verify
-from refhandbook.research import Research
+from refhandbook.kernel.packages import research as rs_pkg
+from refhandbook.research import Research, ResearchError
 
 from test_research import tok
 
 
-def legacy_store(path):
-    """A store written by 0.6.0 (no kernel tables): one ledger with a closed turn and a log."""
+def legacy_store(path, ledgers=("geo",)):
+    """A store as 0.6.x left it: rl_* tables only, no kernel tables (made with the kernel, which
+    judges the turns, then stripped of it)."""
     hb = Handbook(path)
     research.ensure_cards(hb)
     r = Research(hb)
-    r.init("geo", "vector EL")
-    t = tok(r.begin("geo", 1))
-    out = r.add("geo", t, "U", "derive it", "user", "active")
-    t = tok(out)
-    t = tok(r.add("geo", t, "A", "flat metric", "user", "on"))
-    t = tok(r.push("geo", t, "await the user", "USER", "U1"))
-    t = tok(r.set("geo", t, "U1", "status", "answered"))
-    r.end("geo", t, 1)
+    for L in ledgers:
+        r.init(L, "vector EL")
+        t = tok(r.begin(L, 1))
+        t = tok(r.add(L, t, "U", "derive it", "user", "active"))
+        t = tok(r.add(L, t, "A", "flat metric", "user", "on"))
+        t = tok(r.push(L, t, "await the user", "USER", "U1"))
+        t = tok(r.set(L, t, "U1", "status", "answered"))
+        r.end(L, t, 1)
     hb.save_entry(title="Disk full", condition="ENOSPC", items=["free space"])
+    hb.db.commit()
+    hb.db.execute("PRAGMA foreign_keys = OFF")
+    for (name,) in hb.db.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'k\\_%' ESCAPE '\\'")\
+            .fetchall():
+        hb.db.execute(f"DROP TABLE {name}")
+    hb.db.commit()
     hb.close()
+    backup = Path(f"{path}.pre-kernel")
+    if backup.exists():
+        backup.unlink()
 
 
 def tables(path):
-    db = sqlite3.connect(path)
-    return {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    return {r[0] for r in sqlite3.connect(path).execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
 
 
-def test_first_open_backs_up_migrates_and_verifies(tmp_path):
+def test_first_open_backs_up_migrates_and_round_trips(tmp_path):
     path = tmp_path / "u.db"
     legacy_store(path)
     assert "k_meta" not in tables(path)
     hb = Handbook(path)
-    m = runtime.attach(hb)
-    assert m.status == "active"
+    r = Research(hb)
+    assert r.k.schema() == 1 and r.k.meta("quarantine:geo") is None
     backup = tmp_path / "u.db.pre-kernel"
     assert backup.exists() and "k_meta" not in tables(backup) and "rl_rows" in tables(backup)
-    r = Research(hb)
-    assert verify.compare(r, m.g, "geo") == []  # the carried log included
-    assert m.g.node("card:disk-full")["content"] == "Disk full"
+    assert verify.roundtrip(r, r.k.g, "geo") == []
+    assert r.k.g.node("card:disk-full")["content"] == "Disk full"
     hb.close()
-    hb = Handbook(path)  # the second open does not migrate again or back up again
-    assert runtime.attach(hb).status == "active"
-    assert sum(1 for e in hb.db.execute("SELECT event FROM k_log WHERE event LIKE 'migration:%'")) == 1
+    hb = Handbook(path)  # a second open migrates nothing again
+    Research(hb)
+    assert sum(1 for _ in hb.db.execute("SELECT 1 FROM k_log WHERE event LIKE 'migration v1:%'")) == 1
 
 
-def test_the_mirror_follows_every_write_and_keeps_the_log(tmp_path):
+def test_stores_from_0_7_0_are_recognised_as_schema_1(tmp_path):
     path = tmp_path / "u.db"
     legacy_store(path)
     hb = Handbook(path)
-    r = runtime.research_for(hb)
+    m = runtime.attach(hb)
+    with m.g.tx():
+        m.set_meta("schema", None)  # 0.7.0 recorded only kernel_status
+    hb._kernel = None
+    del hb._kernel
+    assert runtime.attach(hb).schema() == 1
+
+
+def test_a_ledger_that_does_not_round_trip_is_quarantined_alone(tmp_path, monkeypatch):
+    path = tmp_path / "u.db"
+    legacy_store(path, ("geo", "bad"))
+    real = verify.roundtrip
+    monkeypatch.setattr(verify, "roundtrip", lambda r, g, L: ["synthetic difference"] if L == "bad" else real(r, g, L))
+    hb = Handbook(path)
+    r = Research(hb)
+    assert "synthetic difference" in r.k.meta("quarantine:bad")
+    with pytest.raises(ResearchError, match="could not be loaded into the kernel"):
+        r.check("bad")
+    assert r.check("geo") == ([], [])  # the rest of the store works
+    assert r.export("bad")["tables"]["rl_rows"]  # and the quarantined rows are intact
+
+
+def test_the_projection_follows_every_write_and_keeps_the_log(tmp_path):
+    path = tmp_path / "u.db"
+    legacy_store(path)
+    hb = Handbook(path)
+    r = Research(hb)
     t = tok(r.begin("geo", 2))
     t = tok(r.add("geo", t, "U", "go on", "user", "active"))
     t = tok(r.set("geo", t, "U2", "status", "answered"))
     r.end("geo", t, 2)
-    assert verify.compare(r, r.k.g, "geo") == []
+    assert verify.roundtrip(r, r.k.g, "geo") == []
     events = [e[0] for e in hb.db.execute("SELECT event FROM k_log WHERE ref = 'geo' AND actor = 'legacy' ORDER BY seq")]
     assert events == [e[0] for e in hb.db.execute("SELECT msg FROM rl_log WHERE ledger = 'geo' ORDER BY seq")]
     hb.save_entry(id="disk-full", title="Disk full", condition="ENOSPC or EDQUOT")
     assert r.k.g.node("card:disk-full")["attrs"]["condition"] == "ENOSPC or EDQUOT"
 
 
-def test_rename_copy_delete_and_a_dry_run_import_reach_the_mirror(tmp_path):
+def test_rename_copy_delete_and_a_dry_run_import_reach_the_projection(tmp_path):
     hb = Handbook(tmp_path / "u.db")
-    r = runtime.research_for(hb)
+    r = Research(hb)
     r.init("a", "q")
     r.copy("a", "b")
     r.rename("a", "c")
     r.delete("b", confirm="b")
-    data = r.export("c")
-    r.import_(data, as_ledger="d", dry_run=True)
+    r.import_(r.export("c"), as_ledger="d", dry_run=True)
     assert migrate.ledgers_in_graph(r.k.g) == ["c"]  # the dry run's projection rolled back with it
-    assert verify.compare(r, r.k.g, "c") == []
 
 
-def test_a_divergence_at_migration_keeps_the_legacy_gates(tmp_path, monkeypatch):
+def test_a_package_upgrade_replaces_installed_rules_and_keeps_the_users(tmp_path, monkeypatch):
     path = tmp_path / "u.db"
     legacy_store(path)
-    monkeypatch.setattr(verify, "compare", lambda r, g, L, include_log=True: ["synthetic difference"])
     hb = Handbook(path)
     m = runtime.attach(hb)
-    assert m.status.startswith("legacy: geo: synthetic difference")
-    monkeypatch.setattr(verify, "check", lambda *a: pytest.fail("the kernel must not be consulted"))
-    runtime.research_for(hb).check("geo")
+    with m.g.tx():  # the user tightens one rule after install
+        m.g.define_rule("rs_w_unknown", "check", next(r for r in rs_pkg.RULES if r["id"] == "rs_w_unknown")["body"],
+                        actor="user", applies_to="ledger", severity="block", message="{R}: uses unknown {D}")
+    new_rules = [dict(r, message=r["message"] + " (v2)") if r["id"] in ("rs_w_unknown", "rs_c_recall") else r
+                 for r in rs_pkg.RULES]
+    monkeypatch.setattr(rs_pkg, "RULES", new_rules)
+    assert m.upgrade_packages() == ["rs_w_unknown"]
+    assert m.g.get_rule("rs_c_recall")["message"].endswith("(v2)")  # untouched since install: upgraded
+    kept = m.g.get_rule("rs_w_unknown")
+    assert (kept["severity"], kept["message"]) == ("block", "{R}: uses unknown {D}")  # the user's version stands
+    assert any("package conflict: rule rs_w_unknown" in e[0] for e in hb.db.execute("SELECT event FROM k_log"))
+    assert m.upgrade_packages() == []  # recorded as current
 
 
-def test_the_switch_turns_the_kernel_off(tmp_path, monkeypatch):
-    monkeypatch.setenv("RHB_KERNEL", "0")
+def test_a_newer_schema_is_refused(tmp_path):
     path = tmp_path / "u.db"
     legacy_store(path)
     hb = Handbook(path)
-    assert runtime.attach(hb) is None and type(runtime.research_for(hb)) is Research
-    assert "k_meta" not in tables(path) and not (tmp_path / "u.db.pre-kernel").exists()
-
-
-def test_a_divergence_in_service_is_logged_and_the_kernel_decides(tmp_path, monkeypatch):
-    monkeypatch.delenv("RHB_KERNEL_STRICT")
-    hb = Handbook(tmp_path / "u.db")
-    r = runtime.research_for(hb)
-    r.init("geo", "q")
-    legacy_check = Research._legacy_check
-    monkeypatch.setattr(Research, "_legacy_check",
-                        lambda self, L: (legacy_check(self, L)[0] + ["X1: only legacy says so"], []))
-    assert r.check("geo") == ([], [])
-    (event,) = [e[0] for e in hb.db.execute("SELECT event FROM k_log WHERE event LIKE 'divergence:%'")]
-    assert "X1: only legacy says so" in event
+    m = runtime.attach(hb)
+    with m.g.tx():
+        m.set_meta("schema", "99")
+    hb.close()
+    with pytest.raises(RuntimeError, match="newer than this code"):
+        Research(Handbook(path))
 
 
 def test_remote_stores_attach_on_open(tmp_path):
     from refhandbook.remote import UserStores
 
     hb = UserStores(tmp_path)("moonny")
-    assert hb._kernel.active()
+    assert hb._kernel.schema() == 1
     assert (tmp_path / "users" / "moonny.db.pre-kernel").exists()
 
 
-def test_tools_run_on_the_kernel_engine(tmp_path):
+def test_tools_run_on_the_kernel(tmp_path):
     hb = Handbook(tmp_path / "u.db")
     research_api.bind(hb)
-    assert isinstance(research_api.R(), runtime.KernelResearch)
+    assert research_api.R().k is hb._kernel
     research_api.research_ledgers(action="init", ledger="geo", question="q")
-    out = research_api.research_begin("geo", 1)
-    assert "OBLIGATIONS THIS TURN" in out
+    assert "OBLIGATIONS THIS TURN" in research_api.research_begin("geo", 1)
     assert json.loads(research_api.research_ledgers(action="export", ledger="geo"))["ledger"]["id"] == "geo"

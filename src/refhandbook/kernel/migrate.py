@@ -22,6 +22,7 @@ from .packages import handbook as hb_pkg
 from .packages import research as rs_pkg
 
 ACTOR = "kernel"
+DERIVED = "derived_"  # attributes the projection computes (runtime._derive); not part of the export
 LOG_ACTOR = "legacy"
 
 
@@ -92,8 +93,8 @@ def _edge_type(g: Graph, rel: str) -> str:
     the dep namespace, so `on:A1` or `member:A1` stays a dep and never becomes structure."""
     name = encode_type("dep", rel)
     if g.get_type(name) is None:
-        g.define_type(name, "edge", actor=ACTOR, pkg=rs_pkg.PKG, classes=["dep"],
-                      description=f"dep relation {rel!r} found in imported data")
+        g.define_type(name, "edge", actor=ACTOR, pkg=rs_pkg.PKG, classes=["dep", "basis"],
+                      description=f"dep relation {rel!r} found in imported data (unknown: a basis)")
     return name
 
 
@@ -205,7 +206,8 @@ def ledger_from_graph(g: Graph, L: str, include_log: bool = True) -> dict[str, A
     lg = g.node(L)
     if lg["type"] != "ledger":
         raise KernelError(f"{L} is not a ledger")
-    ledger = {"id": L, "question": lg["content"], **lg["attrs"]}
+    ledger = {"id": L, "question": lg["content"],
+              **{k: v for k, v in lg["attrs"].items() if not k.startswith(DERIVED)}}
     rid = {n["id"]: n["attrs"].get("rid") for n in _contained(g, L)}
     tables: dict[str, list[dict[str, Any]]] = {t: [] for t in legacy.Research.CHILD_TABLES}
     turns = {}

@@ -66,7 +66,12 @@ FINISHED = {"done", "dropped", "superseded", "refuted", "history"}
 NOT_A_BASIS = {"off", "superseded", "refuted", "stale", "false", "question", "proposed", "history", "dropped"}
 # rows a document may not cite: replaced, or waiting for a recheck
 NOT_CITABLE = {"superseded", "stale", "dropped"}
-RELS = {"req", "der", "sup", "eq", "iso", "spec", "int", "con"}
+# A dep edge is either a basis (the row rests on the target: invalidation, provenance and basis checks
+# follow it) or a link (it relates to the target without resting on it: sup is evidence, not proof;
+# con records a contradiction; ref only points). A relation the vocabulary does not know is a basis.
+BASIS_RELS = {"req", "der", "eq", "iso", "spec", "int"}
+LINK_RELS = {"sup", "con", "ref"}
+RELS = BASIS_RELS | LINK_RELS
 ID_RE = re.compile(r"\b([UCRSAZTEHXPK]\d+)\b")
 EDGE_RE = re.compile(r"(?:(\w+):)?([UCRSAZTEHXPK]\d+)\b")
 VIRTUAL_PAGES = {"USER": "Wait for the user's next message; it is resolved at N1 step 3 of the next turn."}
@@ -177,16 +182,29 @@ def edges(dep: str) -> list[tuple[str, str]]:
     return [((r or "req").lower(), i) for r, i in EDGE_RE.findall(dep or "")]
 
 
+def basis(dep: str) -> list[str]:
+    """The rows a dep cell rests on: every edge but the links."""
+    return [i for r, i in edges(dep) if r not in LINK_RELS]
+
+
 def page_card_id(page: str) -> str:
     p = page.strip().lstrip("@")
     return p if p.startswith(CARD_PREFIX) else CARD_PREFIX + slugify(p)
 
 
 class Research:
-    def __init__(self, hb: Handbook):
+    def __init__(self, hb: Handbook, kernel: bool = True):
         self.hb = hb
         self.db = hb.db
         self.db.executescript(SCHEMA)
+        # The kernel is the only judge: check, obligations and end refusals are its rules. Writes
+        # still go to the rl_* tables here, and each seal re-projects the ledger into the kernel.
+        # (kernel=False is the bare engine the kernel itself uses while migrating a store.)
+        self.k = None
+        if kernel:
+            from .kernel import runtime
+
+            self.k = runtime.attach(hb)
 
     # ── plumbing ─────────────────────────────────────────────────────────
 
@@ -245,8 +263,10 @@ class Research:
         return token
 
     def _sealed(self, ledger: str) -> None:
-        """Called after every write that seals the ledger, inside its transaction (a subclass keeps
-        a mirror current here)."""
+        """After every write that seals the ledger, inside its transaction: the kernel's projection
+        follows (a rollback undoes both)."""
+        if self.k is not None:
+            self.k.sync_ledger(self, ledger)
 
     def _touch(self, ledger: str, turn: int, *ids: str) -> None:
         self.db.executemany("INSERT OR IGNORE INTO rl_turnmarks VALUES (?, ?, 'touched', ?, '')",
@@ -442,36 +462,61 @@ class Research:
         out += self._obligations(ledger)
         return "\n".join(out)
 
+    # The judgments below are the kernel's (kernel/packages/research.py). What stays here is only
+    # their wording: each finding (kind, ref, src) is rendered from the ledger's rows.
+
+    def _kernel(self, ledger: str):
+        if self.k is None:
+            raise ResearchError("this engine has no kernel attached (migration-only instance)")
+        self.k.require(self, ledger)  # projects the ledger if it changed; refuses a quarantined one
+        return self.k.g
+
+    def _row_or_none(self, ledger: str, rid: str) -> dict[str, Any] | None:
+        r = self.db.execute("SELECT * FROM rl_rows WHERE ledger = ? AND id = ?", (ledger, rid)).fetchone()
+        return dict(r) if r else None
+
+    def _order(self, ref: str) -> tuple:
+        m = re.match(r"([UCRSAZTEHXPK])(\d+)", ref or "")
+        return (list(SECTIONS).index(m.group(1)), int(m.group(2)), ref) if m else (99, 0, ref or "")
+
+    OBLIGATION_ORDER = ("pending", "k", "directive", "rejudge", "stale_verdict", "doc_plan", "doc_behind", "review")
+
     def obligation_items(self, ledger: str) -> list[tuple[str, str, str, str]]:
-        """(kind, ref, src, line) for each obligation, in the order begin prints them. The kernel
-        package research reproduces the (kind, ref, src) part as rules."""
+        """(kind, ref, src, line) for each obligation the kernel finds, in reading order."""
+        from .kernel import verify
+
+        items = verify.obligations(self._kernel(ledger), ledger)
         out = []
-        for src, hit in self.db.execute("SELECT src, hit FROM rl_pending WHERE ledger = ? ORDER BY src, hit", (ledger,)):
-            out.append(("pending", hit, src, f"  PENDING   {hit} (from {src}): dispose"))
-        rows = self._rows(ledger)
-        for r in rows:
-            k = key(r["status"])
-            if r["sec"] == "K" and k in {"queued", "running", "blocked"}:
-                tag = "AWAITING USER" if k == "blocked" else k.upper()
-                out.append(("k", r["id"], "", f"  K-{tag:13} {r['id']}: {r['content'][:80]}"))
-        for r in rows:
-            k = key(r["status"])
-            if r["sec"] == "U" and k in {"active", "question"}:
-                out.append(("directive", r["id"], "",
-                            f"  DIRECTIVE {r['id']} ({k}): address it, or carry with a reason :: {r['content'][:70]}"))
-            elif r["sec"] not in ("K", "U") and k in {"stale", "proposed", "open"}:
-                out.append(("rejudge", r["id"], "", f"  {k.upper():9} {r['id']}: re-judge :: {r['content'][:70]}"))
-        for c, h in self.db.execute("SELECT config, claim FROM rl_verdicts WHERE ledger = ? AND verdict = 'stale'", (ledger,)):
-            out.append(("stale_verdict", f"{h}@{c}", "", f"  STALE     {h}@{c}: recheck the verdict"))
-        for d in self.db.execute("SELECT * FROM rl_docs WHERE ledger = ? AND role = 'deliverable'", (ledger,)):
-            behind = self._changed_since(ledger, d["sync_clock"])
-            if d["plan"]:
-                out.append(("doc_plan", d["id"], "", f"  DOC-PLAN  {d['id']} {d['label']}: planned changes not synced — "
-                                                     "rewrite, then research_doc sync"))
-            elif behind and d["sync_clock"]:
-                out.append(("doc_behind", d["id"], "", f"  DOC       {d['id']} {d['label']}: {len(behind)} ledger change(s) "
-                                                       "since its sync — plan before the next edit (research_doc plan)"))
+        for kind, ref, src in sorted(items, key=lambda i: (self.OBLIGATION_ORDER.index(i[0])
+                                                            if i[0] in self.OBLIGATION_ORDER else 99,
+                                                            (i[2], i[1]) if i[0] == "pending" else self._order(i[1]))):
+            out.append((kind, ref, src, self._obligation_line(ledger, kind, ref, src)))
         return out
+
+    def _obligation_line(self, ledger: str, kind: str, ref: str, src: str) -> str:
+        r = self._row_or_none(ledger, ref)
+        k = key(r["status"]) if r else ""
+        if kind == "pending":
+            return f"  PENDING   {ref} (from {src}): dispose"
+        if kind == "k" and r:
+            tag = "AWAITING USER" if k == "blocked" else k.upper()
+            return f"  K-{tag:13} {ref}: {r['content'][:80]}"
+        if kind == "directive" and r:
+            return f"  DIRECTIVE {ref} ({k}): address it, or carry with a reason :: {r['content'][:70]}"
+        if kind == "rejudge" and r:
+            return f"  {k.upper():9} {ref}: re-judge :: {r['content'][:70]}"
+        if kind == "stale_verdict":
+            return f"  STALE     {ref}: recheck the verdict"
+        d = self.db.execute("SELECT * FROM rl_docs WHERE ledger = ? AND id = ?", (ledger, ref)).fetchone()
+        if kind == "doc_plan" and d:
+            return f"  DOC-PLAN  {ref} {d['label']}: planned changes not synced — rewrite, then research_doc sync"
+        if kind == "doc_behind" and d:
+            n = len(self._changed_since(ledger, d["sync_clock"]))
+            return (f"  DOC       {ref} {d['label']}: {n} ledger change(s) since its sync — "
+                    "plan before the next edit (research_doc plan)")
+        if kind == "review":
+            return f"  REVIEW    {src}: open card rs-rv (review the rules against what happened), then research_review done"
+        return f"  {kind.upper():9} {ref}" + (f" (from {src})" if src else "")
 
     def _obligations(self, ledger: str) -> list[str]:
         out = [line for *_, line in self.obligation_items(ledger)]
@@ -480,31 +525,33 @@ class Research:
         return out
 
     def blockers(self, ledger: str, turn: int, idle: str = "") -> list[tuple[str, str, str, str]]:
-        """(kind, ref, src, text) for everything that keeps turn `turn` from closing, check errors
-        included (kind 'check', ref = the message). The kernel package research reproduces these."""
-        out = [("pending", hit, src, f"PENDING {hit} (from {src})") for src, hit in self.db.execute(
-            "SELECT src, hit FROM rl_pending WHERE ledger = ?", (ledger,))]
-        touched = set(self._column("SELECT ref FROM rl_turnmarks WHERE ledger = ? AND turn = ? AND kind = 'touched'", ledger, turn))
-        carried = set(self._column("SELECT ref FROM rl_turnmarks WHERE ledger = ? AND turn = ? AND kind = 'carry'", ledger, turn))
-        rows = self._rows(ledger)
-        ks = [r for r in rows if r["sec"] == "K"]
-        for r in ks:
-            if key(r["status"]) == "running":
-                out.append(("running", r["id"], "", f"K {r['id']} is still running: finish its card with research_done"))
-        if ks and not any(key(r["status"]) in {"queued", "blocked"} for r in ks):
-            out.append(("no_continuation", "", "",
-                        "NO CONTINUATION: push the next K (a queued step, or @USER awaiting the user) before ending"))
-        for r in rows:
-            if r["sec"] == "U" and key(r["status"]) in {"active", "question"} and r["id"] not in touched | carried:
-                out.append(("directive", r["id"], "", f"DIRECTIVE {r['id']} neither addressed (set) nor carried"))
-        if not any(t.startswith("U") for t in touched) and not idle:
-            out.append(("no_directive", "", "", "NO DIRECTIVE this turn: register or update the user's message as U, "
-                                                "or end with idle=\"<why nothing was asked>\""))
-        for d in self.db.execute("SELECT id, label FROM rl_docs WHERE ledger = ? AND plan IS NOT NULL", (ledger,)):
-            out.append(("doc_plan", d["id"], "", f"DOC-PLAN {d['id']} {d['label']} committed but not synced"))
-        errors, _ = self._legacy_check(ledger)
-        out += [("check", e, "", f"CHECK {e}") for e in errors]
+        """(kind, ref, src, text) for everything that keeps turn `turn` from closing: the kernel's close
+        rules for the turn, and the check errors of its ledger."""
+        from .kernel import verify
+
+        items = verify.blockers(self._kernel(ledger), ledger, turn, idle)
+        order = ("pending", "running", "no_continuation", "directive", "no_directive", "doc_plan", "check")
+        out = []
+        for kind, ref, src in sorted(items, key=lambda i: (order.index(i[0]) if i[0] in order else 99,
+                                                            self._order(i[1]) if i[0] != "check" else (0, 0, ""))):
+            if kind == "check":
+                continue
+            out.append((kind, ref, src, self._blocker_text(ledger, kind, ref, src)))
+        out += [("check", e, "", f"CHECK {e}") for e in self.check(ledger)[0]]
         return out
+
+    def _blocker_text(self, ledger: str, kind: str, ref: str, src: str) -> str:
+        if kind == "doc_plan":
+            d = self.db.execute("SELECT label FROM rl_docs WHERE ledger = ? AND id = ?", (ledger, ref)).fetchone()
+            return f"DOC-PLAN {ref} {d['label'] if d else ''} committed but not synced"
+        return {
+            "pending": f"PENDING {ref} (from {src})",
+            "running": f"K {ref} is still running: finish its card with research_done",
+            "no_continuation": "NO CONTINUATION: push the next K (a queued step, or @USER awaiting the user) before ending",
+            "directive": f"DIRECTIVE {ref} neither addressed (set) nor carried",
+            "no_directive": "NO DIRECTIVE this turn: register or update the user's message as U, "
+                            "or end with idle=\"<why nothing was asked>\"",
+        }.get(kind, f"{kind.upper()} {ref}" + (f" (from {src})" if src else ""))
 
     def end(self, ledger: str, token: str | None, turn: int, idle: str = "") -> str:
         with self.db:
@@ -639,7 +686,7 @@ class Research:
         for r in self._rows(ledger):
             if r["sec"] == "K" or key(r["status"]) in FINISHED or r["id"] == x:
                 continue  # a plan object's `on` ids say where it works, not what it rests on
-            if x in {d for _, d in edges(r["dep"])}:
+            if x in basis(r["dep"]):  # a link does not rest on x, so a change of x does not reach it
                 hits.add(r["id"])
         for c in (self._configs(ledger).values() if configs else ()):
             if c["name"] != "main" and x in c["members"]:
@@ -939,86 +986,11 @@ class Research:
                          + [f"  {y:10} via {x}" for y, x in hits])
 
     def check(self, ledger: str) -> tuple[list[str], list[str]]:
-        return self._legacy_check(ledger)
+        """(errors, warnings): the kernel's check rules on this ledger, in row order."""
+        from .kernel import verify
 
-    def _legacy_check(self, ledger: str) -> tuple[list[str], list[str]]:
-        err: list[str] = []
-        warn: list[str] = []
-        lg = self._ledger(ledger)
-        rows = self._rows(ledger)
-        ids = {r["id"]: r for r in rows}
-        for r in rows:
-            rid, sec, own = r["id"], r["sec"], key(r["status"])
-            origin = r["origin"].lower()
-            ev = r["evidence"].lower()
-            if own not in ALLOWED[sec]:
-                err.append(f"{rid}: status {r['status']!r} not allowed in {sec}")
-            if sec == "A" and own == "on" and origin.startswith("model"):
-                err.append(f"{rid}: a model premise is on the main line; only the user adopts it "
-                           "(then set origin to 'user(adopted, turn N)'); explore it in a named configuration instead")
-            if key(r["evidence"]) == "sourced" and not re.search(r"chat:|file:|https?://", ev):
-                err.append(f"{rid}: 'sourced' without a locator (chat:<uuid>, file:<path>, or a URL)")
-            if re.search(r"\brecall", ev) and "[unverified]" not in ev:
-                err.append(f"{rid}: recall is not evidence — retrieve it (RF) or mark [unverified]")
-            if re.search(r"not found:\s*($|[·;])", ev):
-                err.append(f"{rid}: 'not found:' must name the calls that were made")
-            if own == "proposed" and origin.startswith("model") and sec != "K" and "closure:" not in ev:
-                err.append(f"{rid}: model-origin proposed without 'closure: <what the user givens were checked against>'")
-            if len(r["evidence"]) > 240 or r["evidence"].count(";") >= 3:
-                warn.append(f"{rid}: evidence cell is accreting; replace it with the current state (history is in the log)")
-            if own in FINISHED or own == "stale" or sec == "K":
-                continue
-            for rel, d in edges(r["dep"]):
-                if d not in ids:
-                    err.append(f"{rid}: cites missing {d}")
-                    continue
-                dr = ids[d]
-                dk = key(dr["status"])
-                if dr["origin"].lower().startswith("model") and not origin.startswith("model"):
-                    err.append(f"{rid}: rests on model-origin {d}; a {r['origin']} row cannot (mark {rid} model, "
-                               "or have the user adopt the premise)")
-                if not origin.startswith("model") and dk in NOT_A_BASIS:
-                    err.append(f"{rid}: rests on {d} with status {dr['status']!r} — mark {rid} stale or re-derive")
-                if origin.startswith("model") and dk in {"superseded", "refuted", "stale"}:
-                    err.append(f"{rid}: rests on {d} with status {dr['status']!r} — mark {rid} stale or re-derive")
-                if key(dr["evidence"]) == "pointer":
-                    err.append(f"{rid}: rests on {d}, which is only a pointer — retrieve the original (RF)")
-                if d.startswith("Z"):
-                    warn.append(f"{rid}: uses isolated unknown {d} — confirm it appears only as a symbol or gauge")
-                if rel == "int" and "map" not in ev:
-                    warn.append(f"{rid}: 'int' edge to {d} without an explicit map in evidence")
-                if unverified(dr["evidence"]) and key(r["evidence"]) in {"computed", "followed", "sourced"}:
-                    warn.append(f"{rid}: evidence {r['evidence']!r} rests on [unverified] {d}; the conclusion is at most [unverified]")
-            if sec == "H" and own == "open" and lg["turn"] - r["turn_created"] >= 3 and not re.search(r"tried:|not found:", ev):
-                warn.append(f"{rid}: open for {lg['turn'] - r['turn_created']} turns with no recorded attempt")
-        cfgs = self._configs(ledger)
-        verdicts = [dict(v) for v in self.db.execute("SELECT * FROM rl_verdicts WHERE ledger = ?", (ledger,))]
-        for v in verdicts:
-            h = ids.get(v["claim"])
-            if h is None or v["config"] not in cfgs:
-                err.append(f"verdict {v['claim']}@{v['config']}: unknown claim or configuration")
-                continue
-            members = set(cfgs[v["config"]]["members"])
-            if v["verdict"] == "true":
-                es = edges(h["dep"])
-                if es and all(rel == "sup" for rel, _ in es):
-                    err.append(f"{h['id']}@{v['config']}: true on 'sup' edges only — supports is evidence, not proof")
-                for rel, d in es:
-                    if d.startswith("T") and d not in members:
-                        err.append(f"{h['id']}@{v['config']}: true, but rests on external result {d}, which is not "
-                                   f"in configuration {v['config']!r}")
-                for rel, d in es:
-                    if rel == "con" and d in ids:
-                        other = next((w for w in verdicts if w["claim"] == d and w["config"] == v["config"]), None)
-                        if other and other["verdict"] == "true":
-                            err.append(f"{h['id']} contradicts {d}, both true under {v['config']!r}")
-            if v["config"] == "main" and key(h["status"]) not in (v["verdict"], "superseded", "refuted", "history", "stale"):
-                err.append(f"{h['id']}: status {h['status']!r} disagrees with its main verdict {v['verdict']!r}")
-        for c in cfgs.values():
-            for m in c["members"]:
-                if m not in ids:
-                    err.append(f"configuration {c['name']}: member {m} missing")
-        return err, warn
+        errors, warnings, _ = verify.check(self._kernel(ledger), ledger)
+        return sorted(errors, key=self._order), sorted(warnings, key=self._order)
 
     # ── documents ────────────────────────────────────────────────────────
 
@@ -1344,6 +1316,12 @@ class Research:
         return out.replace("imported ledger", "copied to ledger", 1)
 
     def rename(self, ledger: str, to: str) -> str:
+        out = self._rename(ledger, to)
+        if self.k is not None:
+            self.k.sync_ledger(self, ledger)  # gone: its image is dropped
+        return out
+
+    def _rename(self, ledger: str, to: str) -> str:
         lg = self._ledger(ledger)
         new = slugify(to)
         if self.db.execute("SELECT 1 FROM rl_ledgers WHERE id = ?", (new,)).fetchone():
@@ -1362,6 +1340,12 @@ class Research:
                    if lg["open"] else ""))
 
     def delete(self, ledger: str, confirm: str) -> str:
+        out = self._delete(ledger, confirm)
+        if self.k is not None:
+            self.k.sync_ledger(self, ledger)
+        return out
+
+    def _delete(self, ledger: str, confirm: str) -> str:
         lg = self._ledger(ledger)
         if confirm != ledger:
             raise ResearchError(f"REFUSED: deleting is permanent; pass confirm={ledger!r} (the ledger id) to proceed. "
