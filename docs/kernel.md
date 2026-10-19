@@ -1,49 +1,52 @@
 # The scope-graph kernel
 
-Status (0.7.0): the kernel is live. Each store is migrated the first time the server opens it,
-and the research gates are decided by the kernel's rules. The legacy tables remain the write path.
+Status (0.8.0): the kernel is the only judge. `research_check`, the obligations of
+`research_begin` and the refusals of `research_end` come from the package's rules; there is no
+second computation beside them. Writes still land in the legacy `rl_*` tables, and every write
+that seals a ledger re-projects it into the graph in the same transaction, so a rollback undoes both.
 
 ## Running on a server
 
-The first open of a user's store after the upgrade does the following:
+Opening a store runs its migrations once each, in order, and records the schema in `k_meta`:
 
-1. It copies the store to `users/<uid>.db.pre-kernel`.
-2. It loads the cards and every ledger into the kernel tables (`k_*`) of the same file.
-3. It verifies each ledger with `kernel/verify.compare`, which checks:
-   - the export round trip;
-   - the `check()` messages;
-   - the obligations;
-   - the end blockers of an open turn.
-4. It records `kernel_status` in `k_meta`:
-   - `active` when every ledger matches;
-   - `legacy: <differences>` otherwise. The store then keeps the legacy gates, and the server log
-     says why.
+| step | what it does |
+|---|---|
+| backup | the first open copies the store to `users/<uid>.db.pre-kernel` |
+| schema 1 | loads the cards and every ledger into `k_*`, and checks each ledger by round trip (the export rebuilt from the graph must equal the export). A ledger that does not round-trip is **quarantined**: its tools refuse with the reason, its rows stay intact in `rl_*` and export normally, and the other ledgers work. Stores migrated by 0.7.0 are recognised as schema 1. |
+| packages | every open compares the installed package rules with the code's (three-way, against the hash recorded at install): a rule unchanged since install is replaced; a rule the user changed or retired is kept, and the conflict is logged (`package conflict: …` in `k_log`); a rule the package dropped is retired |
+| newer schema | a store whose schema is newer than the code is refused: upgrade the server instead |
 
-After the migration, the graph stays current with every write:
+After that the graph follows every write: a seal re-projects its ledger (only when its
+fingerprint changed), a card change re-projects the cards, a rename or delete drops the old image,
+and the change log is carried over append-only. Facts the rules need that are counts over the log
+(the rule language has no aggregates) are derived at projection, as `derived_*` attributes.
 
-- a write that seals a ledger re-projects that ledger inside the same transaction, so a rollback
-  undoes both;
-- a card change re-projects the cards;
-- a rename or delete drops the old image;
-- the change log is carried over append-only.
-
-While a store is `active`, the kernel decides the gates:
-
-- `research_check`, and the CHECK lines of `research_end`, come from the package's check rules;
-- the obligations of `research_begin` come from its obligation rules;
-- the refusals of `research_end` come from its close rules.
-
-The legacy computation runs beside the kernel as a cross-check. A disagreement goes to the server
-log and to `k_log` (`divergence: …`), and the kernel's answer stands. The tests set
-`RHB_KERNEL_STRICT=1`, which turns a divergence into a failure.
-
-To turn the kernel off, set `RHB_KERNEL=0` in `/etc/refhandbook/env` and restart. The legacy
-engine then runs alone, and nothing is written to `k_*`. To undo the migration completely, stop
-the service and put `users/<uid>.db.pre-kernel` back in place.
+To undo the migration, stop the service and put `users/<uid>.db.pre-kernel` back in place.
 
 Cost: each sealed write re-projects the whole ledger. On the largest server ledger (565 rows) a
-call took 0.2–0.35 s on 2 vCPU. Projecting only the rows that changed is the obvious
-optimisation.
+call takes 0.2–0.35 s on 2 vCPU, and the migration of both server ledgers 0.3 s. Projecting only
+the rows that changed is the obvious optimisation.
+
+## Reviewing the rules
+
+The rules are data, so they are reviewed like data (card `rs-rv`):
+
+- **When.** `rs_o_review` lists REVIEW at `research_begin` 7 turns after the last review, or
+  sooner once 3 signals gather: refusals of the work (logged as `refused: …` by every tool on a
+  ledger; protocol refusals such as a stale token are not signals), UNAFFECTED disposals,
+  carries and drops. The thresholds are the rule's text, so revising the rule retunes them.
+- **Proposals.** `research_review` records the review (`review: <why>`) and may propose rules.
+  A proposal is a kernel rule written by the model, so its authority is `proposed`: it runs at once
+  on every ledger of the store, its findings shown as warnings, and it never blocks. The review
+  prints its trial findings on the ledger at hand, so overconstraint shows before adoption.
+- **Adoption.** Only the user's channel approves (`refhandbook approve rule <id> [--retire <old>]`
+  on the server; the approval page later). A sealed rule may not rest on a proposed one.
+
+## Large arguments
+
+A long text (a document, an export) is sent once with `research_blob` (put, then append for the
+pieces), stored by its sha256 in `k_blobs`, and passed to `research_doc` and `research_ledgers`
+as `ref` (12 or more hex digits of the hash).
 
 ## What is fixed, and what is data
 
@@ -121,21 +124,17 @@ rs_c_bad_basis(R, D, S) :- rs_basis_row(Self, X, R), not rs_model(X), rs_dep(X, 
 
 ## How equivalence is checked
 
-`tests/conftest.py` hooks every sealed write to a legacy ledger in the whole test suite. Each time,
-it loads the ledger into a fresh graph and requires four results:
-
-- the export round-trips unchanged;
-- `check()` errors and warnings match word for word;
-- the begin obligations match;
-- the `research_end` blockers match, with and without an idle reason.
-
-`tests/test_kernel_migration.py` adds a ledger built so that every one of the 34 gate rules fires.
-It also includes a test that the harness fails when the two sides disagree.
+`tests/conftest.py` hooks every sealed write to a ledger in the whole test suite and requires that
+the graph holds the ledger exactly: the export rebuilt from the graph equals the export. The
+judgments themselves are the package's rules, which the research suites test directly.
+`tests/test_kernel_migration.py` builds a ledger on which every gate rule fires.
 
 ## Next
 
 1. Make the graph the write path. Rows, edges and verdicts would be written as graph rows, and
    the dep, status and evidence cells would become renderings of that structure.
 2. Replace the global tool-call lock with a per-store lock, and deploy on free-threaded 3.14t.
-3. Build the approval page.
-4. Build the sandbox, `invoke`, and background runs.
+3. Build the approval page (ldap-portal, `/agents`): proposals, grants, one-click approvals.
+4. One sandbox for Agent and Chat sessions (user namespaces, a seccomp allow-list, per-user
+   subuid ranges), with a script registry: the model adds and updates scripts within an allowed
+   command set, and runs them as background jobs.
