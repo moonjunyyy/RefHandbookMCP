@@ -96,16 +96,9 @@ fi
 "$VENV/bin/refhandbook" --env-file "$ENVF" plugin-json "$(grep -oP '^RHB_PUBLIC_URL=\K.*' "$ENVF" | tail -1 | sed 's#/*$##')/mcp" >/dev/null
 
 install -o root -g root -m 0644 "$SRC/deploy/refhandbook.service" /etc/systemd/system/refhandbook.service
-# The sandbox runner: the only unit that creates namespaces (docs/agents.md §7).
-RUNNER_UNIT="$SRC/deploy/refhandbook-runner.service"
-if command -v apparmor_parser >/dev/null 2>&1 && [ -d /etc/apparmor.d ]; then
-  install -o root -g root -m 0644 "$SRC/deploy/apparmor/refhandbook-runner" /etc/apparmor.d/refhandbook-runner
-  apparmor_parser -r /etc/apparmor.d/refhandbook-runner
-  install -o root -g root -m 0644 "$RUNNER_UNIT" /etc/systemd/system/refhandbook-runner.service
-else
-  sed '/^AppArmorProfile=/d' "$RUNNER_UNIT" > /etc/systemd/system/refhandbook-runner.service
-  chmod 0644 /etc/systemd/system/refhandbook-runner.service
-fi
+# The sandbox runner: the only unit that creates namespaces (docs/agents.md §7). Kernel primitives
+# and systemd only: nothing LSM-specific is installed.
+install -o root -g root -m 0644 "$SRC/deploy/refhandbook-runner.service" /etc/systemd/system/refhandbook-runner.service
 systemctl daemon-reload
 systemctl enable refhandbook refhandbook-runner >/dev/null
 systemctl restart refhandbook refhandbook-runner

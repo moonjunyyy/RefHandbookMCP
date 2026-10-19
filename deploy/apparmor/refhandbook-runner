@@ -1,8 +1,0 @@
-# /etc/apparmor.d/refhandbook-runner — lets the runner unit create user namespaces when
-# kernel.apparmor_restrict_unprivileged_userns=1 (Ubuntu >= 23.10). Load: apparmor_parser -r <this file>
-abi <abi/4.0>,
-include <tunables/global>
-
-profile refhandbook-runner flags=(unconfined) {
-  userns,
-}

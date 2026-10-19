@@ -335,7 +335,8 @@ Launch sequence (the child process, before `execve`):
 
 `refhandbook sandbox-check` reports each capability and the fallback it will use:
 
-- unprivileged userns, including Ubuntu's `kernel.apparmor_restrict_unprivileged_userns`;
+- unprivileged userns (and, if the host forbids them through Ubuntu's
+  `kernel.apparmor_restrict_unprivileged_userns=1`, the sysctl that lifts it);
 - the Landlock ABI;
 - seccomp;
 - cgroup delegation and its controllers;
@@ -349,17 +350,17 @@ cgroup v2 offers `cpuset cpu io memory pids`.
 It differs from `refhandbook.service` in these lines:
 
 ```
-ExecStart=/opt/refhandbook-venv/bin/refhandbook runner
-Delegate=yes                                   # cgroup subtree for per-call limits
-LoadCredential=agent-keys:/etc/refhandbook/agent-keys
+ExecStart=/opt/refhandbook-venv/bin/refhandbook runner --data-dir /var/lib/refhandbook
+Delegate=yes                                   # cgroup subtree for per-job limits
 RestrictNamespaces=user mnt pid net ipc uts cgroup
-SystemCallFilter=@system-service @mount unshare pivot_root   # the launcher needs them before its own seccomp
-AppArmorProfile=refhandbook-runner             # Ubuntu ≥ 23.10: grants `userns,` to this unit only
-ReadWritePaths=/var/lib/refhandbook
+SystemCallFilter=@system-service @mount @sandbox unshare pivot_root sethostname   # the launcher's, before its own seccomp
+SystemCallErrorNumber=EPERM
+RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_INET AF_INET6
+ReadWritePaths=/var/lib/refhandbook            # no ProtectKernelTunables: it blocks the sandbox's /proc
 ```
 
-`deploy/apparmor/refhandbook-runner` ships with the unit. On a distribution without AppArmor, the
-line is dropped.
+The unit uses kernel primitives and systemd only: no LSM profile, so it runs the same on WSL2 and on
+distributions without AppArmor.
 
 ## 8. Threat model
 
@@ -397,7 +398,7 @@ line is dropped.
 | P2 | Provider adapters plus `fake`; context compiler with the four pruning levels | golden contexts per level; cache-stable prefix |
 | P3 | Runner: leases, scheduler, tools, spawn/split/clone/race/wait, budgets, resume after a kill | scripted multi-agent runs on `fake` |
 | P4 | Key sealing, `/agents` pages, `agent_run` / `agent_keys` tools, `ag-*` cards | page flows as in `test_remote.py` |
-| P5 | Deploy: runner unit, AppArmor profile, `install.sh` key pair, nginx routes | `sandbox-check` on the server |
+| P5 | Deploy: runner unit, `install.sh` key pair, nginx routes | `sandbox-check` on the server |
 
 ## Open choices
 
