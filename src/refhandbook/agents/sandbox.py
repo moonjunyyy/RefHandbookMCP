@@ -34,6 +34,7 @@ import errno
 import json
 import os
 import platform
+import re
 import resource
 import shutil
 import signal
@@ -55,15 +56,15 @@ MS_RDONLY, MS_NOSUID, MS_NODEV, MS_NOEXEC = 1, 2, 4, 8
 MS_REMOUNT, MS_BIND, MS_REC, MS_PRIVATE = 32, 4096, 16384, 1 << 18
 MNT_DETACH = 2
 AT_FDCWD, AT_RECURSIVE = -100, 0x8000
-MOUNT_ATTR_RDONLY, MOUNT_ATTR_NOSUID, MOUNT_ATTR_NODEV = 0x1, 0x2, 0x4
+MOUNT_ATTR_RDONLY, MOUNT_ATTR_NOSUID, MOUNT_ATTR_NODEV, MOUNT_ATTR_NOEXEC = 0x1, 0x2, 0x4, 0x8
 
-PR_SET_PDEATHSIG, PR_SET_NO_NEW_PRIVS, PR_SET_SECCOMP = 1, 38, 22
+PR_SET_PDEATHSIG, PR_SET_NO_NEW_PRIVS, PR_SET_SECCOMP, PR_SET_KEEPCAPS = 1, 38, 22, 8
 SECCOMP_MODE_FILTER = 2
 
 # Syscall numbers. x86_64 from asm/unistd_64.h; aarch64 is the asm-generic table.
 _SYSCALLS = {
     "x86_64": dict(
-        clone=56, ptrace=101, syslog=103, vhangup=153, pivot_root=155, adjtimex=159, chroot=161, acct=163,
+        clone=56, ptrace=101, capget=125, capset=126, syslog=103, vhangup=153, pivot_root=155, adjtimex=159, chroot=161, acct=163,
         settimeofday=164, mount=165, umount2=166, swapon=167, swapoff=168, reboot=169, iopl=172, ioperm=173,
         init_module=175, delete_module=176, quotactl=179, lookup_dcookie=212, clock_settime=227, kexec_load=246,
         add_key=248, request_key=249, keyctl=250, unshare=272, perf_event_open=298, name_to_handle_at=303,
@@ -77,7 +78,7 @@ _SYSCALLS = {
         lookup_dcookie=18, umount2=39, mount=40, pivot_root=41, chroot=51, vhangup=58, quotactl=60, acct=89,
         unshare=97, kexec_load=104, init_module=105, delete_module=106, clock_settime=112, syslog=116, ptrace=117,
         reboot=142, settimeofday=170, adjtimex=171, add_key=217, request_key=218, keyctl=219, clone=220, swapon=224,
-        swapoff=225, perf_event_open=241, name_to_handle_at=264, open_by_handle_at=265, clock_adjtime=266, setns=268,
+        swapoff=225, capget=90, capset=91, perf_event_open=241, name_to_handle_at=264, open_by_handle_at=265, clock_adjtime=266, setns=268,
         process_vm_readv=270, process_vm_writev=271, finit_module=273, bpf=280, userfaultfd=282, kexec_file_load=294,
         io_uring_setup=425, io_uring_enter=426, io_uring_register=427, open_tree=428, move_mount=429, fsopen=430,
         fsconfig=431, fsmount=432, fspick=433, clone3=435, pidfd_getfd=438, mount_setattr=442, quotactl_fd=443,
@@ -86,9 +87,12 @@ _SYSCALLS = {
     ),
 }
 _AUDIT_ARCH = {"x86_64": 0xC000003E, "aarch64": 0xC00000B7}
+KNOWN_MAX = 467  # open_tree_attr, the newest call in both tables (Linux 6.15)
 
 # What the sandboxed command may not call. clone is filtered on its flags; clone3 (whose flags sit
-# in memory a filter cannot read) answers ENOSYS, so libc falls back to clone.
+# in memory a filter cannot read) answers ENOSYS, so libc falls back to clone. A syscall numbered past
+# KNOWN_MAX (one added to the kernel after this table) answers ENOSYS too: what the table has not
+# judged is refused, the part of an allow-list that matters, without listing ~350 harmless calls.
 DENY = (
     "mount umount2 pivot_root chroot unshare setns fsopen fsconfig fsmount fspick move_mount open_tree "
     "open_tree_attr mount_setattr statmount listmount ptrace process_vm_readv process_vm_writev pidfd_getfd bpf "
@@ -107,6 +111,8 @@ LL_NET_BIND_TCP, LL_NET_CONNECT_TCP = 1, 2
 LL_SCOPE_ABSTRACT_UNIX_SOCKET, LL_SCOPE_SIGNAL = 1, 2
 
 DEV_NODES = ("null", "zero", "full", "random", "urandom", "tty")
+HOST_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+COMMAND_DIRS = ("usr/bin", "usr/sbin", "usr/local/bin", "usr/local/sbin", "bin", "sbin")
 # The files of the host's /etc that programs commonly need, copied into the host base's /etc layer.
 HOST_ETC = (
     "ld.so.cache", "ld.so.conf", "ld.so.conf.d", "ssl", "ca-certificates", "ca-certificates.conf", "alternatives",
@@ -158,6 +164,14 @@ class Spec:
     limits: Limits = field(default_factory=Limits)
     cgroup: str | None = None  # a cgroup leaf the runner created; the launcher joins it
     hostname: str = "sandbox"
+    # The command view: None shows the host's command directories; a list shows only these commands
+    # (host base), each found on the host's PATH and bound at /usr/bin/<name>. The other command
+    # directories are empty. What a script can call is what this list put there.
+    commands: list[str] | None = None
+    # The uid/gid outside the sandbox (a per-user subordinate id). None maps the runner's own uid.
+    # Another id needs a runner with CAP_SETUID/CAP_SETGID (the parent writes the child's map).
+    outside_uid: int | None = None
+    outside_gid: int | None = None
 
     def to_json(self) -> str:
         return json.dumps(asdict(self))
@@ -172,6 +186,18 @@ class Spec:
 
     def overlay_points(self) -> tuple[str, ...]:
         return OVERLAY_POINTS["host" if self.base == "host" else "rootfs"]
+
+    def resolved_commands(self) -> dict[str, str]:
+        """name → the host file it runs (resolved on the host before the root is built)."""
+        out = {}
+        for name in self.commands or []:
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", name):
+                raise SandboxError(f"command {name!r}: a bare name (letters, digits, . _ + -)")
+            path = shutil.which(name, path=HOST_PATH)
+            if path is None:
+                raise SandboxError(f"command {name!r} is not installed on the host")
+            out[name] = os.path.realpath(path)
+        return out
 
     def writable(self) -> list[str]:
         """Paths inside the sandbox the command may write under."""
@@ -330,6 +356,7 @@ def seccomp_program(arch: str | None = None) -> bytes:
          _ins(_BPF_LD_W_ABS, 0)]
     if arch == "x86_64":  # the x32 ABI shares this arch value: refuse it outright
         p += [_ins(_BPF_JGE, 0x40000000, 0, 1), _ins(_BPF_RET, _RET_KILL_PROCESS)]
+    p += [_ins(_BPF_JGE, KNOWN_MAX + 1, 0, 1), _ins(_BPF_RET, enosys)]  # newer than this table: unjudged
     for name in DENY:
         if name in table:
             p += [_ins(_BPF_JEQ, table[name], 0, 1), _ins(_BPF_RET, eperm)]
@@ -534,7 +561,23 @@ def _point_key(point: str) -> str:
     return point.replace("/", "_")
 
 
-def build_root(spec: Spec) -> None:
+def _command_view(root: str, commands: dict[str, str]) -> None:
+    """Empty every command directory of the root, then bind the allowed commands at /usr/bin."""
+    for d in COMMAND_DIRS:
+        target = f"{root}/{d}"
+        if os.path.isdir(target) and not os.path.islink(target):
+            mount("tmpfs", target, "tmpfs", MS_NOSUID | MS_NODEV | MS_RDONLY, "mode=0755,size=64k")
+    bindir = f"{root}/usr/bin"
+    mount("tmpfs", bindir, "tmpfs", MS_NOSUID | MS_NODEV, "mode=0755,size=64k")
+    for name, src in commands.items():
+        _touch(f"{bindir}/{name}")
+        mount(src, f"{bindir}/{name}", None, MS_BIND)
+    mount_setattr(bindir, MOUNT_ATTR_RDONLY | MOUNT_ATTR_NOSUID | MOUNT_ATTR_NODEV)
+
+
+def build_root(spec: Spec, commands: dict[str, str] | None = None) -> None:
+    """The new root. Everything writable is mounted noexec: nothing the command writes can run as
+    code (not by execve, and not by mmap through the loader), only through an allowed interpreter."""
     root = _check_path(spec.root)
     mount("tmpfs", root, "tmpfs", MS_NOSUID | MS_NODEV, "mode=0755,size=16m")
     host = spec.base == "host"
@@ -577,11 +620,15 @@ def build_root(spec: Spec) -> None:
         elif lowers:
             _overlay(target, lowers, None, None)
 
+    if commands is not None and host:
+        _command_view(root, commands)
+
     for d in ("work", "tmp", "run", "proc", "dev", "root"):
         _mkdir(f"{root}/{d}")
     mount(_check_path(spec.work), f"{root}/work", None, MS_BIND)
-    mount("tmpfs", f"{root}/tmp", "tmpfs", MS_NOSUID | MS_NODEV, f"mode=1777,size={spec.limits.tmp_mb}m")
-    mount("tmpfs", f"{root}/run", "tmpfs", MS_NOSUID | MS_NODEV, "mode=0755,size=8m")
+    mount_setattr(f"{root}/work", MOUNT_ATTR_NOSUID | MOUNT_ATTR_NODEV | MOUNT_ATTR_NOEXEC, recursive=False)
+    mount("tmpfs", f"{root}/tmp", "tmpfs", MS_NOSUID | MS_NODEV | MS_NOEXEC, f"mode=1777,size={spec.limits.tmp_mb}m")
+    mount("tmpfs", f"{root}/run", "tmpfs", MS_NOSUID | MS_NODEV | MS_NOEXEC, "mode=0755,size=8m")
     for src, dst, rw in [(s, d, False) for s, d in spec.binds_ro] + [(s, d, True) for s, d in spec.binds_rw]:
         target = f"{root}/{dst.lstrip('/')}"
         if os.path.isdir(src):
@@ -590,7 +637,7 @@ def build_root(spec: Spec) -> None:
             _mkdir(os.path.dirname(target))
             _touch(target)
         mount(src, target, None, MS_BIND | MS_REC)
-        mount_setattr(target, MOUNT_ATTR_NOSUID | MOUNT_ATTR_NODEV | (0 if rw else MOUNT_ATTR_RDONLY))
+        mount_setattr(target, MOUNT_ATTR_NOSUID | MOUNT_ATTR_NODEV | (MOUNT_ATTR_NOEXEC if rw else MOUNT_ATTR_RDONLY))
 
     # /dev: a tmpfs with the harmless host nodes bound in
     mount("tmpfs", f"{root}/dev", "tmpfs", MS_NOSUID, "mode=0755,size=1m")
@@ -605,7 +652,7 @@ def build_root(spec: Spec) -> None:
                       ("stderr", "/proc/self/fd/2")):
         os.symlink(tgt, f"{root}/dev/{name}")
     _mkdir(f"{root}/dev/shm")
-    mount("tmpfs", f"{root}/dev/shm", "tmpfs", MS_NOSUID | MS_NODEV, "mode=1777,size=64m")
+    mount("tmpfs", f"{root}/dev/shm", "tmpfs", MS_NOSUID | MS_NODEV | MS_NOEXEC, "mode=1777,size=64m")
     mount("proc", f"{root}/proc", "proc", MS_NOSUID | MS_NODEV | MS_NOEXEC)
 
     old = f"{root}/.oldroot"
@@ -645,19 +692,90 @@ def _rlimits(spec: Spec) -> None:
             pass
 
 
-def _child(spec: Spec) -> None:
+def _child(spec: Spec, commands: dict[str, str] | None) -> None:
     prctl(PR_SET_PDEATHSIG, signal.SIGKILL)
     mount(None, "/", None, MS_REC | MS_PRIVATE)
-    build_root(spec)
+    build_root(spec, commands)
     name = spec.hostname.encode()
     _libc.sethostname(name, len(name))  # best effort: a failure leaves the host's name visible
     landlock_restrict(["/"], spec.writable(), deny_tcp=not spec.network)
     seccomp_install()
-    env = {"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "HOME": "/work",
+    env = {"PATH": HOST_PATH, "HOME": "/work",
            "USER": "agent" if spec.uid else "root", "LANG": "C.UTF-8", "TERM": "dumb", "TMPDIR": "/tmp"}
     env.update(spec.env)
     os.chdir(spec.cwd)
+    if (os.getuid(), os.getgid()) != (spec.uid, spec.gid):
+        os.setresgid(spec.gid, spec.gid, spec.gid)
+        os.setresuid(spec.uid, spec.uid, spec.uid)
     os.execvpe(spec.argv[0], spec.argv, env)
+
+
+def _enter_namespaces(spec: Spec) -> None:
+    """Unshare, and map spec.uid inside to the runner's uid outside, or to spec.outside_uid. A map
+    to another id is written from the parent user namespace, which needs CAP_SETUID there: a helper
+    forked before the unshare writes it, then lets this process go on."""
+    uid, gid = os.getuid(), os.getgid()
+    flags = NS_FLAGS & ~CLONE_NEWTIME & ~(CLONE_NEWNET if spec.network else 0)
+    out_uid = uid if spec.outside_uid is None else spec.outside_uid
+    out_gid = gid if spec.outside_gid is None else spec.outside_gid
+    if (out_uid, out_gid) == (uid, gid):
+        os.unshare(flags)
+        _write("/proc/self/setgroups", "deny")
+        _write("/proc/self/uid_map", f"{spec.uid} {uid} 1")
+        _write("/proc/self/gid_map", f"{spec.gid} {gid} 1")
+        return
+    if os.geteuid() != 0:
+        raise SandboxError("a per-user outside uid needs a runner with CAP_SETUID (run the runner as root, "
+                           "or leave outside_uid unset)")
+    me = os.getpid()
+    go_r, go_w = os.pipe()
+    done_r, done_w = os.pipe()
+    helper = os.fork()
+    if helper == 0:  # stays in the parent namespace
+        os.close(go_w), os.close(done_r)
+        ok = b"x"
+        try:
+            os.read(go_r, 1)
+            _write(f"/proc/{me}/setgroups", "deny")
+            _write(f"/proc/{me}/uid_map", f"{spec.uid} {out_uid} 1")
+            _write(f"/proc/{me}/gid_map", f"{spec.gid} {out_gid} 1")
+            ok = b"1"
+        except OSError as e:
+            os.write(2, f"sandbox: id map: {e}\n".encode())
+        os.write(done_w, ok)
+        os._exit(0)
+    os.close(go_r), os.close(done_w)
+    os.unshare(flags)
+    os.write(go_w, b"1")
+    ok = os.read(done_r, 1)
+    os.waitpid(helper, 0)
+    os.close(go_w), os.close(done_r)
+    if ok != b"1":
+        raise SandboxError("could not map the outside uid")
+    # Unmapped inside, this process could create no file; become spec.uid, keeping the namespace's
+    # capabilities that building the root needs (execve drops them, as for any non-root uid).
+    prctl(PR_SET_KEEPCAPS, 1)
+    os.setresgid(spec.gid, spec.gid, spec.gid)
+    os.setresuid(spec.uid, spec.uid, spec.uid)
+    _raise_effective_caps()
+
+
+class _CapHeader(ctypes.Structure):
+    _fields_ = [("version", ctypes.c_uint32), ("pid", ctypes.c_int)]
+
+
+class _CapData(ctypes.Structure):
+    _fields_ = [("effective", ctypes.c_uint32), ("permitted", ctypes.c_uint32), ("inheritable", ctypes.c_uint32)]
+
+
+def _raise_effective_caps() -> None:
+    hdr, data = _CapHeader(0x20080522, 0), (_CapData * 2)()
+    if _libc.syscall(_nr("capget"), ctypes.byref(hdr), data) != 0:
+        raise _err("capget")
+    for d in data:
+        d.effective = d.permitted
+    if _libc.syscall(_nr("capset"), ctypes.byref(hdr), data) != 0:
+        raise _err("capset")
 
 
 def launch(spec: Spec) -> int:
@@ -666,16 +784,13 @@ def launch(spec: Spec) -> int:
     if spec.cgroup:
         _write(os.path.join(spec.cgroup, "cgroup.procs"), str(os.getpid()))
     _rlimits(spec)
-    uid, gid = os.getuid(), os.getgid()
-    os.unshare(NS_FLAGS & ~CLONE_NEWTIME & ~(CLONE_NEWNET if spec.network else 0))
-    _write("/proc/self/setgroups", "deny")
-    _write("/proc/self/uid_map", f"{spec.uid} {uid} 1")
-    _write("/proc/self/gid_map", f"{spec.gid} {gid} 1")
+    commands = spec.resolved_commands() if spec.commands is not None else None
+    _enter_namespaces(spec)
     # From here, errors in the child are reported on stderr with status 125.
     pid = os.fork()
     if pid == 0:
         try:
-            _child(spec)
+            _child(spec, commands)
         except BaseException as e:  # noqa: BLE001  (anything before exec is a setup failure)
             os.write(2, f"sandbox: {e}\n".encode())
             os._exit(125)
@@ -736,6 +851,7 @@ def check() -> list[tuple[str, bool, str]]:
         out.append(("apparmor userns", False, "kernel.apparmor_restrict_unprivileged_userns=1: run the runner "
                     "under deploy/apparmor/refhandbook-runner (AppArmorProfile=)"))
     r, w = os.pipe()
+    uid = os.getuid()  # before the unshare: inside an unmapped namespace getuid() is the overflow id
     pid = os.fork()
     if pid == 0:
         os.close(r)
@@ -743,7 +859,7 @@ def check() -> list[tuple[str, bool, str]]:
         try:
             os.unshare(CLONE_NEWUSER | CLONE_NEWNS | CLONE_NEWNET | CLONE_NEWPID | CLONE_NEWIPC | CLONE_NEWUTS)
             _write("/proc/self/setgroups", "deny")
-            _write("/proc/self/uid_map", f"0 {os.getuid()} 1")
+            _write("/proc/self/uid_map", f"0 {uid} 1")
         except OSError as e:
             msg = f"unshare: {e}"
         os.write(w, msg.encode())
