@@ -93,6 +93,8 @@ def test_every_research_rule_fires(everything):
     projected(everything, "everything")
     g = fresh_graph()
     L = migrate.ledger_to_graph(g, everything.export("everything"))
+    # the log's counts are derived by the runtime (runtime.Mirror._derive), not carried by an export
+    g.update_node(L, actor="kernel", validate=False, attrs={"derived_last_review": 0, "derived_signals": 3})
     fired = {f.rule for f in evaluate(g, "check", L, "ledger")}
     fired |= {f.rule for f in evaluate(g, "obligation", L, "ledger")}
     fired |= {f.rule for f in findings(g, migrate.ensure_turn(g, L, 5))}

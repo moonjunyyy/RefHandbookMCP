@@ -170,6 +170,11 @@ class ResearchError(HandbookError):
     """A refusal the caller resolves by doing what the message names."""
 
 
+class ProtocolRefused(ResearchError):
+    """A refusal of the protocol (no open turn, a stale token, the wrong turn number), not of the work:
+    it says nothing about the rules, so it is not a review signal (see Research.note_refusal)."""
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -247,17 +252,31 @@ class Research:
     def _log(self, ledger: str, turn: int, msg: str) -> None:
         self.db.execute("INSERT INTO rl_log (ledger, turn, ts, msg) VALUES (?, ?, ?, ?)", (ledger, turn, _now(), msg))
 
+    def note_refusal(self, ledger: str, err: Exception) -> None:
+        """A refusal of the work is a review signal: log it on the ledger (`refused: …`), in its own
+        transaction since the refused write rolled back. Protocol refusals are not logged."""
+        if isinstance(err, ProtocolRefused) or not isinstance(err, HandbookError):
+            return
+        row = self.db.execute("SELECT turn FROM rl_ledgers WHERE id = ?", (ledger,)).fetchone()
+        if row is None or (self.k is not None and self.k.meta(f"quarantine:{ledger}")):
+            return
+        first = str(err).strip().splitlines()[0] if str(err).strip() else type(err).__name__
+        with self.db:
+            self._log(ledger, row[0], "refused: " + first.removeprefix("REFUSED:").strip()[:200])
+            if self.k is not None:
+                self.k.sync_ledger(self, ledger)
+
     def _gate(self, ledger: str, token: str | None) -> dict[str, Any]:
         lg = self._ledger(ledger)
         if not lg["open"]:
-            raise ResearchError(f"REFUSED: no turn is open on {ledger!r}. Run research_begin first (untruncated).")
+            raise ProtocolRefused(f"REFUSED: no turn is open on {ledger!r}. Run research_begin first (untruncated).")
         if self._digest(ledger) != lg["token"]:
-            raise ResearchError(
+            raise ProtocolRefused(
                 f"REFUSED: ledger {ledger!r} changed outside this caller since the last device output "
                 f"(another session, or a direct edit). Report it (X7), then re-read with research_begin turn={lg['turn']}."
             )
         if token != lg["token"]:
-            raise ResearchError(
+            raise ProtocolRefused(
                 f"REFUSED: stale or missing token (the ledger moved on, perhaps through another session). "
                 f"Re-read with research_begin turn={lg['turn']}: the token is on the first line of its output."
             )
@@ -301,7 +320,7 @@ class Research:
     def init(self, ledger: str, question: str) -> str:
         lid = slugify(ledger)
         if self.db.execute("SELECT 1 FROM rl_ledgers WHERE id = ?", (lid,)).fetchone():
-            raise ResearchError(f"ledger {lid!r} exists; ledgers are never recreated. Use research_begin.")
+            raise ProtocolRefused(f"ledger {lid!r} exists; ledgers are never recreated. Use research_begin.")
         with self.db:
             self.db.execute("INSERT INTO rl_ledgers (id, question, created_at, map) VALUES (?, ?, ?, ?)",
                             (lid, question, _now(), f"Q  {question}"))
@@ -442,10 +461,10 @@ class Research:
                 notes.append("WARNING: ledger changed outside this caller since the last device output "
                              "(another session or a direct edit) — report it (X7) and re-read the changed rows.")
             if lg["open"] and lg["turn"] != turn:
-                raise ResearchError(f"REFUSED: turn {lg['turn']} is still open. Close it with research_end, "
+                raise ProtocolRefused(f"REFUSED: turn {lg['turn']} is still open. Close it with research_end, "
                                     "or report why it cannot close.")
             if not lg["open"] and turn <= lg["last_closed"]:
-                raise ResearchError(f"REFUSED: turn {turn} is already closed (last closed {lg['last_closed']}). "
+                raise ProtocolRefused(f"REFUSED: turn {turn} is already closed (last closed {lg['last_closed']}). "
                                     f"Use turn={lg['last_closed'] + 1}.")
             if not lg["open"] and turn > lg["last_closed"] + 1:
                 notes.append(f"WARNING: turn gap — last closed turn is {lg['last_closed']}, this is {turn}. "
@@ -522,7 +541,7 @@ class Research:
             return (f"  DOC       {ref} {d['label']}: {n} ledger change(s) since its sync — "
                     "plan before the next edit (research_doc plan)")
         if kind == "review":
-            return f"  REVIEW    {src}: open card rs-rv (review the rules against what happened), then research_review done"
+            return f"  REVIEW    {src}: open card rs-rv (the rules against what happened), then research_review"
         return f"  {kind.upper():9} {ref}" + (f" (from {src})" if src else "")
 
     def _obligations(self, ledger: str) -> list[str]:
@@ -564,7 +583,7 @@ class Research:
         with self.db:
             lg = self._gate(ledger, token)
             if lg["turn"] != turn:
-                raise ResearchError(f"REFUSED: the open turn is {lg['turn']}, not {turn}")
+                raise ProtocolRefused(f"REFUSED: the open turn is {lg['turn']}, not {turn}")
             blockers = [text for *_, text in self.blockers(ledger, turn, idle)]
             _, warnings = self.check(ledger)
             if blockers:
@@ -769,6 +788,70 @@ class Research:
             return "\n".join([f"{hit} of {of}: {v}"] + msg)
 
         return self._write(ledger, token, fn)
+
+    # ── review: the rules, judged against what happened (card rs-rv) ─────
+
+    def review(self, ledger: str, token: str | None, why: str, rules: list[dict[str, Any]] | None = None) -> str:
+        """Record a review of the rules on this ledger (`review: <why>` in the log, which resets the
+        REVIEW obligation) and propose rule changes. A proposal is a kernel rule written by the model:
+        it is evaluated at once on every ledger of the store, its findings shown as warnings (a
+        proposed rule never blocks), until the user approves or the model withdraws it."""
+        if not why.strip():
+            raise ResearchError("REFUSED: a review needs its finding in `why` (what happened, and the rule it shows "
+                                "missing, ambiguous, conflicting or stale — or 'no gap found' with the signals read)")
+        if self.k is None:
+            raise ResearchError("REFUSED: reviews need the kernel")
+        specs = [dict(r) for r in rules or []]
+        for spec in specs:
+            for k in ("id", "phase", "body"):
+                if not str(spec.get(k, "")).strip():
+                    raise ResearchError(f"REFUSED: a proposed rule needs {k} (id, phase, body, message; see card rs-rv)")
+            spec.setdefault("applies_to", "ledger")
+
+        def fn(lg):
+            from .kernel.rules import evaluate
+
+            g = self.k.g
+            self._log(ledger, lg["turn"], f"review: {why.strip()}")
+            out = [f"REVIEW recorded at turn {lg['turn']}: {why.strip()}"]
+            if not specs:
+                return "\n".join(out)
+            replaces = {s["id"]: s.pop("replaces", "") for s in specs}
+            g.define_rules(specs, actor="model")
+            for s in specs:
+                rid = s["id"]
+                note = f" (replaces {replaces[rid]})" if replaces[rid] else ""
+                g.log("model", f"proposal {rid}{note}: {why.strip()}", rid)
+                self._log(ledger, lg["turn"], f"proposed rule {rid}{note}")
+                if s["phase"] in ("check", "obligation"):
+                    hits = [f.message for f in evaluate(g, s["phase"], ledger, "ledger") if f.rule == rid]
+                    trial = f"{len(hits)} finding(s) on {ledger} now" + "".join(f"\n      {h}" for h in hits[:5])
+                else:
+                    trial = f"evaluated when a {s['phase']} gate runs"
+                out.append(f"  PROPOSED {rid}{note} [{s['phase']}]: {trial}")
+            out.append("  A proposal warns and never blocks until the user approves it (the approval page, or "
+                       "`refhandbook approve rule <id>` on the server). Push `await adoption of <ids>` @USER.")
+            return "\n".join(out)
+
+        return self._write(ledger, token, fn)
+
+    def proposals(self) -> str:
+        """The model's open rule proposals in this store, with the review that made each."""
+        if self.k is None:
+            return "no kernel"
+        g = self.k.g
+        rows = g.db.execute("SELECT id, phase, severity, message, body FROM k_rules WHERE authority = 'proposed' "
+                            "AND state = 'active' ORDER BY id").fetchall()
+        if not rows:
+            return "No open proposals."
+        out = [f"{len(rows)} open proposal(s):"]
+        for rid, phase, sev, message, body in rows:
+            why = g.db.execute("SELECT event FROM k_log WHERE ref = ? AND event LIKE 'proposal %' ORDER BY seq DESC "
+                               "LIMIT 1", (rid,)).fetchone()
+            out.append(f"  {rid} [{phase}, {sev} once approved] {message}")
+            out.append(f"      {why[0] if why else '(no review recorded)'}")
+            out += ["      " + line.strip() for line in body.strip().splitlines()]
+        return "\n".join(out)
 
     def carry(self, ledger: str, token: str | None, uid: str, why: str) -> str:
         def fn(lg):

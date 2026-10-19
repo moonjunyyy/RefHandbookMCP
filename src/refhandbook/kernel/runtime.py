@@ -35,6 +35,9 @@ from .graph import Graph
 log = logging.getLogger("refhandbook.kernel")
 _ATTACH = threading.Lock()
 SCHEMA_VERSION = 1
+# log lines that say the rules and the work rubbed (rs_o_review counts them since the last review):
+# a refusal of the work, a hit disposed as unaffected, a directive carried, a plan object dropped
+REVIEW_SIGNALS = ("refused:%", "%: UNAFFECTED%", "carry %", "%dropped (%")
 
 
 class Quarantined(legacy.ResearchError):
@@ -97,6 +100,9 @@ class Mirror:
                 return
             fp = self._fingerprint(r, L)
             if not force and self.meta(f"sync:{L}") == fp and self.g.get_node(L) is not None:
+                if self._log_behind(r, L):  # only the log moved (a refusal, say): its facts, not the rows
+                    self._append_log(r, L)
+                    self._derive(r, L)
                 return
             data = r.export(L, include_log=False)
             if self.g.get_node(L) is not None:
@@ -108,13 +114,17 @@ class Mirror:
 
     def _derive(self, r: legacy.Research, L: str) -> None:
         """Facts the rules need that are counts over the log (the rule language has no aggregates)."""
-        last = r.db.execute("SELECT max(turn) FROM rl_log WHERE ledger = ? AND msg LIKE 'review:%'", (L,)).fetchone()[0]
-        since = last or 0
+        turn, seq = r.db.execute("SELECT max(turn), max(seq) FROM rl_log WHERE ledger = ? AND msg LIKE 'review:%'",
+                                 (L,)).fetchone()
         signals = r.db.execute(
-            "SELECT count(*) FROM rl_log WHERE ledger = ? AND turn > ? AND (msg LIKE 'refused:%' OR msg LIKE '%: UNAFFECTED%'"
-            " OR msg LIKE 'carry %' OR msg LIKE '%dropped (%')", (L, since)).fetchone()[0]
+            "SELECT count(*) FROM rl_log WHERE ledger = ? AND seq > ? AND (" + " OR ".join(
+                "msg LIKE ?" for _ in REVIEW_SIGNALS) + ")", (L, seq or 0, *REVIEW_SIGNALS)).fetchone()[0]
         self.g.update_node(L, actor="kernel", validate=False,
-                           attrs={"derived_last_review": since, "derived_signals": signals})
+                           attrs={"derived_last_review": turn or 0, "derived_signals": signals})
+
+    def _log_behind(self, r: legacy.Research, L: str) -> bool:
+        last = r.db.execute("SELECT max(seq) FROM rl_log WHERE ledger = ?", (L,)).fetchone()[0] or 0
+        return last > int(self.meta(f"logseq:{L}") or 0)
 
     def _append_log(self, r: legacy.Research, L: str) -> None:
         """The log is append-only: carry over the rows past the last one carried."""
@@ -184,15 +194,16 @@ class Mirror:
             return []
         conflicts = []
         with self.g.tx():
-            installed = {r["id"]: r for r in self.g.active_rules() if r["pkg"] == rs_pkg.PKG}
+            installed = {r["id"]: dict(r) for r in self.g.db.execute("SELECT * FROM k_rules WHERE pkg = ?", (rs_pkg.PKG,))}
             keep, base = set(), {}
             for rid, row in installed.items():
                 base[rid] = self.meta(f"pkgbase:{rid}")
-                if base[rid] is not None and base[rid] != _sha(row["body"] + row["message"]):
-                    keep.add(rid)  # changed after install: the user's version stands
+                if base[rid] is not None and (row["state"] == "retired" or base[rid] != _sha(row["body"] + row["message"])):
+                    keep.add(rid)  # changed or retired after install: the user's decision stands
             new = {r["id"] for r in rs_pkg.RULES}
             for rid in sorted(set(installed) - new - keep):
                 self.g.db.execute("UPDATE k_rules SET state = 'retired' WHERE id = ?", (rid,))
+                self.set_meta(f"pkgbase:{rid}", None)  # the package dropped it: no longer the package's to track
             rs_pkg.install(self.g, skip=keep)
             hb_pkg.install(self.g)
             for spec in rs_pkg.RULES:

@@ -79,13 +79,18 @@ description: >
 
      Before the session ends, run `research_ledgers` with `action="export"`
      (and `include_log=false` for a long ledger), and give the user the JSON
-     file. A JSON too large for a tool argument is imported on the server with
-     the CLI: `refhandbook --db <store> research research_ledgers @args.json`,
-     where args.json holds `{"action": "import", "data_file": "<path>"}`. Try
-     it first with `"dry_run": true`, or under another name with `"to"`.
+     file. A JSON too large for one tool argument travels in pieces:
+     `research_blob` put, then append, and `research_ledgers` import with
+     `ref=<the last ref>`. Try it first with `dry_run=true`, or under another
+     name with `to`.
 - **Ledgers are managed, not recreated.** `research_ledgers` copies (a sandbox
   to try something on) and renames; `research_ledger_delete` deletes, only
   with `confirm` set to the ledger id and only when the user asked.
+- **The rules are reviewed, not worked around.** Every 7 turns, or sooner when
+  refusals, UNAFFECTED disposals, carries and drops gather, `research_begin`
+  lists REVIEW (card rs-rv). A rule change is proposed with `research_review`;
+  it runs as a warning until the user approves it. Never treat a proposal as
+  in force.
 - The handbook does not replace judgment. If no card fits, say so in one line
   and push to `USER`. Never bend a situation to fit a card.
 
@@ -103,6 +108,7 @@ description: >
 | a document is written or changed, or the user provides one | `rs-n4` |
 | the question's objects belong to a field with its own checks | `rs-dom-*` (chosen in `rs-n2`) |
 | verdicts exist, but the program's standing is unclear | `rs-n3b` |
+| begin lists REVIEW, or a diagnosis exposes a missing, ambiguous, conflicting or stale rule | `rs-rv` |
 
 **Abnormal**: memory item first, then the card.
 
