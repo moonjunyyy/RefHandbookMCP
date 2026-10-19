@@ -47,6 +47,10 @@ grep -q '^RHB_PUBLIC_URL=https://hb.example.org$' "$ENVF" && { echo "set RHB_PUB
 # Not common-account: pam_unix's account phase reads shadow through a setuid/setgid helper, which a
 # non-root service under NoNewPrivileges cannot run, so it would refuse every directory account.
 # The account policy is the server's own: the name must resolve through NSS (and RHB_REQUIRE_GROUP).
+# Passwords that must be changed (expired, or a one-time +needchange) are refused with a pointer to
+# the account portal. pam_krb5 asks for the new password inside auth, which the server notices; with
+# pam_krb5's defer_pwchange or with pam_sss the expiry only shows in the account phase, so then add
+# "account required pam_krb5.so" (or pam_sss.so) above pam_permit; neither needs root there.
 # Kept if it exists, so a hand-tuned stack survives updates.
 if [ ! -e /etc/pam.d/refhandbook ]; then
   HEAD="# refhandbook: the system's password check; account policy is the server's own (NSS + RHB_REQUIRE_GROUP)"

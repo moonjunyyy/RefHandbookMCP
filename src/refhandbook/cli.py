@@ -94,6 +94,9 @@ def main(argv: list[str] | None = None) -> int:
         except remote.DirectoryUnavailable as e:
             print(f"directory unavailable: {e}", file=sys.stderr)
             return 2
+        except remote.PasswordChangeRequired:
+            print(f"password right, but {args.user} must change it first (expired or one-time)", file=sys.stderr)
+            return 1
         print(f"ok: signed in as {uid} ({cfg.auth})" if uid else f"refused ({cfg.auth}): wrong user or password, unknown account, or not in the required group; see the log")
         return 0 if uid else 1
     if args.command == "plugin-json":

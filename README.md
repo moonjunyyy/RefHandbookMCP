@@ -225,7 +225,12 @@ It is its own OAuth authorization server, which is what Claude expects of a conn
    phase is `pam_permit`, since pam_unix's account check needs root; instead the name must
    resolve through NSS, and `RHB_REQUIRE_GROUP` limits sign-in to one POSIX group. With `RHB_AUTH=ldap` it binds to the
    directory as the user instead (`RHB_LDAP_GROUP_FILTER` for the group). An empty password is
-   refused, and so is any non-ASCII name.
+   refused, and so is any non-ASCII name. A password that must be changed first (expired, or an
+   admin's one-time password) is refused with a message saying so; the server never changes it.
+   Under PAM, the conversation gives the password only to "Password:" prompts and ends the sign-in
+   at a "New password:" prompt, which pam_krb5 shows inside authentication; with `defer_pwchange`
+   or pam_sss the expiry comes from the account phase, so add `pam_krb5.so`/`pam_sss.so` to the
+   `account` lines of `/etc/pam.d/refhandbook`.
 4. The server issues a one-time code, bound to the PKCE challenge (S256) and to this server as the
    resource, and `/token` exchanges it for an access token (1 h) and a refresh token. Tokens carry
    the uid as their subject; codes and tokens are stored hashed in `RHB_DATA_DIR/auth.db`.
@@ -265,6 +270,21 @@ server, use `deploy/nginx-behind-router.conf` instead. The proxy must pass serve
 from outside with `curl https://<domain>/.well-known/oauth-protected-resource/mcp`, and test a
 sign-in on the server with
 `sudo -u refhandbook /opt/refhandbook-venv/bin/refhandbook --env-file /etc/refhandbook/env check-login <uid>`.
+
+**Site sign-in (`RHB_AUTH=sso`).** Behind the site-wide sign-in of
+[ldap-portal](../ldap-portal) (`deploy/site/www.m00nny.kr.conf`), this server checks no passwords.
+nginx runs `/login` through `auth_request`; the sign-in service vouches for the user with
+`X-Auth-Token`, an EdDSA JWT for audience `refhandbook` valid for a minute, which this server
+verifies with `RHB_SSO_PUBLIC_KEY_FILE`. A signed-in user only sees "allow <client> as <uid>?";
+someone not signed in is sent to `RHB_LOGIN_URL`. Before the grant, and on every refresh, the
+account must still resolve through NSS (and be in `RHB_REQUIRE_GROUP`). A consent POST from another
+origin is refused. The OAuth endpoints Claude talks to are unchanged.
+
+**Accounts.** This server creates no accounts. With the account portal
+([ldap-portal](../ldap-portal)) served under `/account` on the same host (`PORTAL_ROOT_PATH=/account`;
+`deploy/nginx.conf` and `deploy/Caddyfile` carry the proxy block) and `RHB_ACCOUNT_URL=/account`, the
+sign-in page links to its account request form (사용 신청, approved by an admin, who gets a one-time
+password to pass on) and to its password-change page for one-time and expired passwords.
 
 **Connect.** In Claude, add the plugin (built with `plugin-json`) and press Connect on its
 Connectors tab, or add `https://<domain>/mcp` as a custom connector. Claude Code connects through
