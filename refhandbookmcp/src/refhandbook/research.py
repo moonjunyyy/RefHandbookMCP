@@ -833,7 +833,7 @@ class Research:
                     trial = f"evaluated when a {s['phase']} gate runs"
                 out.append(f"  PROPOSED {rid}{note} [{s['phase']}]: {trial}")
             out.append("  A proposal warns and never blocks until the user approves the version shown (the approval "
-                       "page, or `refhandbook proposals` then `approve rule <id> --seen <sha>` on the server). "
+                       "page /agents, or `refhandbook proposals` then `approve rule <id> --seen <sha>` on the server). "
                        "Push `await adoption of <ids>` @USER.")
             return "\n".join(out)
 
