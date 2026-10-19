@@ -950,6 +950,7 @@ def build(cfg: Config, authenticator: object | None = None, sso_tokens: SsoToken
     provider = SQLiteOAuthProvider(cfg, auth_fn)
     stores = UserStores(cfg.data_dir)
     server._user_store = stores
+    os.environ.setdefault("RHB_RUNNER", "external")  # this unit may not create namespaces: the runner unit runs jobs
     research_api.use_resolver(server.handbook)
 
     public_host = urlparse(cfg.public_url).netloc

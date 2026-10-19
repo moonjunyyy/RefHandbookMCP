@@ -1,0 +1,42 @@
+# /etc/systemd/system/refhandbook-runner.service
+# Runs the sandbox jobs the MCP server queues (docs/agents.md §7). The only unit that may create
+# namespaces; it shares nothing with the MCP service but the store files under /var/lib/refhandbook.
+[Unit]
+Description=refhandbook sandbox runner
+After=network-online.target refhandbook.service
+
+[Service]
+Type=simple
+User=refhandbook
+Group=refhandbook
+EnvironmentFile=/etc/refhandbook/env
+WorkingDirectory=/var/lib/refhandbook
+ExecStart=/opt/refhandbook-venv/bin/refhandbook runner --data-dir /var/lib/refhandbook
+Restart=on-failure
+RestartSec=3
+Delegate=yes
+
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/lib/refhandbook
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectClock=yes
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+# the launcher makes these namespaces, then installs its own seccomp filter inside them
+RestrictNamespaces=user mnt pid net ipc uts cgroup
+SystemCallFilter=@system-service @mount unshare pivot_root
+SystemCallArchitectures=native
+LockPersonality=yes
+UMask=0077
+# Ubuntu >= 23.10 restricts unprivileged user namespaces: deploy/apparmor/refhandbook-runner grants
+# them to this unit only. Drop the line on a distribution without AppArmor.
+AppArmorProfile=refhandbook-runner
+
+[Install]
+WantedBy=multi-user.target
