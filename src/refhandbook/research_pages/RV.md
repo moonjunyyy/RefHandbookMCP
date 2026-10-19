@@ -29,9 +29,13 @@ ENTRY — object: a K routed `@RV`, from X2 or X3 when a diagnosis exposes a mis
 5. Record the review with `research_review(why=…)`, even when no gap was
    found: `why` holds the finding, or "no gap: <signals read>". This resets
    the REVIEW obligation.
-6. Only the user adopts a proposal (the approval page, or
-   `refhandbook approve rule <id>` on the server). Never phrase a proposal as
-   already in force.
+6. Only the user adopts a proposal: the approval page, or on the server
+   `refhandbook proposals`, then `refhandbook approve rule <id> --seen <sha>`
+   (or `reject`). An approval names the version shown, and a rejected id cannot
+   be proposed again. Never phrase a proposal as already in force.
+7. A proposal must be cheap: it runs on every ledger at every call. One that
+   takes over its budget (1 s) is refused, or retired when it meets a large
+   ledger later.
 
 **EXITS** (each exit returns objects; `<caller>` = the page of the K that routed here)
 

@@ -8,7 +8,7 @@ import pytest
 
 from refhandbook import Handbook, cli, render, research, research_api
 from refhandbook.kernel import KernelError
-from refhandbook.kernel.graph import Forbidden
+from refhandbook.kernel.graph import Forbidden, rule_sha
 from refhandbook.kernel.packages import research as rs_pkg
 from refhandbook.research import ResearchError
 
@@ -24,6 +24,11 @@ def api(tmp_path):
     research_api.bind(hb)
     research_api.research_ledgers(action="init", ledger="geo", question="q")
     return hb
+
+
+def seen(rid):
+    """The sha the proposals listing shows for a rule (what the user approves)."""
+    return rule_sha(research_api.R().k.g.get_rule(rid))[:12]
 
 
 def turn(n, ledger="geo"):
@@ -73,11 +78,13 @@ def test_a_proposal_warns_until_the_user_approves_it(api, capsys):
     assert "PROPOSED rv_says_drops [check]: 1 finding(s) on geo now" in out and "H1: says 'drops'" in out
     check = research_api.research_check("geo")
     assert "WARN  H1: says 'drops'" in check and "ERROR" not in check  # a proposal never blocks
-    assert "rv_says_drops [check, block once approved]" in research_api.research_review("geo", action="proposals")
+    assert "[check, block once approved]" in research_api.research_review("geo", action="proposals")
     g = research_api.R().k.g
     with pytest.raises(Forbidden, match="only the user approves"):
         g.approve("rule", "rv_says_drops", actor="model")
-    assert cli.main(["--db", str(api.path), "approve", "rule", "rv_says_drops"]) == 0
+    sha = seen("rv_says_drops")
+    assert f"rv_says_drops sha {sha}" in research_api.research_review("geo", action="proposals")
+    assert cli.main(["--db", str(api.path), "approve", "rule", "rv_says_drops", "--seen", sha]) == 0
     assert "rule rv_says_drops approved" in capsys.readouterr().out
     assert "ERROR H1: says 'drops'" in research_api.research_check("geo")
     assert research_api.research_review("geo", action="proposals") == "No open proposals."
@@ -101,7 +108,8 @@ def test_a_package_rule_the_user_retired_stays_retired_across_upgrades(api, monk
     research_api.research_review("geo", token=t, why="accreting fires on quoted history",
                                  rules=[dict(RULE, id="rv_accreting", replaces="rs_w_accreting",
                                              body=RULE["body"].replace("rv_says_drops", "rv_accreting"))])
-    assert cli.main(["--db", str(api.path), "approve", "rule", "rv_accreting", "--retire", "rs_w_accreting"]) == 0
+    assert cli.main(["--db", str(api.path), "approve", "rule", "rv_accreting", "--seen", seen("rv_accreting"),
+                     "--retire", "rs_w_accreting"]) == 0
     m = research_api.R().k
     monkeypatch.setattr(rs_pkg, "RULES", [dict(r, message=r["message"] + " (v2)") for r in rs_pkg.RULES])
     m.upgrade_packages()
@@ -121,6 +129,110 @@ def test_the_server_offers_research_review():
 
     tools = {t.name: t for t in asyncio.run(server.mcp.list_tools())}
     assert {"ledger", "action", "token", "why", "rules"} <= set(tools["research_review"].input_schema["properties"])
+
+
+# ── what the independent review found: each test names the general rule ──
+
+SLOW = {"id": "rv_slow", "phase": "check", "message": "{A}",
+        "body": "rv_slow(A) :- node(A, _, _), node(B, _, _), node(C, _, _), node(D, _, _)."}
+
+
+def test_a_costly_proposal_is_refused_and_a_stored_one_retires_itself(api, monkeypatch):
+    """Everything the model writes is bounded: a proposal that would tax every call never stands."""
+    from refhandbook.kernel import rules
+
+    monkeypatch.setattr(rules, "PROPOSED_BUDGET", 0.2)
+    out, t = turn(1)
+    with pytest.raises(ResearchError, match="too costly to run on every ledger"):
+        research_api.research_review("geo", token=t, why="x", rules=[SLOW])
+    g = research_api.R().k.g
+    assert g.get_rule("rv_slow") is None
+    with g.tx():  # cheap where it was proposed, costly later: stored, then met on a large ledger
+        g.define_rules([SLOW], actor="model")
+    check = research_api.research_check("geo")
+    assert "OVER BUDGET: proposed rule rv_slow took over 0.2 s" in check
+    assert g.get_rule("rv_slow")["state"] == "retired"
+
+
+def test_an_upgrade_never_makes_a_store_unopenable(api, monkeypatch):
+    """A package upgrade is a change of rules like any other: checked as a whole, and deferred rather
+    than forced when the store's own rules conflict."""
+    m = research_api.R().k
+    with m.g.tx():
+        m.g.define_rule("my_prop", "check", "my_prop(H) :- rs_has_basis(H).", actor="model", applies_to="ledger",
+                        message="{H}")
+    changed = [dict(r, body=r["body"].replace("rs_has_basis(H)", "rs_has_basis(H, 1)").replace("rs_has_basis(X)",
+                                                                                                 "rs_has_basis(X, 1)"))
+               if "rs_has_basis" in r["body"] else r for r in rs_pkg.RULES]
+    assert changed != rs_pkg.RULES
+    monkeypatch.setattr(rs_pkg, "RULES", changed)
+    m.upgrade_packages()  # the arity changed under the model's proposal: the proposal goes, the upgrade stands
+    assert m.g.get_rule("my_prop")["state"] == "retired"
+    assert m.meta("package:research") == rs_pkg.digest()
+    events = [e for (e,) in api.db.execute("SELECT event FROM k_log WHERE event LIKE 'proposal my_prop retired%'")]
+    assert events
+
+
+def test_a_dropped_package_rule_still_in_use_stays(api, monkeypatch):
+    m = research_api.R().k
+    with m.g.tx():
+        m.g.define_rule("mine", "check", "mine(H) :- rs_has_basis(H).", actor="user", applies_to="ledger", message="{H}")
+    users = [r for r in rs_pkg.RULES if "rs_has_basis(" in r["body"] and r["id"] != "rs_has_basis"]
+    monkeypatch.setattr(rs_pkg, "RULES", [r for r in rs_pkg.RULES if r["id"] != "rs_has_basis" and r not in users])
+    m.upgrade_packages()
+    assert m.g.get_rule("rs_has_basis")["state"] == "active"
+    assert research_api.research_check("geo").startswith("check:")
+
+
+def test_any_user_change_to_a_package_rule_survives_an_upgrade(api, monkeypatch):
+    m = research_api.R().k
+    spec = next(r for r in rs_pkg.RULES if r["id"] == "rs_w_unknown")
+    with m.g.tx():  # severity only: what the rule says changed, so it is the user's now
+        m.g.define_rule("rs_w_unknown", "check", spec["body"], actor="user", applies_to="ledger", severity="block",
+                        message=spec["message"])
+    monkeypatch.setattr(rs_pkg, "RULES", [dict(r, message=r["message"] + " (v2)") for r in rs_pkg.RULES])
+    assert m.upgrade_packages() == ["rs_w_unknown"]
+    assert m.g.get_rule("rs_w_unknown")["severity"] == "block"
+
+
+def test_approval_names_the_version_seen_and_a_rejection_is_final(api, capsys):
+    out, t = turn(1)
+    t = tok(research_api.research_review("geo", token=t, why="x", rules=[RULE]))
+    shown = seen("rv_says_drops")
+    research_api.research_review("geo", token=t, why="revised", rules=[dict(RULE, message="{R}: other")])
+    assert cli.main(["--db", str(api.path), "approve", "rule", "rv_says_drops", "--seen", shown]) == 1
+    assert "not the version shown" in capsys.readouterr().err
+    assert cli.main(["--db", str(api.path), "reject", "rv_says_drops"]) == 0
+    out, t = turn(1)
+    with pytest.raises(Forbidden, match="rejected by the user"):
+        research_api.research_review("geo", token=t, why="again", rules=[RULE])
+
+
+def test_signals_are_refusals_of_the_work_only(api):
+    out, t = turn(1)
+    t = tok(research_api.research_add("geo", t, "H", "the error is unaffected by drift", "user", "open"))
+    t = tok(research_api.research_set("geo", t, "H1", "content", "dispose: UNAFFECTED, dropped (x)"))
+    with pytest.raises(ResearchError):
+        research_api.research_begin("geo", 1, view="sideways")  # a usage error
+    with pytest.raises(ResearchError):
+        research_api.research_review("geo", token=t, why="")
+    assert research_api.R().k.g.node("geo")["attrs"]["derived_signals"] == 0
+
+
+def test_blob_pieces_are_stored_once(api):
+    ref = research_api.research_blob(action="put", text="a" * 1000).split()[1]
+    for _ in range(5):
+        ref = research_api.research_blob(action="append", text="b" * 1000, ref=ref).split()[1]
+    assert api.db.execute("SELECT count(*), sum(size) FROM k_blobs").fetchone()[:] == (1, 6000)
+
+
+def test_the_cli_runs_as_a_module(api):
+    import subprocess
+    import sys
+
+    out = subprocess.run([sys.executable, "-m", "refhandbook.cli", "--db", str(api.path), "proposals"],
+                         capture_output=True, text=True)
+    assert out.returncode == 0 and "No open proposals." in out.stdout
 
 
 # ── cards written for another version of the device ──────────────────────

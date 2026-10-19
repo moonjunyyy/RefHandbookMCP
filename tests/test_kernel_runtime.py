@@ -88,6 +88,56 @@ def test_a_ledger_that_does_not_round_trip_is_quarantined_alone(tmp_path, monkey
     assert r.export("bad")["tables"]["rl_rows"]  # and the quarantined rows are intact
 
 
+def test_a_migration_decision_is_durable_before_any_tool_runs(tmp_path, monkeypatch):
+    path = tmp_path / "u.db"
+    legacy_store(path, ("geo", "bad"))
+    real = verify.roundtrip
+    monkeypatch.setattr(verify, "roundtrip", lambda r, g, L: ["synthetic difference"] if L == "bad" else real(r, g, L))
+    hb = Handbook(path)
+    r = Research(hb)
+    assert not hb.db.in_transaction
+    with pytest.raises(ResearchError):
+        r.begin("geo", 1)  # a refusal rolls back its own transaction, and nothing of the migration
+    assert r.k.meta("quarantine:bad") and r.k.schema() == 1
+    assert sqlite3.connect(path).execute("SELECT value FROM k_meta WHERE key = 'schema'").fetchone() == ("1",)
+
+
+def test_a_quarantine_follows_the_data_not_the_name(tmp_path, monkeypatch):
+    path = tmp_path / "u.db"
+    legacy_store(path, ("geo", "bad"))
+    real = verify.roundtrip
+    monkeypatch.setattr(verify, "roundtrip", lambda r, g, L: ["synthetic difference"]
+                        if L.startswith("bad") else real(r, g, L))
+    r = Research(Handbook(path))
+    data = r.export("bad")
+    with pytest.raises(ResearchError, match="does not load into the kernel exactly"):
+        r.copy("bad", "bad2")
+    with pytest.raises(ResearchError, match="does not load into the kernel exactly"):
+        r.rename("bad", "bad3")
+    assert r._ledger("bad") and not r.db.execute("SELECT 1 FROM rl_ledgers WHERE id IN ('bad2', 'bad3')").fetchone()
+    r.delete("bad", confirm="bad")
+    assert r.k.meta("quarantine:bad") is None
+    monkeypatch.setattr(verify, "roundtrip", real)  # fixed: the same data loads under the same name
+    assert "imported ledger 'bad'" in r.import_(data)
+    assert r.check("bad") == ([], [])
+
+
+def test_a_newer_store_is_left_exactly_as_it_is(tmp_path):
+    path = tmp_path / "u.db"
+    legacy_store(path)
+    hb = Handbook(path)
+    m = runtime.attach(hb)
+    with m.g.tx():
+        m.set_meta("schema", "99")
+    hb.db.execute("UPDATE rl_meta SET value = 'from-a-newer-server' WHERE key = 'cards'")
+    hb.db.commit()
+    hb.close()
+    with pytest.raises(RuntimeError, match="newer than this code"):
+        Research(Handbook(path))
+    assert sqlite3.connect(path).execute("SELECT value FROM rl_meta WHERE key = 'cards'").fetchone() == \
+        ("from-a-newer-server",)
+
+
 def test_the_projection_follows_every_write_and_keeps_the_log(tmp_path):
     path = tmp_path / "u.db"
     legacy_store(path)
