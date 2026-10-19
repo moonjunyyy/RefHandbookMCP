@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 __pycache__/
 *.pyc
 *.egg-info/
@@ -6,3 +7,9 @@ __pycache__/
 # host-specific [site] keys (portal/facts.py: local_file)
 deploy/site.local.toml
 dist
+=======
+._*
+.DS_Store
+*.pyc
+dist/
+>>>>>>> 7502c55 (git ignore update)
