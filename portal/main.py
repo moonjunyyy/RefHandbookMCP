@@ -51,6 +51,7 @@ class RootPath:
 def create_app(settings: Settings | None = None, directory=None, kerberos=None, kadmin=None,
                requests: RequestStore | None = None, sso_public_key=None) -> FastAPI:
     s = settings or Settings()
+    s.site()  # apps.toml is read at start: a bad file stops the portal, not a page
     sso = s.auth_mode == "sso"
     if sso and sso_public_key is None:
         sso_public_key = tokens.load_public_key(s.sso_public_key_file)
@@ -89,6 +90,7 @@ def create_app(settings: Settings | None = None, directory=None, kerberos=None, 
         ctx.update(actor=actor, csrf=csrf_token(request.session), flashes=request.session.pop("flash", []),
                    can=(lambda action, target=None: actor is not None and can(actor, action, s, target)),
                    settings=s, url=url, sso=sso, requests_enabled=requests is not None,
+                   site_menu=s.site().menu(set(actor.user.groups) if actor else set()),
                    pending_requests=(lambda: requests.count() if requests is not None else 0))
         return templates.TemplateResponse(request, name, ctx)
 

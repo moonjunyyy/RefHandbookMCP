@@ -105,6 +105,7 @@ class BasicCache:
 
 def create_app(settings: Settings | None = None, kerberos=None, signing_key=None) -> FastAPI:
     s = settings or Settings()
+    audiences = s.audiences()  # apps.toml is read at start: a bad file stops the SSO, not a request
     if len(s.sso_secret) < 32:
         raise RuntimeError("PORTAL_SSO_SECRET must be set to at least 32 random characters.")
     kerberos = kerberos or Kerberos(s)
@@ -204,7 +205,7 @@ def create_app(settings: Settings | None = None, kerberos=None, signing_key=None
         headers = {"X-Remote-User": uid}
         aud = request.headers.get("x-auth-audience", "")
         if aud:
-            if aud not in s.sso_audiences:
+            if aud not in audiences:
                 return Response(status_code=500)  # a typo in nginx; fail closed and visibly
             headers["X-Auth-Token"] = tokens.issue(signing_key, s.sso_issuer, aud, uid, s.token_ttl)
         return Response(status_code=200, headers=headers)

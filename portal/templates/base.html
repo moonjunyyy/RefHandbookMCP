@@ -15,7 +15,7 @@
     {% if can("view_users") %}<a href="{{ settings.root_path }}/admin/users">Users</a>{% endif %}
     {% if can("create_user") %}<a href="{{ settings.root_path }}/admin/users/new">New user</a>{% endif %}
     {% if requests_enabled and can("review_requests") %}{% set n = pending_requests() %}<a href="{{ settings.root_path }}/admin/requests">Requests{% if n %} <span class="tag warn">{{ n }}</span>{% endif %}</a>{% endif %}
-    {% if settings.agents_url %}<a href="{{ settings.agents_url }}">Agents</a>{% endif %}
+    {% for link in site_menu %}<a href="{{ link.href }}">{{ link.label }}</a>{% endfor %}
     {% if sso %}<a href="/auth/logout">Sign out {{ actor.uid }}</a>{% else %}
     <form method="post" action="{{ settings.root_path }}/logout" class="inline">
       <input type="hidden" name="csrf" value="{{ csrf }}">

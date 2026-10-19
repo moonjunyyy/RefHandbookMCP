@@ -20,6 +20,9 @@ def _env_list(name: str, default: str) -> tuple[str, ...]:
     return tuple(x.strip() for x in _env(name, default).split(",") if x.strip())
 
 
+_SITES: dict = {}
+
+
 @dataclass(frozen=True)
 class Settings:
     realm: str = field(default_factory=lambda: _env("REALM", "M00NNY.KR"))
@@ -81,9 +84,9 @@ class Settings:
     sso_issuer: str = field(default_factory=lambda: _env("SSO_ISSUER", "https://www.m00nny.kr"))
     sso_public_key_file: str = field(default_factory=lambda: _env("SSO_PUBLIC_KEY_FILE", "/etc/m00nny-sso/sso-public.pem"))
     token_audience: str = field(default_factory=lambda: _env("TOKEN_AUDIENCE", "account"))
-    # Other services of the site, linked from the portal's menu when set: refhandbook's approval
-    # page (rule proposals, sandbox policies, jobs) is "/agents" on the same site.
-    agents_url: str = field(default_factory=lambda: _env("AGENTS_URL", ""))
+    # The site's services (deploy/site/apps.toml, portal/site.py): the portal links the apps with a
+    # menu label, and the SSO mints tokens for their audiences too. "" = none.
+    site_apps: str = field(default_factory=lambda: _env("SITE_APPS", ""))
 
     # SSO service (portal/sso.py): one sign-in for the site, a cookie for browsers, Basic for WebDAV.
     sso_secret: str = field(default_factory=lambda: _secret("SSO_SECRET"))  # signs the SSO cookie
@@ -101,6 +104,19 @@ class Settings:
             raise ValueError("PORTAL_AUTH must be local or sso")
         if self.root_path and not self.root_path.startswith("/"):
             raise ValueError("PORTAL_ROOT_PATH must start with '/', e.g. /account")
+
+    def site(self):  # noqa: ANN201 — portal.site.Site
+        """The declared services (empty when PORTAL_SITE_APPS is unset). Read once per process."""
+        from . import site
+
+        cached = _SITES.get(self.site_apps)
+        if cached is None:
+            cached = _SITES[self.site_apps] = site.load(self.site_apps) if self.site_apps else site.Site()
+        return cached
+
+    def audiences(self) -> tuple[str, ...]:
+        """What the SSO may mint tokens for: PORTAL_SSO_AUDIENCES and every audience in apps.toml."""
+        return tuple(sorted(set(self.sso_audiences) | set(self.site().audiences)))
 
     def principal(self, uid: str) -> str:
         return f"{self.principal_format.format(uid=uid)}@{self.realm}"

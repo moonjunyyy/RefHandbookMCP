@@ -165,11 +165,48 @@ def test_portal_behind_sso(tmp_path, key):
     assert c.get("/account/request").status_code == 200  # the request form stays public
 
 
-def test_the_menu_links_the_agents_page_when_configured(tmp_path, key):
-    for url, shown in (("/agents", True), ("", False)):
-        s = Settings(session_secret="x" * 40, cookie_secure=False, audit_log=str(tmp_path / "audit.log"),
-                     kadmin_policy="", root_path="/account", auth_mode="sso", sso_issuer=ISS, agents_url=url)
-        d, k = FakeDirectory(s), FakeKerberos()
-        app = create_portal(s, d, k, FakeKAdmin(k, d), RequestStore(str(tmp_path / f"req{shown}.db")), key.public_key())
-        page = TestClient(app).get("/account/", headers={"X-Auth-Token": tokens.issue(key, ISS, "account", "moon")}).text
-        assert ('href="/agents">Agents</a>' in page) is shown
+APPS = """
+[[app]]
+id = "agents"
+title = "Agents"
+audience = "refhandbook"
+upstream = "http://127.0.0.1:8765"
+menu = "Agents"
+menu_href = "/agents"
+  [[app.route]]
+  path = "/agents"
+[[app]]
+id = "lab"
+title = "Lab"
+audience = "lab"
+upstream = "http://127.0.0.1:9000"
+groups = ["admin"]
+menu = "Lab"
+menu_href = "/lab/"
+  [[app.route]]
+  path = "/lab/"
+"""
+
+
+def test_the_menu_shows_the_apps_each_user_may_see(tmp_path, key):
+    apps = tmp_path / "apps.toml"
+    apps.write_text(APPS)
+    s = Settings(session_secret="x" * 40, cookie_secure=False, audit_log=str(tmp_path / "audit.log"),
+                 kadmin_policy="", root_path="/account", auth_mode="sso", sso_issuer=ISS, site_apps=str(apps))
+    d, k = FakeDirectory(s), FakeKerberos()
+    c = TestClient(create_portal(s, d, k, FakeKAdmin(k, d), RequestStore(str(tmp_path / "req.db")), key.public_key()))
+    page = c.get("/account/", headers={"X-Auth-Token": tokens.issue(key, ISS, "account", "moon")}).text
+    assert 'href="/agents">Agents</a>' in page and 'href="/lab/">Lab</a>' in page  # moon is an admin
+    page = c.get("/account/", headers={"X-Auth-Token": tokens.issue(key, ISS, "account", "alice")}).text
+    assert 'href="/agents">Agents</a>' in page and "/lab/" not in page
+
+
+def test_the_sso_mints_for_the_audiences_the_apps_declare(tmp_path, key):
+    apps = tmp_path / "apps.toml"
+    apps.write_text(APPS)
+    s = Settings(session_secret="x" * 40, sso_secret="y" * 40, cookie_secure=False, audit_log=str(tmp_path / "a.log"),
+                 sso_issuer=ISS, sso_audiences=("account",), site_apps=str(apps))
+    c, _ = sign_in(create_app(s, CountingKerberos(), key))
+    r = check(c, "/lab/", **{"X-Auth-Audience": "lab"})
+    assert r.status_code == 200 and tokens.verify(key.public_key(), r.headers["x-auth-token"], ISS, "lab") == "alice"
+    assert check(c, "/x", **{"X-Auth-Audience": "nope"}).status_code == 500

@@ -1,0 +1,117 @@
+# The site's services (portal/site.py). One [[app]] per service; `python -m portal.site render`
+# turns this file into the nginx snippets and the landing page, the SSO mints tokens only for the
+# audiences declared here, and the portal's menu shows the apps with a `menu` label.
+#
+# Install: /etc/m00nny-site/apps.toml (0644), named by PORTAL_SITE_APPS in the portal's and the
+# SSO's environment. After a change:
+#   /opt/ldap-portal/.venv/bin/python -m portal.site render /etc/m00nny-site/apps.toml
+#   nginx -t && systemctl reload nginx && systemctl restart m00nny-sso ldap-portal
+#
+# Route fields: path, match (prefix | exact | regex | priority = ^~), auth (site: through the
+# sign-in, with a token if the app has an audience | public: no sign-in, any token cleared),
+# upstream (else the app's), limit (login | oauth) and burst, body (client_max_body_size),
+# stream (unbuffered, long timeouts), signin (false: pass a 401 through, for clients that answer it
+# themselves, like WebDAV's Basic), nginx (raw directives, copied verbatim), note.
+# App fields: id, title, description, audience, upstream, groups (who sees it in the menu; the
+# backend enforces its own access), menu (menu label), menu_href, code (an address on the card),
+# card (false: no landing card), [[app.link]] label/href, [[app.route]].
+
+[[app]]
+id = "account"
+title = "계정"
+description = "프로필, 비밀번호 변경. 관리자는 사용자와 사용 신청을 관리합니다."
+audience = "account"
+upstream = "http://127.0.0.1:8080"
+link = [{ label = "내 계정", href = "/account/" }, { label = "로그인", href = "/auth/login" },
+        { label = "로그아웃", href = "/auth/logout" }]
+  [[app.route]]
+  path = "/account"
+  match = "exact"
+  auth = "public"
+  nginx = "return 301 /account/;"
+  [[app.route]]
+  path = "/account/"
+  body = "16k"
+  [[app.route]]
+  path = "/account/request"
+  match = "exact"
+  auth = "public"
+  limit = "login"
+  burst = 5
+  body = "16k"
+  note = "사용 신청: no account yet, by definition"
+  [[app.route]]
+  path = "/account/static/"
+  auth = "public"
+
+[[app]]
+id = "signup"
+title = "계정이 없거나 임시 비밀번호를 받았다면"
+description = "사용 신청은 관리자가 확인한 뒤 계정을 만들고 임시 비밀번호를 전달합니다. 처음 쓸 때 새 비밀번호로 바꿔야 합니다."
+link = [{ label = "사용 신청", href = "/account/request" }, { label = "임시·만료 비밀번호 변경", href = "/auth/expired" }]
+
+[[app]]
+id = "dav"
+title = "파일 (WebDAV)"
+description = "탐색기, Finder, rclone, davfs2 등에서 아래 주소에 사용자명과 Kerberos 비밀번호로 연결합니다."
+code = "https://www.m00nny.kr/dav/<사용자명>/"
+  [[app.route]]
+  path = "/dav/"
+  signin = false
+  note = "the SSO admits only the signed-in user's own /dav/<uid>/; files belong to www-data"
+  nginx = """
+alias /data/;
+dav_methods PUT DELETE MKCOL COPY MOVE;
+dav_ext_methods PROPFIND OPTIONS LOCK UNLOCK;
+dav_ext_lock zone=m00nny_dav;
+dav_access user:rw;
+create_full_put_path on;
+client_max_body_size 0;
+client_body_temp_path /data/.upload;
+autoindex off;
+"""
+
+[[app]]
+id = "agents"
+title = "에이전트 · 샌드박스"
+description = "모델이 제안한 규칙의 승인·거절, 샌드박스 정책(쓸 수 있는 명령·네트워크·한도), 스크립트와 작업 현황."
+audience = "refhandbook"
+upstream = "http://127.0.0.1:8765"
+menu = "Agents"
+menu_href = "/agents"
+link = [{ label = "승인 화면", href = "/agents" }]
+  [[app.route]]
+  path = "/agents"
+  limit = "oauth"
+  burst = 20
+  body = "64k"
+  note = "the approval page: rule proposals, sandbox policies, jobs"
+
+[[app]]
+id = "refhandbook"
+title = "핸드북 (Claude MCP)"
+description = "Claude에서 커스텀 커넥터로 추가하고 Connect를 누르면, 이 사이트 로그인 후 허용 화면이 나옵니다."
+code = "https://www.m00nny.kr/mcp"
+audience = "refhandbook"
+upstream = "http://127.0.0.1:8765"
+  [[app.route]]
+  path = "/login"
+  match = "exact"
+  limit = "login"
+  burst = 5
+  note = "consent after the site sign-in"
+  [[app.route]]
+  path = "^/(register|authorize|token|revoke)$"
+  match = "regex"
+  auth = "public"
+  limit = "oauth"
+  burst = 20
+  [[app.route]]
+  path = "/.well-known/oauth-"
+  match = "priority"
+  auth = "public"
+  [[app.route]]
+  path = "/mcp"
+  auth = "public"
+  stream = true
+  note = "its own OAuth bearer tokens"

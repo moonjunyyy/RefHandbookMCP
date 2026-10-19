@@ -9,10 +9,9 @@ with MIT Kerberos 1.22 storing principals in LDAP (kldap).
   changed at next sign-in), unlock after failed logins. Never on admins or protected groups.
 - **Admin** (`cn=admin` group): all of the above, plus create users, disable/enable, manage groups,
   and approve or reject account requests.
-- **Agents** (with `PORTAL_AGENTS_URL=/agents`): a menu link to refhandbook's approval page on the
-  same site, where the user approves or rejects rules a model proposed and grants sandbox policies.
-  nginx sends `/agents` through the site sign-in with the token audience `refhandbook`
-  (`deploy/site/www.m00nny.kr.conf`).
+- **The site's other services** (`PORTAL_SITE_APPS`): the menu links every app of
+  `deploy/site/apps.toml` that has a menu label and that the user's groups may see, such as
+  refhandbook's approval page `/agents` (rule proposals, sandbox policies, jobs).
 - **Anyone** (no account yet): ask for one at `/request` ("사용 신청"): a username, what it is for,
   and optionally a name and email, with a consent notice for the personal data. The request waits
   for an admin; nothing is created until then.
@@ -187,17 +186,28 @@ The site runs behind one nginx server with one Kerberos sign-in:
 
 | Path | What | Who checks |
 |---|---|---|
-| `/` | landing page (`deploy/site/index.html`) | public |
+| `/` | landing page (generated from `apps.toml`) | public |
 | `/auth/` | site sign-in, `portal/sso.py` on :8090 | public (rate-limited) |
 | `/account/` | this portal on :8080 with `PORTAL_AUTH=sso`; `/account/request` stays public | `auth_request` + token |
 | `/dav/<uid>/` | WebDAV on `/data/<uid>` (nginx `dav` + `dav_ext`, LOCK included) | `auth_request` |
+| `/agents` | refhandbook's approval page | `auth_request` + token |
 | `/mcp`, `/authorize`, `/token`, `/register`, `/revoke`, `/login`, `/.well-known/oauth-*` | refhandbook with `RHB_AUTH=sso` | its own OAuth; `/login` via `auth_request` + token |
+
+**Services are declared, not hand-wired.** `deploy/site/apps.toml` lists every service once: its
+routes, the audience its tokens are minted for, its landing card and its menu entry
+(`portal/site.py`). `python -m portal.site render` writes the nginx snippets (the audience map and
+the locations, included by `www.m00nny.kr.conf`, which keeps only TLS, the landing page and the
+sign-in) and the landing page; the SSO mints tokens for the audiences the file declares, and the
+portal's menu shows its apps. The renderer refuses duplicate routes, unknown fields and limits, and
+routes with nowhere to go; a `site` route goes through the sign-in and carries a token only for its
+own app, and a `public` route clears any token header. Adding a service: one `[[app]]`, render,
+`nginx -t`, reload, restart the SSO and the portal.
 
 How it fits together:
 - nginx asks the SSO (`/auth/check`) before every protected request. A browser is known by the
   site cookie (`m00nny_sso`, `Path=/`, `SameSite=Lax`, 8 h from sign-in); without one, nginx sends
   it to `/auth/login?next=...`. One-time and expired passwords are changed at `/auth/expired`.
-- Backends never trust a user header. For `/account/` and `/login`, nginx names the backend
+- Backends never trust a user header. For `/account/`, `/agents` and `/login`, nginx names the backend
   (`map $request_uri $auth_audience`) and the SSO answers with `X-Auth-Token`: an EdDSA JWT for
   that backend only, valid one minute (`portal/tokens.py`). Backends hold the public key alone, so a
   local user who reaches :8080 or :8765 directly cannot forge one, and a token for one backend is
@@ -232,12 +242,16 @@ cp deploy/site/m00nny-sso.service /etc/systemd/system/ && systemctl enable --now
 # 2. Portal: PORTAL_AUTH=sso and PORTAL_ROOT_PATH=/account in /etc/ldap-portal/portal.env, restart it.
 # 3. refhandbook: RHB_PUBLIC_URL=https://www.m00nny.kr, RHB_AUTH=sso (see its env example), restart it.
 
-# 4. WebDAV directories, landing page, nginx
+# 4. The services (PORTAL_SITE_APPS=/etc/m00nny-site/apps.toml in sso.env and portal.env)
+install -D -m 0644 deploy/site/apps.toml /etc/m00nny-site/apps.toml
+/opt/ldap-portal/.venv/bin/python -m portal.site check /etc/m00nny-site/apps.toml
+/opt/ldap-portal/.venv/bin/python -m portal.site render /etc/m00nny-site/apps.toml   # snippets + landing page
+
+# 5. WebDAV directories, nginx
 cp deploy/site/dav-homes.{service,timer} /etc/systemd/system/ && systemctl enable --now dav-homes.timer
-install -D -m 0644 deploy/site/index.html /var/www/m00nny/index.html
 cp deploy/site/m00nny-proxy.conf /etc/nginx/snippets/
-cp deploy/site/www.m00nny.kr.conf /etc/nginx/sites-available/ && ln -s ../sites-available/www.m00nny.kr.conf /etc/nginx/sites-enabled/
-nginx -t && systemctl reload nginx
+cp deploy/site/www.m00nny.kr.conf /etc/nginx/sites-available/ && ln -sf ../sites-available/www.m00nny.kr.conf /etc/nginx/sites-enabled/
+nginx -t && systemctl reload nginx && systemctl restart m00nny-sso ldap-portal
 ```
 
 Check: `/account/` while signed out redirects to `/auth/login`; `curl -u <uid> -X PROPFIND -H 'Depth: 1'
