@@ -1,0 +1,27 @@
+# @@generated@@
+# Merge into /etc/krb5kdc/kadm5.acl on the KDC, ABOVE any broader rule, then restart krb5-admin-server.
+# First matching line wins. UPPERCASE letters DENY that permission.
+#   a=add  d=delete  m=modify  c=change password  i=inquire  l=list  s=set key  x=all
+#
+# 1) Things the portal must never touch, even if it is fully compromised.
+portal/service@@@realm@@  ADMCILSP  */admin@@@realm@@
+portal/service@@@realm@@  ADMCILSP  krbtgt/*@@@realm@@
+portal/service@@@realm@@  ADMCILSP  kadmin/*@@@realm@@
+portal/service@@@realm@@  ADMCILSP  K/M@@@realm@@
+portal/service@@@realm@@  ADMCILSP  host/*@@@realm@@
+portal/service@@@realm@@  ADMCILSP  ldap/*@@@realm@@
+portal/service@@@realm@@  ADMCILSP  nfs/*@@@realm@@
+portal/service@@@realm@@  ADMCILSP  HTTP/*@@@realm@@
+portal/service@@@realm@@  ADMCILSP  portal/*@@@realm@@
+# Single-component names that map to local accounts via auth_to_local (root@ -> root!).
+portal/service@@@realm@@  ADMCILSP  root@@@realm@@
+portal/service@@@realm@@  ADMCILSP  admin@@@realm@@
+# Every member of the admin group (getent group @@admin_group@@, when this was rendered): their everyday
+# principals, so a compromised portal cannot take over an admin. Re-render after adding an admin.
+@@admin_lines@@
+#
+# 2) What it may do: manage ordinary "<uid>/user" principals, always under the "users" policy.
+portal/service@@@realm@@  admci  */user@@@realm@@  -policy users
+# add_alias creates "<uid>@@@realm@@". Drop this line (and set PORTAL_PRINCIPAL_ALIAS_FORMAT=)
+# if you don't want aliases.
+portal/service@@@realm@@  ai     *@@@realm@@

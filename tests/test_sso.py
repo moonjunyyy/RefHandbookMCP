@@ -189,10 +189,10 @@ menu_href = "/lab/"
 
 
 def test_the_menu_shows_the_apps_each_user_may_see(tmp_path, key):
-    apps = tmp_path / "apps.toml"
+    apps = tmp_path / "site.toml"
     apps.write_text(APPS)
     s = Settings(session_secret="x" * 40, cookie_secure=False, audit_log=str(tmp_path / "audit.log"),
-                 kadmin_policy="", root_path="/account", auth_mode="sso", sso_issuer=ISS, site_apps=str(apps))
+                 kadmin_policy="", root_path="/account", auth_mode="sso", sso_issuer=ISS, site_file=str(apps))
     d, k = FakeDirectory(s), FakeKerberos()
     c = TestClient(create_portal(s, d, k, FakeKAdmin(k, d), RequestStore(str(tmp_path / "req.db")), key.public_key()))
     page = c.get("/account/", headers={"X-Auth-Token": tokens.issue(key, ISS, "account", "moon")}).text
@@ -202,10 +202,10 @@ def test_the_menu_shows_the_apps_each_user_may_see(tmp_path, key):
 
 
 def test_the_sso_mints_for_the_audiences_the_apps_declare(tmp_path, key):
-    apps = tmp_path / "apps.toml"
+    apps = tmp_path / "site.toml"
     apps.write_text(APPS)
     s = Settings(session_secret="x" * 40, sso_secret="y" * 40, cookie_secure=False, audit_log=str(tmp_path / "a.log"),
-                 sso_issuer=ISS, sso_audiences=("account",), site_apps=str(apps))
+                 sso_issuer=ISS, sso_audiences=("account",), site_file=str(apps))
     c, _ = sign_in(create_app(s, CountingKerberos(), key))
     r = check(c, "/lab/", **{"X-Auth-Audience": "lab"})
     assert r.status_code == 200 and tokens.verify(key.public_key(), r.headers["x-auth-token"], ISS, "lab") == "alice"

@@ -5,7 +5,7 @@ A JWT signed with the SSO's Ed25519 key (EdDSA): `sub` is the uid, `aud` the bac
 backend can mint one, and a token taken from one backend is refused by another.
 
 Make a key pair (as root, on the host running the SSO):
-    python -m portal.tokens genkey /etc/m00nny-sso
+    python -m portal.tokens genkey /etc/<site>-sso      (the installer does this once)
 which writes sso-signing.pem (0600, give it to the SSO's user) and sso-public.pem (0644).
 """
 import sys

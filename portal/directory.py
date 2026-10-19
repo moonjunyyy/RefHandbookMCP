@@ -65,7 +65,7 @@ class Directory:
         creds = gssapi.Credentials(
             name=gssapi.Name(self.s.service_principal, gssapi.NameType.kerberos_principal),
             usage="initiate",
-            store={"client_keytab": self.s.service_keytab, "ccache": "MEMORY:ldap-portal"})
+            store={"client_keytab": self.s.service_keytab, "ccache": "MEMORY:portal"})
         conn = Connection(self.server, authentication=SASL, sasl_mechanism=KERBEROS,
                           sasl_credentials=(None, None, creds), raise_exceptions=True, read_only=False)
         try:

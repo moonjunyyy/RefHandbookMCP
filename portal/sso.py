@@ -1,4 +1,4 @@
-"""Site-wide sign-in for www.m00nny.kr, consulted by nginx `auth_request`.
+"""The site-wide sign-in, consulted by nginx `auth_request`.
 
 One Kerberos sign-in page (/auth/login) sets a site cookie; /auth/check answers nginx for every
 protected location:
@@ -33,6 +33,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from . import audit, tokens, validators
 from .config import Settings
+from .facts import facts
 from .kerberos import Kerberos, KerberosError, LoginResult
 from .security import SecurityHeadersMiddleware, Throttle, csrf_ok, csrf_token
 from .validators import ValidationError
@@ -106,6 +107,7 @@ class BasicCache:
 def create_app(settings: Settings | None = None, kerberos=None, signing_key=None) -> FastAPI:
     s = settings or Settings()
     audiences = s.audiences()  # apps.toml is read at start: a bad file stops the SSO, not a request
+    basic_realm = facts().name
     if len(s.sso_secret) < 32:
         raise RuntimeError("PORTAL_SSO_SECRET must be set to at least 32 random characters.")
     kerberos = kerberos or Kerberos(s)
@@ -194,7 +196,7 @@ def create_app(settings: Settings | None = None, kerberos=None, signing_key=None
                     else:
                         audit.record(user, "basic_login", None, False, ip(request), result.value)
         if uid is None:
-            headers = {"WWW-Authenticate": 'Basic realm="m00nny", charset="UTF-8"'} if is_dav else {}
+            headers = {"WWW-Authenticate": f'Basic realm="{basic_realm}", charset="UTF-8"'} if is_dav else {}
             return Response(status_code=401, headers=headers)
         if is_dav:
             if dav_owner(uri, s.dav_prefix) != uid:

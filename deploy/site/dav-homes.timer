@@ -1,9 +1,0 @@
-[Unit]
-Description=Create WebDAV directories for new accounts every 5 minutes
-
-[Timer]
-OnBootSec=1min
-OnUnitActiveSec=5min
-
-[Install]
-WantedBy=timers.target

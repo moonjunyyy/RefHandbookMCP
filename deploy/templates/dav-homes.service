@@ -1,0 +1,8 @@
+# @@generated@@
+[Unit]
+Description=@@name@@: a WebDAV directory for every account
+
+[Service]
+Type=oneshot
+Environment=DAV_ROOT=@@dav_root@@ DAV_OWNER=@@dav_owner@@
+ExecStart=@@code@@/deploy/dav-homes.sh @@dav_group@@

@@ -1,0 +1,41 @@
+# @@generated@@
+[Unit]
+Description=@@name@@ account portal
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=@@unit:portal@@
+Group=@@unit:portal@@
+# /etc, /var/lib and /var/log under the unit's own name; the code reads them from systemd's
+# CONFIGURATION_DIRECTORY, STATE_DIRECTORY and LOGS_DIRECTORY
+ConfigurationDirectory=@@unit:portal@@
+# 0755 and root's, as systemd keeps a configuration directory; the keytabs and the env file in it
+# are root:@@unit:portal@@ 0440/0640
+ConfigurationDirectoryMode=0755
+StateDirectory=@@unit:portal@@
+StateDirectoryMode=0700
+LogsDirectory=@@unit:portal@@
+LogsDirectoryMode=0700
+Environment=PORTAL_SITE=@@site_file@@
+Environment=PORTAL_AUTH=sso
+Environment=PORTAL_ROOT_PATH=@@portal_root@@
+# secrets and local overrides only (made by the installer, never overwritten)
+EnvironmentFile=-/etc/@@unit:portal@@/portal.env
+WorkingDirectory=@@code@@
+# one worker: login throttling is kept in memory
+ExecStart=@@code@@/.venv/bin/uvicorn portal.main:create_app --factory \
+          --host 127.0.0.1 --port @@port:portal@@ --workers 1 --proxy-headers --forwarded-allow-ips 127.0.0.1
+Restart=on-failure
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+UMask=0077
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallFilter=@system-service
+
+[Install]
+WantedBy=multi-user.target

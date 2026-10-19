@@ -1,0 +1,130 @@
+# The site, declared once. `sudo deploy/install.sh` installs it as /etc/<name>/site.toml and renders
+# everything else from it: the systemd units, the nginx site, the landing page, the SSO's audiences
+# and the portal's menu.
+#
+# [site] is optional, every key of it: each value derives from the Kerberos realm (krb5.conf's
+# default_realm) unless set here (portal/facts.py lists the derivations):
+#   realm = "M00NNY.KR"              name = "m00nny"               domain = "www.m00nny.kr"
+#   base_dn = "dc=m00nny,dc=kr"      users_ou = "ou=Users,<base_dn>"   groups_ou = "ou=Groups,<base_dn>"
+#   ldap_uri = "ldaps://ldap.m00nny.kr"   aliases = ["m00nny.kr"]   code = "/opt/m00nny-portal"
+#   ports = { portal = 8080, sso = 8090 }
+# Services are named <name>-<role> (m00nny-portal, m00nny-sso, m00nny-dav-homes): the unit, its
+# user, /etc/<unit>, /var/lib/<unit>, /var/log/<unit>.
+#
+# Strings may use @@placeholders@@: a fact (@@domain@@), a role's unit or upstream
+# (@@unit:sso@@, @@upstream:portal@@), or a key of [site].
+#
+# [[app]]: one per service the sign-in fronts. Route fields: path, match (prefix | exact | regex |
+# priority = ^~), auth (site: through the sign-in, with a token if the app has an audience | public:
+# no sign-in, any token cleared), upstream (else the app's), limit (login | oauth) and burst, body
+# (client_max_body_size), stream (unbuffered, long timeouts), signin (false: pass a 401 through, for
+# clients that answer it, like WebDAV's Basic), nginx (raw directives), note. App fields: id, title,
+# description, audience, upstream, groups (who sees it in the menu; the backend enforces its own
+# access), menu, menu_href, code (an address on the card), card, [[app.link]], [[app.route]].
+
+[site]
+aliases = ["m00nny.kr"]
+portal_root = "/account"
+dav_root = "/data"
+dav_owner = "www-data"
+dav_group = "user"
+
+[[app]]
+id = "account"
+title = "계정"
+description = "프로필, 비밀번호 변경. 관리자는 사용자와 사용 신청을 관리합니다."
+audience = "account"
+upstream = "@@upstream:portal@@"
+link = [{ label = "내 계정", href = "@@portal_root@@/" }, { label = "로그인", href = "/auth/login" },
+        { label = "로그아웃", href = "/auth/logout" }]
+  [[app.route]]
+  path = "@@portal_root@@"
+  match = "exact"
+  auth = "public"
+  nginx = "return 301 @@portal_root@@/;"
+  [[app.route]]
+  path = "@@portal_root@@/"
+  body = "16k"
+  [[app.route]]
+  path = "@@portal_root@@/request"
+  match = "exact"
+  auth = "public"
+  limit = "login"
+  burst = 5
+  body = "16k"
+  note = "사용 신청: no account yet, by definition"
+  [[app.route]]
+  path = "@@portal_root@@/static/"
+  auth = "public"
+
+[[app]]
+id = "signup"
+title = "계정이 없거나 임시 비밀번호를 받았다면"
+description = "사용 신청은 관리자가 확인한 뒤 계정을 만들고 임시 비밀번호를 전달합니다. 처음 쓸 때 새 비밀번호로 바꿔야 합니다."
+link = [{ label = "사용 신청", href = "@@portal_root@@/request" }, { label = "임시·만료 비밀번호 변경", href = "/auth/expired" }]
+
+[[app]]
+id = "dav"
+title = "파일 (WebDAV)"
+description = "탐색기, Finder, rclone, davfs2 등에서 아래 주소에 사용자명과 Kerberos 비밀번호로 연결합니다."
+code = "https://@@domain@@/dav/<사용자명>/"
+  [[app.route]]
+  path = "/dav/"
+  signin = false
+  note = "the SSO admits only the signed-in user's own /dav/<uid>/"
+  nginx = """
+alias @@dav_root@@/;
+dav_methods PUT DELETE MKCOL COPY MOVE;
+dav_ext_methods PROPFIND OPTIONS LOCK UNLOCK;
+dav_ext_lock zone=@@name@@_dav;
+dav_access user:rw;
+create_full_put_path on;
+client_max_body_size 0;
+client_body_temp_path @@dav_root@@/.upload;
+autoindex off;
+"""
+
+[[app]]
+id = "agents"
+title = "에이전트 · 샌드박스"
+description = "모델이 제안한 규칙의 승인·거절, 샌드박스 정책(쓸 수 있는 명령·네트워크·한도), 스크립트와 작업 현황."
+audience = "refhandbook"
+upstream = "http://127.0.0.1:8765"
+menu = "Agents"
+menu_href = "/agents"
+link = [{ label = "승인 화면", href = "/agents" }]
+  [[app.route]]
+  path = "/agents"
+  limit = "oauth"
+  burst = 20
+  body = "64k"
+  note = "the approval page: rule proposals, sandbox policies, jobs"
+
+[[app]]
+id = "refhandbook"
+title = "핸드북 (Claude MCP)"
+description = "Claude에서 커스텀 커넥터로 추가하고 Connect를 누르면, 이 사이트 로그인 후 허용 화면이 나옵니다."
+code = "https://@@domain@@/mcp"
+audience = "refhandbook"
+upstream = "http://127.0.0.1:8765"
+  [[app.route]]
+  path = "/login"
+  match = "exact"
+  limit = "login"
+  burst = 5
+  note = "consent after the site sign-in"
+  [[app.route]]
+  path = "^/(register|authorize|token|revoke)$"
+  match = "regex"
+  auth = "public"
+  limit = "oauth"
+  burst = 20
+  [[app.route]]
+  path = "/.well-known/oauth-"
+  match = "priority"
+  auth = "public"
+  [[app.route]]
+  path = "/mcp"
+  auth = "public"
+  stream = true
+  note = "its own OAuth bearer tokens"

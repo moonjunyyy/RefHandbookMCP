@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="/auth/static/style.css">
 </head>
 <body>
-<header><a class="brand" href="/">m00nny <span>{{ settings.realm }}</span></a></header>
+<header><a class="brand" href="/">{{ settings.site_name }} <span>{{ settings.realm }}</span></a></header>
 <main>
   {% for kind, msg in flashes %}<div class="flash {{ kind }}">{{ msg }}</div>{% endfor %}
   {% block content %}{% endblock %}

@@ -1,54 +1,55 @@
 # TEMPLATE. Do not apply blindly: olcAccess rules are evaluated in order and the first match wins,
 # so these must be merged with your existing rules on the mdb database. Dump the current ones with:
-#   sudo ldapsearch -Q -LLL -Y EXTERNAL -H ldapi:/// -b cn=config '(olcSuffix=dc=m00nny,dc=kr)' olcAccess
+#   sudo ldapsearch -Q -LLL -Y EXTERNAL -H ldapi:/// -b cn=config '(olcSuffix=@@base_dn@@)' olcAccess
 #
-# Replace PORTAL_DN with what this prints (after kinit -kt /etc/ldap-portal/portal.keytab portal/service):
-#   ldapwhoami -Y GSSAPI -H ldaps://ldap.m00nny.kr
-# KDC_DN / KADMIN_DN are the ldap_kdc_dn / ldap_kadmind_dn from kdc.conf
-# (here probably uid=kdc,ou=Services,... and uid=kadmin,ou=Services,...).
+# @@generated@@
+# The portal's DN is what this prints (after kinit -kt /etc/@@unit:portal@@/portal.keytab portal/service):
+#   ldapwhoami -Y GSSAPI -H @@ldap_uri@@
+# The KDC's and kadmind's DNs are ldap_kdc_dn / ldap_kadmind_dn of kdc.conf; each value below that is
+# still in angle brackets could not be read on the host that rendered this file.
 
 dn: olcDatabase={1}mdb,cn=config
 changetype: modify
 replace: olcAccess
 # 0. Kerberos key material: only the KDC and kadmind. (Today a normal user can read these!)
 olcAccess: {0}to attrs=krbPrincipalKey,krbMKey,krbPwdHistory,krbExtraData
-  by dn.exact="KDC_DN" read
-  by dn.exact="KADMIN_DN" write
+  by dn.exact="@@kdc_dn@@" read
+  by dn.exact="@@kadmin_dn@@" write
   by * none
 # 1. userPassword: never readable; only used for binds. Portal may set "{SASL}..." values.
 olcAccess: {1}to attrs=userPassword
-  by dn.exact="PORTAL_DN" =w
+  by dn.exact="@@portal_dn@@" =w
   by anonymous auth
   by * none
 # 2. Remaining krb* status attributes: kadmind/KDC write, portal and the user read.
 olcAccess: {2}to attrs=krbPrincipalName,krbCanonicalName,krbTicketFlags,krbLoginFailedCount,krbLastFailedAuth,krbLastSuccessfulAuth,krbLastPwdChange,krbPasswordExpiration,krbPrincipalExpiration,krbPwdPolicyReference,krbTicketPolicyReference,krbLastAdminUnlock
-  by dn.exact="KADMIN_DN" write
-  by dn.exact="KDC_DN" write
-  by dn.exact="PORTAL_DN" read
+  by dn.exact="@@kadmin_dn@@" write
+  by dn.exact="@@kdc_dn@@" write
+  by dn.exact="@@portal_dn@@" read
   by self read
   by * none
 # 3. Portal may create user entries under ou=Users and edit their POSIX/profile attributes.
-olcAccess: {3}to dn.base="ou=Users,dc=m00nny,dc=kr" attrs=children
-  by dn.exact="PORTAL_DN" write
-  by dn.exact="KADMIN_DN" write
+olcAccess: {3}to dn.base="@@users_ou@@" attrs=children
+  by dn.exact="@@portal_dn@@" write
+  by dn.exact="@@kadmin_dn@@" write
   by users read
 # 4. Personal data: the user and the portal only. Without this rule, {5} below gives every
 #    signed-in account (and nslcd, so `getent passwd` on every host) each user's name and email.
 #    Must come before {5}. The portal shows these to helpdesk/admin through its own identity.
 #    After this, `getent passwd` shows an empty gecos field (nslcd falls back to cn, now hidden too).
-olcAccess: {4}to dn.one="ou=Users,dc=m00nny,dc=kr" attrs=cn,sn,givenName,displayName,mail,gecos,telephoneNumber,mobile,homePhone,postalAddress,homePostalAddress,jpegPhoto,employeeNumber
-  by dn.exact="PORTAL_DN" write
+olcAccess: {4}to dn.one="@@users_ou@@" attrs=cn,sn,givenName,displayName,mail,gecos,telephoneNumber,mobile,homePhone,postalAddress,homePostalAddress,jpegPhoto,employeeNumber
+  by dn.exact="@@portal_dn@@" write
   by self read
   by * none
-olcAccess: {5}to dn.one="ou=Users,dc=m00nny,dc=kr" attrs=entry,objectClass,@inetOrgPerson,@posixAccount,@shadowAccount
-  by dn.exact="PORTAL_DN" write
-  by dn.exact="KADMIN_DN" write
+olcAccess: {5}to dn.one="@@users_ou@@" attrs=entry,objectClass,@inetOrgPerson,@posixAccount,@shadowAccount
+  by dn.exact="@@portal_dn@@" write
+  by dn.exact="@@kadmin_dn@@" write
   by users read
 # 5. Portal may create private groups and change memberUid.
-olcAccess: {6}to dn.base="ou=Groups,dc=m00nny,dc=kr" attrs=children
-  by dn.exact="PORTAL_DN" write
+olcAccess: {6}to dn.base="@@groups_ou@@" attrs=children
+  by dn.exact="@@portal_dn@@" write
   by users read
-olcAccess: {7}to dn.one="ou=Groups,dc=m00nny,dc=kr" attrs=entry,objectClass,cn,gidNumber,memberUid
-  by dn.exact="PORTAL_DN" write
+olcAccess: {7}to dn.one="@@groups_ou@@" attrs=entry,objectClass,cn,gidNumber,memberUid
+  by dn.exact="@@portal_dn@@" write
   by users read
 # ... then your existing rules (kerberos container, ou=Admins, ou=Machines, catch-all) follow.
