@@ -60,13 +60,14 @@ N1_LINE = ("N1: BEGIN ✓ → REGISTER (the message as U/C/A/S/R; user files as 
 
 def research_ledgers(action: Literal["list", "init", "status", "export", "import", "copy", "rename"] = "list",
                      ledger: str | None = None, question: str | None = None, data: str | None = None,
-                     to: str | None = None, include_log: bool = True, dry_run: bool = False) -> str:
+                     to: str | None = None, include_log: bool = True, dry_run: bool = False, ref: str = "") -> str:
     """Manage research ledgers. list: every ledger with its turn. init: create one (ledger, question).
     status: machine state of one ledger. export: one ledger as JSON (include_log=false drops the
     per-turn change log, the bulk of a long ledger). import: load an exported JSON string (data),
     under its own id or, with `to`, under another (a sandbox copy to inspect first); dry_run=true
     checks it and stores nothing. copy: duplicate `ledger` as `to` (a sandbox). rename: `ledger` → `to`.
-    Deleting is research_ledger_delete. A large import goes through the CLI: research research_ledgers @args.json"""
+    Deleting is research_ledger_delete. An export too large for one call: put it in pieces with
+    research_blob (put, then append), and import with ref=<the last blob's ref>."""
     r = R()
     if action == "list":
         return r.ledgers()
@@ -79,8 +80,9 @@ def research_ledgers(action: Literal["list", "init", "status", "export", "import
     if action == "export":
         return json.dumps(r.export(ledger or "", include_log=include_log), ensure_ascii=False, default=str)
     if action == "import":
+        data = _text_or_ref(r, data or "", ref) if ref else data
         if not data:
-            raise rs.ResearchError("import needs data: the JSON that export returned")
+            raise rs.ResearchError("import needs data (the JSON that export returned) or ref (a blob of it)")
         try:
             parsed = json.loads(data) if isinstance(data, str) else data
         except json.JSONDecodeError as e:
@@ -208,13 +210,15 @@ def research_explore(ledger: str, action: Literal["config", "verdict", "matrix"]
 def research_doc(ledger: str, action: Literal["register", "plan", "sync", "check"], token: str | None = None,
                  doc: str | None = None, text: str = "", label: str = "document",
                  role: Literal["source", "deliverable", "working"] | None = None,
-                 items: list[dict[str, Any]] | None = None) -> str:
+                 items: list[dict[str, Any]] | None = None, ref: str = "") -> str:
     """Documents (card rs-n4). register: label, role (source = the user's original, read-only;
     deliverable = written for the user; working = the model's own), text. plan: without items, a
     draft change list for doc from its current text; with items (and token), commit it.
     sync: the rewritten text, checked against the committed plan and the reader lint.
-    check: a source against its registered original, or a deliverable against the lint."""
+    check: a source against its registered original, or a deliverable against the lint.
+    ref: a blob (research_blob) in place of text — send a long document once, then name it by ref."""
     r = R()
+    text = _text_or_ref(r, text, ref)
     if action == "register":
         if not role:
             raise rs.ResearchError("register needs role")
@@ -228,6 +232,36 @@ def research_doc(ledger: str, action: Literal["register", "plan", "sync", "check
     if action == "check":
         return r.doc_check(ledger, doc, text)
     raise rs.ResearchError(f"unknown action {action!r}")
+
+
+def _text_or_ref(r: rs.Research, text: str, ref: str) -> str:
+    if not ref:
+        return text
+    if text:
+        raise rs.ResearchError("pass text or ref, not both")
+    try:
+        return r.k.g.get_blob(ref).decode()
+    except UnicodeDecodeError as e:
+        raise rs.ResearchError(f"blob {ref} is not UTF-8 text") from e
+
+
+def research_blob(action: Literal["put", "append", "info"], text: str = "", ref: str = "") -> str:
+    """Content-addressed text in your store, so a large argument is sent once and then named by its
+    hash. put: store text, get its ref. append: a new blob = the blob `ref` followed by `text` (to
+    send something larger than one call in pieces: put the first piece, append the rest, use the
+    last ref). info: the size of `ref`. Tools that take a long text (research_doc, research_ledgers
+    import) take `ref` in its place."""
+    g = R().k.g
+    if action == "put":
+        sha = g.put_blob(text)
+    elif action == "append":
+        sha = g.append_blob(ref, text)
+    elif action == "info":
+        sha = g.blob_sha(ref)
+    else:
+        raise rs.ResearchError(f"unknown action {action!r}")
+    size = g.db.execute("SELECT size FROM k_blobs WHERE sha = ?", (sha,)).fetchone()[0]
+    return f"ref {sha} · {size} bytes"
 
 
 def research_check(ledger: str, closure_of: list[str] | None = None) -> str:
@@ -244,5 +278,5 @@ READ_TOOLS = [research_show, research_check]
 DELETE_TOOLS = [research_ledger_delete]
 WRITE_TOOLS = [research_ledgers, research_begin, research_add, research_set, research_dispose, research_carry,
                research_push, research_next, research_done, research_drop, research_explore, research_doc,
-               research_end]
+               research_end, research_blob]
 TOOLS = {f.__name__: f for f in READ_TOOLS + WRITE_TOOLS + DELETE_TOOLS}

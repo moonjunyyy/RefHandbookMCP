@@ -16,6 +16,7 @@ authority model:
 
 from __future__ import annotations
 
+import hashlib
 import itertools
 import json
 import re
@@ -117,6 +118,12 @@ CREATE TABLE IF NOT EXISTS k_log (
     meta  TEXT NOT NULL DEFAULT '{}'
 );
 CREATE INDEX IF NOT EXISTS k_log_ref ON k_log(ref, seq);
+CREATE TABLE IF NOT EXISTS k_blobs (
+    sha     TEXT PRIMARY KEY,          -- sha256 of data, hex
+    size    INTEGER NOT NULL,
+    created TEXT NOT NULL,
+    data    BLOB NOT NULL
+);
 """
 
 ID_RE = re.compile(r"^[\w.:@#/+-]{1,200}$")
@@ -134,6 +141,10 @@ def decode_type(prefix: str, name: str) -> str:
     if name.startswith(f"{prefix}x_"):
         return bytes.fromhex(name[len(prefix) + 2:]).decode()
     return name[len(prefix) + 1:]
+
+
+BLOB_MAX = 32 * 1024 * 1024  # one blob; a larger text is not a document or a ledger
+BLOB_PREFIX_MIN = 12
 
 
 class KernelError(HandbookError):
@@ -728,6 +739,38 @@ class Graph:
             self.db.execute(f"UPDATE {table} SET authority = 'sealed' WHERE {key} = ?", (name,))
             self.log(actor, f"{what} {name} approved", name)
             self._bump_rules()
+
+    # ── blobs: content-addressed text, so a large argument travels once and is named by its hash ──
+
+    def put_blob(self, data: bytes | str) -> str:
+        raw = data.encode() if isinstance(data, str) else data
+        if len(raw) > BLOB_MAX:
+            raise KernelError(f"blob of {len(raw)} bytes is over the {BLOB_MAX}-byte limit")
+        sha = hashlib.sha256(raw).hexdigest()
+        with self.tx():
+            self.db.execute("INSERT OR IGNORE INTO k_blobs VALUES (?, ?, datetime('now'), ?)", (sha, len(raw), raw))
+        return sha
+
+    def blob_sha(self, ref: str) -> str:
+        """The full hash of a blob named by its hash or a unique prefix of it (at least 12 hex digits)."""
+        ref = (ref or "").strip().removeprefix("blob:").lower()
+        if not re.fullmatch(r"[0-9a-f]{%d,64}" % BLOB_PREFIX_MIN, ref):
+            raise KernelError(f"a blob ref is {BLOB_PREFIX_MIN}–64 hex digits of its sha256, not {ref!r}")
+        hits = [r[0] for r in self.db.execute("SELECT sha FROM k_blobs WHERE sha >= ? AND sha < ? LIMIT 2",
+                                               (ref, ref + "g"))]
+        if not hits:
+            raise KernelError(f"no blob {ref}: put it first")
+        if len(hits) > 1:
+            raise KernelError(f"blob ref {ref} is ambiguous; give more of the hash")
+        return hits[0]
+
+    def get_blob(self, ref: str) -> bytes:
+        return self.db.execute("SELECT data FROM k_blobs WHERE sha = ?", (self.blob_sha(ref),)).fetchone()[0]
+
+    def append_blob(self, ref: str, data: bytes | str) -> str:
+        """A new blob: the named one followed by data (the old one is kept: blobs never change)."""
+        tail = data.encode() if isinstance(data, str) else data
+        return self.put_blob(self.get_blob(ref) + tail)
 
     def active_rules(self) -> list[dict[str, Any]]:
         return [dict(r) for r in self.db.execute("SELECT * FROM k_rules WHERE state = 'active' ORDER BY id")]
