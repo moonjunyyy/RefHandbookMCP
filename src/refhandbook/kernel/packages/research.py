@@ -14,7 +14,7 @@ Node ids inside a ledger L: rows `L:<rid>`, verdict cells `L:<claim>@<config>`, 
 from __future__ import annotations
 
 from ... import research as legacy
-from ..graph import Graph
+from ..graph import Graph, encode_type
 
 PKG = "research"
 
@@ -65,8 +65,9 @@ def install(g: Graph, actor: str = "kernel") -> None:
                       description="The verdict of one claim under one configuration.")
         g.define_type("config", "node", actor=actor, pkg=PKG, description="A set of premises a claim is judged under.")
         g.define_type("document", "node", actor=actor, pkg=PKG, description="A registered document (source, deliverable, working).")
-        for rel in DEP_RELS:
-            g.define_type(rel, "edge", actor=actor, pkg=PKG, classes=["dep"], description=f"a row rests on another ({rel})")
+        for rel in DEP_RELS:  # in the dep namespace: dep_req, dep_sup, dep_int, dep_con, …
+            g.define_type(encode_type("dep", rel), "edge", actor=actor, pkg=PKG, classes=["dep"],
+                          description=f"a row rests on another ({rel})")
         for name, inverse, desc in (
             ("on", "worked_on_by", "A plan object works on these rows (where it works, not what it rests on)."),
             ("member", "member_of", "A configuration contains this premise."),
@@ -78,6 +79,14 @@ def install(g: Graph, actor: str = "kernel") -> None:
         g.define_rules(RULES, actor=actor)
 
 
+def key(*words: str) -> str:
+    """A regex for research.key(text) in words: after optional whitespace, the first run of ASCII
+    letters, compared case-insensitively. Spelled with ASCII classes because `(?i)` would also fold
+    Unicode letters (ſ matches s) where key() does not."""
+    alts = "|".join("".join(f"[{c.upper()}{c.lower()}]" for c in w) for w in words)
+    return rf"^\s*(?:{alts})(?![A-Za-z])"
+
+
 def _r(id: str, phase: str, body: str, message: str = "", applies_to: str = "*", severity: str = "block") -> dict:
     return dict(id=id, phase=phase, body=body, message=message, applies_to=applies_to, severity=severity, pkg=PKG)
 
@@ -86,7 +95,7 @@ RULES = [
     # ── shared vocabulary ────────────────────────────────────────────────
     _r("rs_row", "derive",
        "rs_row(L, X, R, Sec) :- edge(L, contains, X), node(X, T, _), tclass(T, row), attr(X, rid, R), attr(X, sec, Sec)."),
-    _r("rs_model", "derive", 'rs_model(X) :- origin(X, O), match(O, "(?i)^model").'),
+    _r("rs_model", "derive", 'rs_model(X) :- origin(X, O), prefix(lower(O), "model").'),
     _r("rs_dep", "derive", "rs_dep(X, Rel, D) :- edge(X, Rel, D), tclass(Rel, dep)."),
     _r("rs_basis_row", "derive",
        'rs_basis_row(L, X, R) :- rs_row(L, X, R, Sec), Sec != "K", not class(X, finished), not node(X, _, stale).'),
@@ -97,11 +106,11 @@ RULES = [
        "rs_v_ok(V, H, C, HC, CN) :- rs_verdict(V, H, C, HC, CN), not node(H, missing, _), not node(C, missing, _)."),
     _r("rs_v_true", "derive", "rs_v_true(V, H, C, HC, CN) :- rs_v_ok(V, H, C, HC, CN), node(V, _, true)."),
     _r("rs_has_dep", "derive", "rs_has_dep(H) :- rs_dep(H, _, _)."),
-    _r("rs_has_nonsup", "derive", "rs_has_nonsup(H) :- rs_dep(H, Rel, _), Rel != sup."),
+    _r("rs_has_nonsup", "derive", "rs_has_nonsup(H) :- rs_dep(H, Rel, _), Rel != dep_sup."),
     _r("rs_member", "derive", """
         rs_member(C, M) :- edge(C, member, M).
-        rs_member(C, M) :- node(C, config, _), attr(C, name, "main"), edge(L, contains, C), rs_row(L, M, _, "A"), node(M, _, on).
-        rs_member(C, M) :- node(C, config, _), attr(C, name, "main"), edge(L, contains, C), rs_row(L, M, _, "T"), node(M, _, on).
+        rs_member(C, M) :- node(C, config, _), attr(C, synthetic, 1), edge(L, contains, C), rs_row(L, M, _, "A"), node(M, _, on).
+        rs_member(C, M) :- node(C, config, _), attr(C, synthetic, 1), edge(L, contains, C), rs_row(L, M, _, "T"), node(M, _, on).
     """),
     _r("rs_doc", "derive",
        "rs_doc(L, Dn, D, Role) :- edge(L, contains, Dn), node(Dn, document, _), attr(Dn, rid, D), attr(Dn, role, Role)."),
@@ -119,19 +128,19 @@ RULES = [
        "{R}: a model premise is on the main line; only the user adopts it (then set origin to 'user(adopted, turn N)'); "
        "explore it in a named configuration instead", "ledger"),
     _r("rs_c_sourced", "check",
-       r'rs_c_sourced(R) :- rs_row(Self, X, R, _), attr(X, evidence, E), match(E, "(?i)^\s*sourced(?![a-z])"),'
-       r' not match(E, "(?i)chat:|file:|https?://").',
+       f'rs_c_sourced(R) :- rs_row(Self, X, R, _), attr(X, evidence, E), match(E, "{key("sourced")}"),'
+       ' not match(lower(E), "chat:|file:|https?://").',
        "{R}: 'sourced' without a locator (chat:<uuid>, file:<path>, or a URL)", "ledger"),
     _r("rs_c_recall", "check",
-       r'rs_c_recall(R) :- rs_row(Self, X, R, _), attr(X, evidence, E), match(E, "(?i)\brecall"),'
-       r' not match(E, "(?i)\[unverified\]").',
+       r'rs_c_recall(R) :- rs_row(Self, X, R, _), attr(X, evidence, E), match(lower(E), "\brecall"),'
+       r' not match(lower(E), "\[unverified\]").',
        "{R}: recall is not evidence — retrieve it (RF) or mark [unverified]", "ledger"),
     _r("rs_c_not_found", "check",
-       r'rs_c_not_found(R) :- rs_row(Self, X, R, _), attr(X, evidence, E), match(E, "(?i)not found:\s*($|[·;])").',
+       r'rs_c_not_found(R) :- rs_row(Self, X, R, _), attr(X, evidence, E), match(lower(E), "not found:\s*($|[·;])").',
        "{R}: 'not found:' must name the calls that were made", "ledger"),
     _r("rs_c_closure", "check",
        'rs_c_closure(R) :- rs_row(Self, X, R, Sec), Sec != "K", node(X, _, proposed), rs_model(X),'
-       ' attr(X, evidence, E), not match(E, "(?i)closure:").',
+       ' attr(X, evidence, E), not match(lower(E), "closure:").',
        "{R}: model-origin proposed without 'closure: <what the user givens were checked against>'", "ledger"),
     _r("rs_w_accreting", "check", """
         rs_w_accreting(R) :- rs_row(Self, X, R, _), attr(X, evidence, E), len(E) > 240.
@@ -152,24 +161,24 @@ RULES = [
     """, "{R}: rests on {D} with status {S!r} — mark {R} stale or re-derive", "ledger"),
     _r("rs_c_pointer", "check",
        r'rs_c_pointer(R, D) :- rs_basis_row(Self, X, R), rs_dep(X, _, Dn), not node(Dn, missing, _),'
-       r' attr(Dn, evidence, DE), match(DE, "(?i)^\s*pointer(?![a-z])"), attr(Dn, rid, D).',
+       f' attr(Dn, evidence, DE), match(DE, "{key("pointer")}"), attr(Dn, rid, D).',
        "{R}: rests on {D}, which is only a pointer — retrieve the original (RF)", "ledger"),
     _r("rs_w_unknown", "check",
        'rs_w_unknown(R, D) :- rs_basis_row(Self, X, R), rs_dep(X, _, Dn), not node(Dn, missing, _),'
        ' attr(Dn, rid, D), prefix(D, "Z").',
        "{R}: uses isolated unknown {D} — confirm it appears only as a symbol or gauge", "ledger", "warn"),
     _r("rs_w_int", "check",
-       'rs_w_int(R, D) :- rs_basis_row(Self, X, R), edge(X, int, Dn), not node(Dn, missing, _),'
-       ' attr(X, evidence, E), not match(E, "(?i)map"), attr(Dn, rid, D).',
+       'rs_w_int(R, D) :- rs_basis_row(Self, X, R), edge(X, dep_int, Dn), not node(Dn, missing, _),'
+       ' attr(X, evidence, E), not match(lower(E), "map"), attr(Dn, rid, D).',
        "{R}: 'int' edge to {D} without an explicit map in evidence", "ledger", "warn"),
     _r("rs_w_unverified", "check",
        r'rs_w_unverified(R, E, D) :- rs_basis_row(Self, X, R), rs_dep(X, _, Dn), not node(Dn, missing, _),'
        r' attr(Dn, evidence, DE), match(DE, "(?i)^\s*\[?unverified\b"), attr(X, evidence, E),'
-       r' match(E, "(?i)^\s*(computed|followed|sourced)(?![a-z])"), attr(Dn, rid, D).',
+       f' match(E, "{key("computed", "followed", "sourced")}"), attr(Dn, rid, D).',
        "{R}: evidence {E!r} rests on [unverified] {D}; the conclusion is at most [unverified]", "ledger", "warn"),
     _r("rs_w_open", "check",
        'rs_w_open(R, N) :- rs_row(Self, X, R, "H"), node(X, _, open), attr(Self, turn, LT), attr(X, turn_created, TC),'
-       ' N = LT - TC, N >= 3, attr(X, evidence, E), not match(E, "(?i)tried:|not found:").',
+       ' N = LT - TC, N >= 3, attr(X, evidence, E), not match(lower(E), "tried:|not found:").',
        "{R}: open for {N} turns with no recorded attempt", "ledger", "warn"),
     _r("rs_c_v_unknown", "check", """
         rs_c_v_unknown(HC, CN) :- rs_verdict(V, H, C, HC, CN), edge(Self, contains, V), node(H, missing, _).
@@ -183,7 +192,7 @@ RULES = [
        ' attr(Dn, rid, D), prefix(D, "T"), not rs_member(C, Dn).',
        "{HC}@{CN}: true, but rests on external result {D}, which is not in configuration {CN!r}", "ledger"),
     _r("rs_c_contradicts", "check",
-       "rs_c_contradicts(HC, D, CN) :- rs_v_true(V, H, C, HC, CN), edge(Self, contains, V), edge(H, con, Dn),"
+       "rs_c_contradicts(HC, D, CN) :- rs_v_true(V, H, C, HC, CN), edge(Self, contains, V), edge(H, dep_con, Dn),"
        " not node(Dn, missing, _), attr(Dn, rid, D), edge(W, of, Dn), edge(W, under, C), node(W, verdict, true).",
        "{HC} contradicts {D}, both true under {CN!r}", "ledger"),
     _r("rs_c_main_status", "check",

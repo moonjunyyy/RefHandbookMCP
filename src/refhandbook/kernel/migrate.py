@@ -17,7 +17,7 @@ import json
 from typing import Any
 
 from .. import research as legacy
-from .graph import CONTAINS, MISSING, NAME_RE, Graph, KernelError
+from .graph import CONTAINS, MISSING, Graph, KernelError, decode_type, encode_type
 from .packages import handbook as hb_pkg
 from .packages import research as rs_pkg
 
@@ -36,16 +36,26 @@ ROW_KEYS = ("num", "status", "evidence", "dep", "grp", "turn_created", "turn_upd
 DOC_KEYS = ("label", "role", "owner", "sha", "sections", "sync_turn", "plan", "plan_turn", "turn", "sync_clock")
 
 
+# one namespace per kind, so a row, a document, a verdict cell and a configuration that share a
+# legacy name never resolve to each other
 def _row_id(L: str, ref: str) -> str:
-    return f"{L}:{ref}"
+    return f"{L}:r:{ref}"
+
+
+def _verdict_id(L: str, ref: str) -> str:
+    return f"{L}:v:{ref}"
+
+
+def _doc_id(L: str, ref: str) -> str:
+    return f"{L}:d:{ref}"
 
 
 def _cfg_id(L: str, name: str) -> str:
-    return f"{L}:cfg:{name}"
+    return f"{L}:c:{name}"
 
 
 def _turn_id(L: str, n: int) -> str:
-    return f"{L}:turn:{n}"
+    return f"{L}:t:{n}"
 
 
 class _LedgerRefs:
@@ -53,8 +63,8 @@ class _LedgerRefs:
         self.g, self.L = g, L
 
     def node(self, ref: str) -> str:
-        """The node for a legacy reference: a row, a verdict cell (claim@config), or a placeholder."""
-        nid = _row_id(self.L, ref)
+        """The node for a legacy reference (a row, or a verdict cell claim@config), or a placeholder."""
+        nid = (_verdict_id if "@" in ref else _row_id)(self.L, ref)
         if self.g.get_node(nid) is None:
             self.g.ensure_missing(nid, actor=ACTOR, attrs={"rid": ref})
             self.g.link(self.L, CONTAINS, nid, actor=ACTOR)
@@ -68,13 +78,23 @@ class _LedgerRefs:
         return nid
 
 
+def _row_ref(refs: "_LedgerRefs", rid: str) -> str:
+    """A reference that legacy resolves among rows only (deps, members, claims)."""
+    nid = _row_id(refs.L, rid)
+    if refs.g.get_node(nid) is None:
+        refs.g.ensure_missing(nid, actor=ACTOR, attrs={"rid": rid})
+        refs.g.link(refs.L, CONTAINS, nid, actor=ACTOR)
+    return nid
+
+
 def _edge_type(g: Graph, rel: str) -> str:
-    if g.get_type(rel) is None:
-        if not NAME_RE.match(rel):
-            raise KernelError(f"dep relation {rel!r} cannot be an edge type name")
-        g.define_type(rel, "edge", actor=ACTOR, pkg=rs_pkg.PKG, classes=["dep"],
-                      description="a dep relation found in imported data")
-    return rel
+    """The edge type of a dep relation. Legacy accepts any `word:` prefix; each gets its own type in
+    the dep namespace, so `on:A1` or `member:A1` stays a dep and never becomes structure."""
+    name = encode_type("dep", rel)
+    if g.get_type(name) is None:
+        g.define_type(name, "edge", actor=ACTOR, pkg=rs_pkg.PKG, classes=["dep"],
+                      description=f"dep relation {rel!r} found in imported data")
+    return name
 
 
 def ledger_to_graph(g: Graph, data: dict[str, Any]) -> str:
@@ -98,8 +118,12 @@ def ledger_to_graph(g: Graph, data: dict[str, Any]) -> str:
             g.put_node(nid, rs_pkg.SEC_TYPE[sec], actor=ACTOR, state=legacy.key(r["status"]), content=r["content"],
                        attrs=attrs, origin=r["origin"], validate=False)
             g.link(L, CONTAINS, nid, actor=ACTOR)
-        g.put_node(_cfg_id(L, "main"), "config", actor=ACTOR, attrs={"rid": "main", "name": "main", "synthetic": True})
-        g.link(L, CONTAINS, _cfg_id(L, "main"), actor=ACTOR)
+        # `main` is the user's line (A/T rows that are on) unless a stored configuration named main
+        # replaces it, as research._configs lets an imported one do
+        if not any(c["name"] == "main" for c in tables.get("rl_configs", [])):
+            g.put_node(_cfg_id(L, "main"), "config", actor=ACTOR,
+                       attrs={"rid": "main", "name": "main", "synthetic": True})
+            g.link(L, CONTAINS, _cfg_id(L, "main"), actor=ACTOR)
         for c in tables.get("rl_configs", []):
             nid = _cfg_id(L, c["name"])
             g.put_node(nid, "config", actor=ACTOR, attrs={"rid": c["name"], "name": c["name"], "members": c["members"],
@@ -107,13 +131,13 @@ def ledger_to_graph(g: Graph, data: dict[str, Any]) -> str:
             g.link(L, CONTAINS, nid, actor=ACTOR)
         for v in tables.get("rl_verdicts", []):
             ref = f"{v['claim']}@{v['config']}"
-            nid = _row_id(L, ref)
+            nid = _verdict_id(L, ref)
             g.put_node(nid, "verdict", actor=ACTOR, state=v["verdict"], validate=False,
                        attrs={"rid": ref, "claim": v["claim"], "config": v["config"], "evidence": v["evidence"],
                               "turn": v["turn"], "clock": v["clock"]})
             g.link(L, CONTAINS, nid, actor=ACTOR)
         for d in tables.get("rl_docs", []):
-            nid = _row_id(L, d["id"])
+            nid = _doc_id(L, d["id"])
             g.put_node(nid, "document", actor=ACTOR, state=d["role"], validate=False,
                        attrs={"rid": d["id"], **{k: d[k] for k in DOC_KEYS}})
             g.link(L, CONTAINS, nid, actor=ACTOR)
@@ -128,17 +152,17 @@ def ledger_to_graph(g: Graph, data: dict[str, Any]) -> str:
             nid = _row_id(L, r["id"])
             if r["sec"] == "K":
                 for d in legacy.ID_RE.findall(r["dep"] or ""):
-                    g.link(nid, "on", refs.node(d), actor=ACTOR)
+                    g.link(nid, "on", _row_ref(refs, d), actor=ACTOR)
                 continue
             for rel, d in legacy.edges(r["dep"]):
-                g.link(nid, _edge_type(g, rel), refs.node(d), actor=ACTOR)
+                g.link(nid, _edge_type(g, rel), _row_ref(refs, d), actor=ACTOR)
         for c in tables.get("rl_configs", []):
             for m in c["members"].split():
-                g.link(_cfg_id(L, c["name"]), "member", refs.node(m), actor=ACTOR)
+                g.link(_cfg_id(L, c["name"]), "member", _row_ref(refs, m), actor=ACTOR)
         for v in tables.get("rl_verdicts", []):
-            nid = _row_id(L, f"{v['claim']}@{v['config']}")
-            g.link(nid, "of", refs.node(v["claim"]), actor=ACTOR)
-            g.link(nid, "under", _cfg_id(L, "main") if v["config"] == "main" else refs.config(v["config"]), actor=ACTOR)
+            nid = _verdict_id(L, f"{v['claim']}@{v['config']}")
+            g.link(nid, "of", _row_ref(refs, v["claim"]), actor=ACTOR)
+            g.link(nid, "under", refs.config(v["config"]), actor=ACTOR)
         for p in tables.get("rl_pending", []):
             g.link(refs.node(p["src"]), "pending_hit", refs.node(p["hit"]), actor=ACTOR)
         for m in marks:
@@ -234,11 +258,10 @@ def handbook_to_graph(g: Graph, data: dict[str, Any]) -> int:
     with g.tx():
         g.tick()
         for rt in data.get("relation_types", []):
-            t = g.get_type(rt["name"])
-            if t is not None and t["pkg"] != hb_pkg.PKG:
-                raise KernelError(f"relation type {rt['name']!r} collides with the {t['pkg'] or 'kernel'} "
-                                  f"edge type of that name")
-            g.define_type(rt["name"], "edge", actor=ACTOR, pkg=hb_pkg.PKG, inverse=rt["inverse"],
+            # the relation vocabulary lives in its own namespace (rel_…): a relation named like a
+            # structural edge (next, member, contains) can never collide with it
+            g.define_type(encode_type("rel", rt["name"]), "edge", actor=ACTOR, pkg=hb_pkg.PKG,
+                          inverse=encode_type("rel", rt["inverse"]) if rt["inverse"] else None,
                           description=rt.get("description", ""))
         entries = data.get("entries", [])
         for e in entries:
@@ -259,14 +282,18 @@ def handbook_to_graph(g: Graph, data: dict[str, Any]) -> int:
                     g.link(sid, "continues_to", target, actor=ACTOR)
                 prev = sid
         for r in data.get("relations", []):
-            g.link(_card(r["src"]), r["type"], _card(r["dst"]), actor=ACTOR, attrs={"note": r["note"]})
+            g.link(_card(r["src"]), encode_type("rel", r["type"]), _card(r["dst"]), actor=ACTOR,
+                   attrs={"note": r["note"]})
     return len(entries)
 
 
 def handbook_from_graph(g: Graph) -> dict[str, Any]:
-    types = [dict(r) for r in g.db.execute(
-        "SELECT name, inverse, description FROM k_types WHERE kind = 'edge' AND pkg = ? AND name NOT IN"
-        " ('has_step', 'next', 'continues_to') ORDER BY name", (hb_pkg.PKG,))]
+    types = [{"name": decode_type("rel", r["name"]),
+              "inverse": decode_type("rel", r["inverse"]) if r["inverse"] else r["inverse"],
+              "description": r["description"]}
+             for r in g.db.execute("SELECT name, inverse, description FROM k_types WHERE kind = 'edge' AND pkg = ?"
+                                   " AND (name LIKE 'rel\\_%' ESCAPE '\\' OR name LIKE 'relx\\_%' ESCAPE '\\')"
+                                   " ORDER BY name", (hb_pkg.PKG,))]
     entries = []
     for r in g.db.execute("SELECT id FROM k_nodes WHERE type = 'card' ORDER BY id"):
         n = g.node(r[0])
@@ -279,8 +306,8 @@ def handbook_from_graph(g: Graph) -> dict[str, Any]:
             e["items"].append((st["attrs"]["pos"], item))
         e["items"] = [it for _, it in sorted(e["items"], key=lambda p: p[0])]
         entries.append(e)
-    names = {t["name"] for t in types}
-    relations = [{"src": e["src"][len("card:"):], "type": e["type"], "dst": e["dst"][len("card:"):],
+    names = {encode_type("rel", t["name"]) for t in types}
+    relations = [{"src": e["src"][len("card:"):], "type": decode_type("rel", e["type"]), "dst": e["dst"][len("card:"):],
                   "note": e["attrs"].get("note", "")}
                  for e in g.edges() if e["type"] in names]
     return {"relation_types": types, "entries": entries, "relations": relations}

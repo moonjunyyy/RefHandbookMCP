@@ -18,7 +18,11 @@ from __future__ import annotations
 from typing import Any
 
 from . import rules
-from .graph import CARRY, CONTAINS, TOUCHED, Forbidden, Graph, KernelError
+from .graph import CARRY, CONTAINS, TOUCHED, Forbidden, Graph, KernelError, _check_actor
+
+# The scope machinery writes its structural edges and scope states as the kernel, after it has
+# applied the gates; the actor who asked is what the log records.
+K = "kernel"
 
 
 class ScopeRefused(KernelError):
@@ -64,6 +68,7 @@ def children(g: Graph, scope_id: str) -> list[dict[str, Any]]:
 
 def open_scope(g: Graph, scope_id: str, type_: str, *, actor: str, parent_id: str | None = None,
                content: str = "", attrs: dict[str, Any] | None = None) -> dict[str, Any]:
+    _check_actor(actor)
     t = g.get_type(type_)
     if not t or t["kind"] != "scope":
         raise KernelError(f"{type_!r} is not a scope type")
@@ -73,9 +78,9 @@ def open_scope(g: Graph, scope_id: str, type_: str, *, actor: str, parent_id: st
             if p["state"] != "open":
                 raise KernelError(f"parent {parent_id} is {p['state']}; a scope opens inside an open scope")
         g.tick()
-        g.put_node(scope_id, type_, actor=actor, state="open", content=content, attrs=attrs)
+        g.put_node(scope_id, type_, actor=K, state="open", content=content, attrs=attrs, origin=actor)
         if parent_id is not None:
-            g.link(parent_id, CONTAINS, scope_id, actor=actor)
+            g.link(parent_id, CONTAINS, scope_id, actor=K)
         pre = rules.evaluate(g, "pre", scope_id, type_)
         if any(f.severity == "block" for f in pre):
             raise ScopeRefused(scope_id, "open", pre)
@@ -103,6 +108,7 @@ def findings(g: Graph, scope_id: str, phase: str = "close") -> list[rules.Findin
 def close(g: Graph, scope_id: str, *, actor: str, expect: int | None = None) -> list[rules.Finding]:
     """Close the scope, or raise ScopeRefused naming what blocks it. Returns the non-blocking
     findings (warnings) of a successful close."""
+    _check_actor(actor)
     with g.tx():
         s = _scope(g, scope_id)
         if s["state"] != "open":
@@ -111,27 +117,30 @@ def close(g: Graph, scope_id: str, *, actor: str, expect: int | None = None) -> 
         if any(f.severity == "block" for f in fs):
             raise ScopeRefused(scope_id, "close", fs)
         g.tick()
-        g.update_node(scope_id, actor=actor, expect=expect, state="closed")
+        g.update_node(scope_id, actor=K, expect=expect, state="closed")
         g.log(actor, f"close {s['type']}", scope_id)
     return [f for f in fs if f.severity != "block"]
 
 
 def touch(g: Graph, scope_id: str, ref: str, *, actor: str) -> None:
+    _check_actor(actor)
     _scope(g, scope_id)
-    g.link(scope_id, TOUCHED, ref, actor=actor)
+    g.link(scope_id, TOUCHED, ref, actor=K, origin=actor)
 
 
 def carry(g: Graph, scope_id: str, ref: str, why: str, *, actor: str) -> None:
     """Defer `ref` (a node, or a child scope) past this scope's close, with a reason."""
+    _check_actor(actor)
     _scope(g, scope_id)
     if not why.strip():
         raise KernelError("carry needs a why")
-    g.link(scope_id, CARRY, ref, actor=actor, attrs={"why": why.strip()})
+    g.link(scope_id, CARRY, ref, actor=K, attrs={"why": why.strip()}, origin=actor)
 
 
 def detach(g: Graph, child: str, to: str, *, actor: str) -> None:
     """Move a child scope's attachment to an enclosing scope (one of its parent's ancestors, or the
     parent's parent). The child keeps running; the scope it now holds open is `to`."""
+    _check_actor(actor)
     _scope(g, child)
     p = parent(g, child)
     if p is None:
@@ -139,6 +148,6 @@ def detach(g: Graph, child: str, to: str, *, actor: str) -> None:
     if to not in ancestors(g, p):
         raise Forbidden(f"{to} does not enclose {p}: a child is detached outward only")
     with g.tx():
-        g.unlink(p, CONTAINS, child, actor=actor)
-        g.link(to, CONTAINS, child, actor=actor, attrs={"detached_from": p})
+        g.unlink(p, CONTAINS, child, actor=K)
+        g.link(to, CONTAINS, child, actor=K, attrs={"detached_from": p}, origin=actor)
         g.log(actor, f"detach {child} from {p} to {to}", child)

@@ -57,30 +57,35 @@ def doc(did, plan, sync_clock):
             "sync_turn": 1, "plan": plan, "plan_turn": None, "turn": 1, "sync_clock": sync_clock}
 
 
-@pytest.fixture
-def everything():
+def build(name, rows, *, turn=5, open_=1, configs=(), verdicts=(), docs=(), pending=(), marks=()):
+    """Import a ledger made of raw legacy rows (the import seals it, so the harness compares it)."""
     hb = Handbook(":memory:")
     research.ensure_cards(hb)
     r = Research(hb)
     r.init("seed", "a ledger to copy the shape of")
     data = copy.deepcopy(r.export("seed"))
-    data["ledger"].update(id="everything", turn=5, open=1, last_closed=4, clock=9)
-    L = "everything"
+    data["ledger"].update(id=name, turn=turn, open=open_, last_closed=turn - 1, clock=9)
     t = data["tables"]
-    t["rl_rows"] = [{"ledger": L, **x} for x in ROWS]
-    t["rl_configs"] = [{"ledger": L, "name": "cfgx", "members": "A1", "spec": "A1", "purpose": "", "turn": 3},
-                       {"ledger": L, "name": "cfgy", "members": "A1 A9", "spec": "A1 A9", "purpose": "", "turn": 3}]
-    t["rl_verdicts"] = [{"ledger": L, **v} for v in (
-        verdict("H2", "main", "true"), verdict("H3", "cfgx", "true"), verdict("H4", "cfgx", "true"),
-        verdict("H5", "main", "true"), verdict("H99", "main", "true"), verdict("H1", "nocfg", "open"),
-        verdict("H4", "main", "stale"))]
-    t["rl_docs"] = [{"ledger": L, **doc("D1", "[]", 1)}, {"ledger": L, **doc("D2", None, 1)}]
-    t["rl_pending"] = [{"ledger": L, "src": "A1", "hit": "E2"}, {"ledger": L, "src": "A1", "hit": "H2@main"}]
-    t["rl_turnmarks"] = [{"ledger": L, "turn": 5, "kind": "touched", "ref": "E2", "note": ""},
-                         {"ledger": L, "turn": 4, "kind": "carry", "ref": "U1", "note": "later"}]
+    t["rl_rows"] = [{"ledger": name, **x} for x in rows]
+    t["rl_configs"] = [{"ledger": name, "name": n, "members": m, "spec": m, "purpose": "", "turn": 3} for n, m in configs]
+    t["rl_verdicts"] = [{"ledger": name, **v} for v in verdicts]
+    t["rl_docs"] = [{"ledger": name, **d} for d in docs]
+    t["rl_pending"] = [{"ledger": name, "src": s_, "hit": h} for s_, h in pending]
+    t["rl_turnmarks"] = [{"ledger": name, "turn": n, "kind": k, "ref": ref, "note": note} for n, k, ref, note in marks]
     t["rl_log"] = []
-    r.import_(data)  # the harness compares here too (import seals the ledger)
+    r.import_(data)
     return r
+
+
+@pytest.fixture
+def everything():
+    return build("everything", ROWS, configs=[("cfgx", "A1"), ("cfgy", "A1 A9")],
+                 verdicts=[verdict("H2", "main", "true"), verdict("H3", "cfgx", "true"), verdict("H4", "cfgx", "true"),
+                           verdict("H5", "main", "true"), verdict("H99", "main", "true"),
+                           verdict("H1", "nocfg", "open"), verdict("H4", "main", "stale")],
+                 docs=[doc("D1", "[]", 1), doc("D2", None, 1)],
+                 pending=[("A1", "E2"), ("A1", "H2@main")],
+                 marks=[(5, "touched", "E2", ""), (4, "carry", "U1", "later")])
 
 
 def test_every_research_rule_fires_and_matches_the_legacy_result(everything):
@@ -96,10 +101,10 @@ def test_every_research_rule_fires_and_matches_the_legacy_result(everything):
 def test_references_to_nothing_become_missing_nodes_and_survive(everything):
     g = fresh_graph()
     L = migrate.ledger_to_graph(g, everything.export("everything"))
-    assert g.node("everything:E99")["type"] == "missing"
-    assert [e["dst"] for e in g.edges(src="everything:E4", type_="req")] == \
-        ["everything:E99", "everything:T1", "everything:Z1"]
-    assert g.node("everything:cfg:nocfg")["type"] == "missing"
+    assert g.node("everything:r:E99")["type"] == "missing"
+    assert [e["dst"] for e in g.edges(src="everything:r:E4", type_="dep_req")] == \
+        ["everything:r:E99", "everything:r:T1", "everything:r:Z1"]
+    assert g.node("everything:c:nocfg")["type"] == "missing"
 
 
 def test_the_harness_catches_a_disagreement(everything, monkeypatch):
@@ -134,7 +139,56 @@ def test_handbook_round_trip_with_research_cards_and_a_dangling_goto():
     assert len(steps) == len(hb.get_entry("rs-n1")["items"])
 
 
-def test_a_relation_type_may_not_shadow_a_package_edge():
+
+
+# ── data shapes only an import can produce (review findings 9–12) ─────────
+
+def test_any_word_before_a_colon_stays_a_dep_relation():
+    # legacy edges() reads any `word:` as a relation; none of them may turn into structure
+    r = build("odd_rels", [row("A1", "p", "on"), row("E1", "x", "established", evidence="followed",
+                                                    dep="on:A9 member:A9 pending_hit:A1 2x:A1 dép:A1 A9 A9")])
+    errors, _ = r.check("odd_rels")
+    assert errors.count("E1: cites missing A9") == 4  # legacy repeats it per dep; the kernel reports it once
     g = fresh_graph()
-    with pytest.raises(Exception, match="collides"):
-        migrate.handbook_to_graph(g, {"relation_types": [{"name": "member", "inverse": "x", "description": ""}]})
+    L = migrate.ledger_to_graph(g, r.export("odd_rels"))
+    assert not g.edges(type_="pending_hit") and not g.edges(type_="on") and not g.edges(type_="member")
+    assert {e["type"] for e in g.edges(src="odd_rels:r:E1")} == \
+        {"dep_on", "dep_member", "dep_pending_hit", "dep_2x", "depx_" + "dép".encode().hex(), "dep_req"}
+    assert migrate.ledger_from_graph(g, L)["tables"]["rl_pending"] == []
+
+
+def test_kinds_have_separate_namespaces_and_an_imported_main_replaces_the_line():
+    r = build("names", [row("A1", "p", "on"), row("A2", "q", "on"), row("H1", "c", "true", evidence="computed", dep="A1")],
+              configs=[("c1", "A1 D1"), ("main", "A1")],
+              verdicts=[verdict("H1", "main", "true"), verdict("H1", "c1", "true")],
+              docs=[doc("D1", None, 0)])
+    errors, _ = r.check("names")
+    assert "configuration c1: member D1 missing" in errors  # the document D1 is not a row
+    g = fresh_graph()
+    L = migrate.ledger_to_graph(g, r.export("names"))
+    assert g.node("names:c:main")["attrs"].get("synthetic") is None
+    assert {e["dst"] for e in g.edges(src="names:c:main", type_="member")} == {"names:r:A1"}
+
+
+@pytest.mark.parametrize("evidence", ["ſourced: a talk", "sourcedſ x", "İrecall of it", "MAP-free int", "  Sourced"])
+def test_unicode_case_folding_matches_the_legacy_reading(evidence):
+    # compare() runs on import: the kernel must agree with key()/.lower() exactly, whatever it says
+    build("uni", [row("A1", "p", "on"), row("E1", "x", "established", evidence=evidence, dep="int:A1")])
+
+
+def test_handbook_relation_names_live_in_their_own_namespace():
+    hb = Handbook(":memory:")
+    for name in ("next", "has-step", "member"):
+        hb.define_relation_type(name, None, "")
+    a = hb.save_entry(title="A", condition="c")["id"]
+    b = hb.save_entry(title="B", condition="c", items=[{"text": "go", "goto": a}])["id"]
+    hb.relate(a, "next", b)
+    hb.relate(a, "has_step", b)  # legacy slugifies has-step to this structural name
+    data = hb.export()
+    g = fresh_graph()
+    migrate.handbook_to_graph(g, data)
+    back = migrate.handbook_from_graph(g)
+    key = lambda r: (r["src"], r["type"], r["dst"])  # noqa: E731
+    assert sorted(back["relations"], key=key) == sorted(data["relations"], key=key)
+    assert sorted(back["relation_types"], key=lambda r: r["name"]) == \
+        sorted(data["relation_types"], key=lambda r: r["name"])
