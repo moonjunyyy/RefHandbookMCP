@@ -1,3 +1,4 @@
+README.md
 pyproject.toml
 ldap_portal.egg-info/PKG-INFO
 ldap_portal.egg-info/SOURCES.txt
@@ -11,7 +12,10 @@ portal/directory.py
 portal/kerberos.py
 portal/main.py
 portal/rbac.py
+portal/requests.py
 portal/security.py
+portal/sso.py
+portal/tokens.py
 portal/validators.py
 portal/static/style.css
 portal/templates/base.html
@@ -19,8 +23,16 @@ portal/templates/error.html
 portal/templates/expired.html
 portal/templates/home.html
 portal/templates/login.html
+portal/templates/request.html
+portal/templates/request_done.html
+portal/templates/requests.html
+portal/templates/sso_base.html
+portal/templates/sso_expired.html
+portal/templates/sso_login.html
+portal/templates/sso_logout.html
 portal/templates/temp_password.html
 portal/templates/user.html
 portal/templates/user_new.html
 portal/templates/users.html
 tests/test_app.py
+tests/test_sso.py

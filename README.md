@@ -9,6 +9,10 @@ with MIT Kerberos 1.22 storing principals in LDAP (kldap).
   changed at next sign-in), unlock after failed logins. Never on admins or protected groups.
 - **Admin** (`cn=admin` group): all of the above, plus create users, disable/enable, manage groups,
   and approve or reject account requests.
+- **Agents** (with `PORTAL_AGENTS_URL=/agents`): a menu link to refhandbook's approval page on the
+  same site, where the user approves or rejects rules a model proposed and grants sandbox policies.
+  nginx sends `/agents` through the site sign-in with the token audience `refhandbook`
+  (`deploy/site/www.m00nny.kr.conf`).
 - **Anyone** (no account yet): ask for one at `/request` ("사용 신청"): a username, what it is for,
   and optionally a name and email, with a consent notice for the personal data. The request waits
   for an admin; nothing is created until then.

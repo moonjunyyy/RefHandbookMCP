@@ -163,3 +163,13 @@ def test_portal_behind_sso(tmp_path, key):
     assert c.get("/account/admin/users", headers=alice).status_code == 403
     assert c.post("/account/login", data={}).status_code == 403  # no local sign-in in sso mode
     assert c.get("/account/request").status_code == 200  # the request form stays public
+
+
+def test_the_menu_links_the_agents_page_when_configured(tmp_path, key):
+    for url, shown in (("/agents", True), ("", False)):
+        s = Settings(session_secret="x" * 40, cookie_secure=False, audit_log=str(tmp_path / "audit.log"),
+                     kadmin_policy="", root_path="/account", auth_mode="sso", sso_issuer=ISS, agents_url=url)
+        d, k = FakeDirectory(s), FakeKerberos()
+        app = create_portal(s, d, k, FakeKAdmin(k, d), RequestStore(str(tmp_path / f"req{shown}.db")), key.public_key())
+        page = TestClient(app).get("/account/", headers={"X-Auth-Token": tokens.issue(key, ISS, "account", "moon")}).text
+        assert ('href="/agents">Agents</a>' in page) is shown

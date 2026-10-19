@@ -81,6 +81,9 @@ class Settings:
     sso_issuer: str = field(default_factory=lambda: _env("SSO_ISSUER", "https://www.m00nny.kr"))
     sso_public_key_file: str = field(default_factory=lambda: _env("SSO_PUBLIC_KEY_FILE", "/etc/m00nny-sso/sso-public.pem"))
     token_audience: str = field(default_factory=lambda: _env("TOKEN_AUDIENCE", "account"))
+    # Other services of the site, linked from the portal's menu when set: refhandbook's approval
+    # page (rule proposals, sandbox policies, jobs) is "/agents" on the same site.
+    agents_url: str = field(default_factory=lambda: _env("AGENTS_URL", ""))
 
     # SSO service (portal/sso.py): one sign-in for the site, a cookie for browsers, Basic for WebDAV.
     sso_secret: str = field(default_factory=lambda: _secret("SSO_SECRET"))  # signs the SSO cookie

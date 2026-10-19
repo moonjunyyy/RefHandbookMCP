@@ -5,6 +5,7 @@ python-multipart>=0.0.9
 itsdangerous>=2.2
 ldap3>=2.9
 pexpect>=4.9
+pyjwt[crypto]>=2.8
 
 [dev]
 pytest>=8

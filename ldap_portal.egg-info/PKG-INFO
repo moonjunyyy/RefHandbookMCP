@@ -10,6 +10,7 @@ Requires-Dist: python-multipart>=0.0.9
 Requires-Dist: itsdangerous>=2.2
 Requires-Dist: ldap3>=2.9
 Requires-Dist: pexpect>=4.9
+Requires-Dist: pyjwt[crypto]>=2.8
 Provides-Extra: kerberos
 Requires-Dist: gssapi>=1.8; extra == "kerberos"
 Provides-Extra: dev
