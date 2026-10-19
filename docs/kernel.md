@@ -49,6 +49,37 @@ The rules are data, so they are reviewed like data (card `rs-rv`):
   exceeds it is refused at proposal or retired by the kernel when it meets a large ledger; the
   sealed rules of a phase together get 30 s, past which the call fails instead of hanging.
 
+## The sandbox workspace
+
+One sandbox per user, shared by Chat sessions (the `sandbox_*` tools) and agents
+(`agents/workspace.py`), on the same rule as the rules: the model writes what is proposed, the user
+writes what governs.
+
+- **Policy** — the user's grant, and the sandbox itself: the commands the sandbox shows (its
+  `/usr/bin` holds only those; every other command directory is empty), the network, the limits.
+  The model cannot write one. The kernel installs `default`: a coreutils-like set, a shell and
+  Python, no network. Granted on `/agents` or with `refhandbook policy <name> …` on the server.
+- **Script** — the model's to add and revise with no approval, because it can call only what its
+  policy shows. A user's script cannot be overwritten by the model.
+- **Job** — one run of one script version, queued by `sandbox_run`. The tool waits up to 50 s and
+  otherwise returns the job id, so long computations run while the conversation goes on; while it
+  waits it releases the server's call lock. A local server runs jobs in process; a remote one
+  queues them for `refhandbook-runner.service`, the only unit that may create namespaces. Runners
+  claim jobs by compare-and-swap; a job whose runner died is reaped as `lost`.
+
+The sandbox (`agents/sandbox.py`) is user, mount, pid, net, ipc, uts and cgroup namespaces, a
+pivot_root onto a tmpfs root, Landlock, and seccomp: a deny-list of dangerous calls, and ENOSYS for
+any syscall newer than its table. Everything writable is mounted noexec, so nothing written runs
+as code except through an allowed interpreter. `tests/test_sandbox_escape.py` runs real sandboxes
+against each of these.
+
+## The approval page
+
+`/agents`, behind the site sign-in (RHB_AUTH=sso; nginx passes the SSO's X-Auth-Token for the
+audience `refhandbook`): open proposals with the hash of what each says (approve or reject),
+policies (grant or change), scripts and recent jobs. Forms carry a token bound to the signed-in uid
+and must come from the site's own origin. What it writes is written as `user`.
+
 ## Large arguments
 
 A long text (a document, an export) is sent once with `research_blob` (put, then append for the
@@ -142,7 +173,5 @@ judgments themselves are the package's rules, which the research suites test dir
 1. Make the graph the write path. Rows, edges and verdicts would be written as graph rows, and
    the dep, status and evidence cells would become renderings of that structure.
 2. Replace the global tool-call lock with a per-store lock, and deploy on free-threaded 3.14t.
-3. Build the approval page (ldap-portal, `/agents`): proposals, grants, one-click approvals.
-4. One sandbox for Agent and Chat sessions (user namespaces, a seccomp allow-list, per-user
-   subuid ranges), with a script registry: the model adds and updates scripts within an allowed
-   command set, and runs them as background jobs.
+3. The agent runner (docs/agents.md P3): agents use the same workspace and policies as Chat,
+   with a shell (`sh`) as an extra tool.

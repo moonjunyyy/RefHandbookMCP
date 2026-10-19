@@ -260,7 +260,7 @@ def _research(args, hb: Handbook) -> int:
 
 
 def _approve(args: argparse.Namespace, hb: Handbook) -> int:
-    """The terminal on the server is the user's channel (as the approval page will be): the one place
+    """The terminal on the server is the user's channel (as the approval page /agents is): the one place
     a proposal becomes a rule that blocks."""
     from . import research
     r = research.Research(hb)

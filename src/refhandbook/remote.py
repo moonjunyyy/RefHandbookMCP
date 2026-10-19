@@ -1098,6 +1098,13 @@ def build(cfg: Config, authenticator: object | None = None, sso_tokens: SsoToken
         log.info("consent given by %s (client %s, site sign-in)", uid, client_id)
         return RedirectResponse(target, status_code=303)
 
+    if sso_tokens is not None:  # the approval page lives behind the site sign-in only
+        from .agents import pages
+
+        pages.install(m, stores=stores, uid_of=sso_tokens.uid, data_dir=Path(cfg.data_dir),
+                      public_url=cfg.public_url, lock=server._CALLS, login_url=cfg.login_url or "/auth/login",
+                      allowed=auth_fn.exists)  # type: ignore[attr-defined]
+
     @m.custom_route("/healthz", methods=["GET"])
     async def healthz(request: Request) -> Response:
         return PlainTextResponse("ok")
