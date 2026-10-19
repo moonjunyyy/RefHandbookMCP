@@ -76,7 +76,7 @@ that rests on an external result `T` needs that `T` in the configuration.
 
 | tool | purpose |
 |---|---|
-| `research_ledgers` | list · init · status · export (`include_log`) · import (`to`, `dry_run`) · copy · rename |
+| `research_ledgers` | list · init · status · export (`include_log`) · import (`to`, `dry_run`, `ref`) · copy · rename |
 | `research_ledger_delete` | delete a ledger permanently (`confirm` repeats its id) |
 | `research_begin` | open a turn: TOKEN, ledger view (`recent` · `brief` · `full`), OBLIGATIONS |
 | `research_show` | read the ledger (`open_only`, `ids`, `recent`) |
@@ -89,7 +89,8 @@ that rests on an external result `T` needs that `T` in the configuration.
 | `research_done` | finish a plan object through an exit |
 | `research_drop` | drop a plan object, with a reason |
 | `research_explore` | config · verdict · matrix |
-| `research_doc` | register · plan · sync · check |
+| `research_doc` | register · plan · sync · check (`text`, or `ref` for a staged blob) |
+| `research_blob` | put · append · info: send a long text once (in pieces if needed), then pass its `ref` |
 | `research_check` | consistency check, or the `closure` of ids |
 | `research_end` | close the turn: RECEIPT, ledger, Δ, NEXT |
 
