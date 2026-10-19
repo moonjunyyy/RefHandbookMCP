@@ -883,3 +883,63 @@ def test_sso_refuses_bad_tokens_and_accounts(sso):
     assert r.status_code == 403 and "쓸 수 없습니다" in r.text  # signed in, but not allowed here
     r = c.post("/login", data={"req": req, "action": "deny"}, follow_redirects=False)  # cancel needs no token
     assert "error=access_denied" in r.headers["location"]
+
+
+# ── the approval page (/agents): the user's channel, behind the site sign-in ──
+
+
+def _csrf(page):
+    import re
+
+    return re.search(r"name=csrf value='([0-9a-f]+)'", page).group(1)
+
+
+def test_the_approval_page_needs_the_site_sign_in_and_an_allowed_account(sso):
+    c, key = sso
+    r = c.get("/agents", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/auth/login?next=/agents"
+    r = c.get("/agents", headers={"X-Auth-Token": sso_token(key, uid="kim")}, follow_redirects=False)
+    assert r.status_code == 303  # signed in, but not an account of this server
+    page = c.get("/agents", headers={"X-Auth-Token": sso_token(key)}).text
+    assert "<b>moon</b>" in page and "제안된 규칙 (0)" in page and "default" in page
+
+
+def test_a_proposal_is_approved_only_by_the_user_on_the_page(sso):
+    from refhandbook.kernel import runtime
+    from refhandbook.kernel.graph import rule_sha
+
+    c, key = sso
+    tok = {"X-Auth-Token": sso_token(key)}
+    g = runtime.attach(server._user_store("moon")).g
+    with g.tx():
+        g.define_rule("rv_page", "check", 'rv_page(R) :- rs_row(Self, X, R, "H").', actor="model",
+                      applies_to="ledger", message="{R}")
+    page = c.get("/agents", headers=tok).text
+    sha = rule_sha(g.get_rule("rv_page"))[:12]
+    assert "rv_page" in page and f"sha {sha}" in page
+    form = {"rule": "rv_page", "seen": sha, "csrf": _csrf(page)}
+    r = c.post("/agents/approve", data={**form, "csrf": "0" * 64}, headers={**tok, "Origin": BASE}, follow_redirects=False)
+    assert r.status_code == 403
+    r = c.post("/agents/approve", data=form, headers={**tok, "Origin": "https://evil.example"}, follow_redirects=False)
+    assert r.status_code == 403
+    r = c.post("/agents/approve", data=form, headers=tok, follow_redirects=False)  # no Origin: refused
+    assert r.status_code == 403
+    r = c.post("/agents/approve", data=form, headers={**tok, "Origin": BASE}, follow_redirects=False)
+    assert r.status_code == 303 and "ok=" in r.headers["location"]
+    assert g.get_rule("rv_page")["authority"] == "sealed"
+
+
+def test_a_policy_is_granted_on_the_page(sso):
+    from refhandbook.agents.workspace import Workspace
+
+    c, key = sso
+    tok = {"X-Auth-Token": sso_token(key), "Origin": BASE}
+    page = c.get("/agents", headers=tok).text
+    r = c.post("/agents/policy", data={"name": "net", "commands": "sh cat", "network": "on", "timeout": "30",
+                                       "csrf": _csrf(page)}, headers=tok, follow_redirects=False)
+    assert r.status_code == 303 and "ok=" in r.headers["location"]
+    p = Workspace(server._user_store("moon")).policy("net")
+    assert p["author"] == "user" and p["attrs"]["network"] is True and p["attrs"]["commands"] == ["sh", "cat"]
+    r = c.post("/agents/policy", data={"name": "bad", "commands": "no-such-tool-xyz", "csrf": _csrf(page)},
+               headers=tok, follow_redirects=False)
+    assert "err=" in r.headers["location"]

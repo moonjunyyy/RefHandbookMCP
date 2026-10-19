@@ -204,7 +204,7 @@ def sandbox_files(action: Literal["ls", "read", "write", "remove"] = "ls", path:
 
 def sandbox_policy(name: str = "") -> str:
     """The policies the user granted: what each sandbox can run (commands), its network and limits.
-    Read-only: a policy is changed by the user on the approval page."""
+    Read-only: a policy is changed by the user on the approval page (/agents on the server's site)."""
     ws = W()
     names = [name] if name else ws.policies()
     out = []

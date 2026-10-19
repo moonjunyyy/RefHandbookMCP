@@ -1,0 +1,216 @@
+"""The approval page: /agents, the user's channel (docs/kernel.md "Reviewing the rules", docs/agents.md §9).
+
+Behind the site sign-in only (RHB_AUTH=sso): nginx asks the SSO, which mints an X-Auth-Token for the
+audience `refhandbook`, and every request here verifies it. What the page writes is written as
+`user`: it is the one place, besides the server's terminal, where a model's proposal becomes a rule
+that blocks and where a sandbox policy is granted. Forms carry a token bound to the signed-in uid
+(HMAC with a key kept in the data directory) and must come from this origin.
+
+    GET  /agents          proposals (rules, with the hash of what each says), policies, scripts, jobs
+    POST /agents/approve  rule, seen   → Graph.approve(actor=user, seen=…), optionally retiring `replaces`
+    POST /agents/reject   rule         → retire_rule(actor=user): the model cannot propose that id again
+    POST /agents/policy   name, …      → Workspace.set_policy(actor=user)
+"""
+
+from __future__ import annotations
+
+import hashlib
+import hmac
+import html
+import secrets
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
+from urllib.parse import quote, urlparse
+
+import anyio
+from starlette.requests import Request
+from starlette.responses import HTMLResponse, RedirectResponse, Response
+
+from ..kernel.graph import rule_sha
+from ..store import Handbook, HandbookError
+from .workspace import Workspace
+
+CSS = """body{font:15px/1.5 system-ui,sans-serif;max-width:60rem;margin:2rem auto;padding:0 1rem;color:#222;background:#fff}
+h1{font-size:1.4rem}h2{font-size:1.1rem;margin-top:2rem;border-bottom:1px solid #ddd}
+table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid #eee;padding:.4rem;vertical-align:top;text-align:left}
+pre{background:#f6f6f6;padding:.5rem;white-space:pre-wrap;margin:.3rem 0;font-size:13px}
+form.inline{display:inline}button{padding:.25rem .8rem;margin:.1rem}input,textarea{font:inherit;width:100%;box-sizing:border-box}
+.small{width:6rem}.note{color:#555;font-size:13px}.ok{background:#e8f6e8;padding:.5rem}.err{background:#fde8e8;padding:.5rem}
+@media (prefers-color-scheme:dark){body{background:#151515;color:#ddd}pre{background:#222}td,th{border-color:#333}}"""
+
+
+def _key(data_dir: Path) -> bytes:
+    p = Path(data_dir) / "agents-pages.key"
+    if not p.exists():
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_suffix(".new")
+        tmp.write_bytes(secrets.token_bytes(32))
+        tmp.chmod(0o600)
+        tmp.replace(p)
+    return p.read_bytes()
+
+
+def install(m: Any, *, stores: Callable[[str], Handbook], uid_of: Callable[[str], str | None], data_dir: Path,
+            public_url: str, lock: Any, login_url: str = "/auth/login",
+            allowed: Callable[[str], bool] = lambda uid: True) -> None:
+    """Register the /agents routes on the MCP server `m` (remote.build, SSO mode only)."""
+    key = _key(data_dir)
+    origin = "{0.scheme}://{0.netloc}".format(urlparse(public_url))
+
+    def csrf(uid: str) -> str:
+        return hmac.new(key, f"agents|{uid}".encode(), hashlib.sha256).hexdigest()
+
+    def who(request: Request) -> str | None:
+        uid = uid_of(request.headers.get("x-auth-token", ""))
+        return uid if uid is not None and allowed(uid) else None
+
+    def same_origin(request: Request) -> bool:
+        o = request.headers.get("origin") or request.headers.get("referer", "")
+        return bool(o) and (o == origin or o.startswith(origin + "/"))  # a browser's form POST always says
+
+    async def locked(fn: Callable[[], Any]) -> Any:
+        def run() -> Any:
+            with lock:
+                return fn()
+        return await anyio.to_thread.run_sync(run)
+
+    @m.custom_route("/agents", methods=["GET"])
+    async def overview(request: Request) -> Response:
+        uid = who(request)
+        if uid is None:
+            return RedirectResponse(f"{login_url}?next=/agents", status_code=303)
+        body = await locked(lambda: _overview(Workspace(stores(uid)), uid, csrf(uid), request.query_params))
+        return _html(body)
+
+    async def post(request: Request, action: Callable[[Workspace, dict[str, str]], str]) -> Response:
+        uid = who(request)
+        if uid is None:
+            return _html("<p class=err>로그인이 필요합니다.</p>", 401)
+        form = {k: str(v)[:20_000] for k, v in (await request.form()).items()}
+        if not same_origin(request) or not hmac.compare_digest(form.get("csrf", ""), csrf(uid)):
+            return _html("<p class=err>요청을 확인할 수 없습니다. 페이지를 새로 열어 다시 시도하세요.</p>", 403)
+        try:
+            done = await locked(lambda: action(Workspace(stores(uid)), form))
+            return RedirectResponse(f"/agents?ok={quote(done)}", status_code=303)
+        except HandbookError as e:
+            return RedirectResponse(f"/agents?err={quote(str(e)[:300])}", status_code=303)
+
+    @m.custom_route("/agents/approve", methods=["POST"])
+    async def approve(request: Request) -> Response:
+        def act(ws: Workspace, f: dict[str, str]) -> str:
+            rule, seen = f.get("rule", ""), f.get("seen", "")
+            with ws.g.tx():
+                ws.g.approve("rule", rule, actor="user", seen=seen)
+                for old in f.get("retire", "").split():
+                    ws.g.retire_rule(old, actor="user")
+            return f"규칙 {rule} 승인" + (f", {f['retire']} 은퇴" if f.get("retire") else "")
+        return await post(request, act)
+
+    @m.custom_route("/agents/reject", methods=["POST"])
+    async def reject(request: Request) -> Response:
+        def act(ws: Workspace, f: dict[str, str]) -> str:
+            r = ws.g.get_rule(f.get("rule", ""))
+            if r is None or r["authority"] != "proposed":
+                raise HandbookError(f"제안된 규칙이 아닙니다: {f.get('rule')}")
+            ws.g.retire_rule(r["id"], actor="user")
+            return f"규칙 {r['id']} 거절"
+        return await post(request, act)
+
+    @m.custom_route("/agents/policy", methods=["POST"])
+    async def policy(request: Request) -> Response:
+        def act(ws: Workspace, f: dict[str, str]) -> str:
+            changes: dict[str, Any] = {"commands": f.get("commands", "").split(), "network": f.get("network") == "on",
+                                       "description": f.get("description", "")}
+            for k, cast in (("timeout", int), ("memory_mb", int), ("disk_mb", int), ("tmp_mb", int),
+                            ("concurrent", int), ("cpus", float)):
+                if f.get(k, "").strip():
+                    try:
+                        changes[k] = cast(f[k])
+                    except ValueError as e:
+                        raise HandbookError(f"{k}: 숫자가 아닙니다") from e
+            name = f.get("name", "")
+            ws.set_policy(name, actor="user", **changes)
+            return f"정책 {name} 저장"
+        return await post(request, act)
+
+
+def _html(body: str, status: int = 200) -> HTMLResponse:
+    page = (f"<!doctype html><html lang=ko><meta charset=utf-8><meta name=viewport content='width=device-width'>"
+            f"<title>에이전트 · 샌드박스</title><style>{CSS}</style><body>{body}</body></html>")
+    return HTMLResponse(page, status_code=status, headers={
+        "Cache-Control": "no-store", "X-Frame-Options": "DENY", "Referrer-Policy": "same-origin",
+        "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'"})
+
+
+def _e(x: Any) -> str:
+    return html.escape(str(x))
+
+
+def _overview(ws: Workspace, uid: str, token: str, q: Any) -> str:
+    g = ws.g
+    out = [f"<h1>에이전트 · 샌드박스</h1><p class=note><b>{_e(uid)}</b> · 여기서 하는 승인과 정책은 "
+           "모델이 대신할 수 없는, 사용자의 결정입니다.</p>"]
+    if q.get("ok"):
+        out.append(f"<p class=ok>{_e(q['ok'])}</p>")
+    if q.get("err"):
+        out.append(f"<p class=err>{_e(q['err'])}</p>")
+    hidden = f"<input type=hidden name=csrf value='{token}'>"
+
+    # proposals
+    rules = [dict(r) for r in g.db.execute("SELECT * FROM k_rules WHERE authority = 'proposed' AND state = 'active' "
+                                           "ORDER BY id")]
+    out.append(f"<h2>제안된 규칙 ({len(rules)})</h2>")
+    if not rules:
+        out.append("<p class=note>열린 제안이 없습니다. 제안은 경고로만 돌다가, 여기서 승인하면 막는 규칙이 됩니다.</p>")
+    for r in rules:
+        sha = rule_sha(r)[:12]
+        why = g.db.execute("SELECT event FROM k_log WHERE ref = ? AND event LIKE 'proposal %' ORDER BY seq DESC LIMIT 1",
+                           (r["id"],)).fetchone()
+        replaces = ""
+        if why and "(replaces " in why[0]:
+            replaces = why[0].split("(replaces ", 1)[1].split(")", 1)[0]
+        out.append(
+            f"<p><b>{_e(r['id'])}</b> <span class=note>[{_e(r['phase'])}, 승인하면 {_e(r['severity'])}] sha {sha}</span><br>"
+            f"{_e(r['message'])}<br><span class=note>{_e(why[0] if why else '')}</span></p><pre>{_e(r['body'])}</pre>"
+            f"<form class=inline method=post action='/agents/approve'>{hidden}<input type=hidden name=rule value='{_e(r['id'])}'>"
+            f"<input type=hidden name=seen value='{sha}'>"
+            + (f"<input type=hidden name=retire value='{_e(replaces)}'>" if replaces else "")
+            + f"<button>승인{' (' + _e(replaces) + ' 대체)' if replaces else ''}</button></form>"
+            f"<form class=inline method=post action='/agents/reject'>{hidden}<input type=hidden name=rule value='{_e(r['id'])}'>"
+            "<button>거절</button></form>")
+
+    # policies
+    out.append("<h2>샌드박스 정책</h2><p class=note>정책이 곧 샌드박스입니다: 보이는 명령, 네트워크, 한도. "
+               "한 번 허용하면 그 안의 스크립트와 실행은 다시 묻지 않습니다.</p>")
+    for name in ws.policies() + [""]:
+        a = ws.policy(name)["attrs"] if name else ws.policy("default")["attrs"]
+        p = ws.policy(name) if name else None
+        title = f"{_e(name)} <span class=note>(작성: {_e(p['author'])})</span>" if p else "새 정책"
+        out.append(
+            f"<h3>{title}</h3><form method=post action='/agents/policy'>{hidden}"
+            + (f"<input type=hidden name=name value='{_e(name)}'>" if name else
+               "<label>이름 <input name=name required pattern='[a-z0-9][a-z0-9._-]*'></label>")
+            + f"<label>설명 <input name=description value='{_e(p['content'] if p else '')}'></label>"
+            f"<label>명령 (공백으로 구분) <textarea name=commands rows=3>{_e(' '.join(a['commands']))}</textarea></label>"
+            f"<label><input type=checkbox name=network {'checked' if a['network'] else ''} style='width:auto'> 네트워크</label> "
+            + " ".join(f"<label>{lab} <input class=small name={k} value='{_e(a.get(k, ''))}'></label>"
+                       for k, lab in (("timeout", "시간(초)"), ("memory_mb", "메모리MB"), ("cpus", "CPU"),
+                                      ("disk_mb", "디스크MB"), ("tmp_mb", "tmpMB"), ("concurrent", "동시")))
+            + "<br><button>저장</button></form>")
+
+    # scripts and jobs (read-only)
+    names = ws.scripts()
+    out.append(f"<h2>스크립트 ({len(names)})</h2><table><tr><th>이름</th><th>해석기</th><th>정책</th><th>작성</th><th>설명</th></tr>")
+    for n in names:
+        s = ws.script(n)
+        out.append(f"<tr><td>{_e(n)}</td><td>{_e(s['attrs']['interpreter'])}</td><td>{_e(s['attrs']['policy'])}</td>"
+                   f"<td>{_e(s['author'])}</td><td>{_e(s['content'])}</td></tr>")
+    out.append("</table><h2>최근 작업</h2><table><tr><th>작업</th><th>상태</th><th>스크립트</th><th>종료</th></tr>")
+    for j in ws.jobs(30):
+        a = j["attrs"]
+        out.append(f"<tr><td>{_e(j['id'])}</td><td>{_e(j['state'])}</td><td>{_e(a.get('script'))} "
+                   f"{_e(' '.join(a.get('args', [])))}</td><td>{_e(a.get('exit', ''))}</td></tr>")
+    out.append("</table>")
+    return "".join(out)
+
