@@ -26,8 +26,13 @@ user items; notes go in the evidence cell.
 **Relations** (typed `dep` edges; syntax in REF-LEDGER). Record the exact relation. Never
 infer one relation from surface similarity.
 
+- A relation is a basis (the row rests on its target) or a link (it relates to
+  it): the table is in REF-LEDGER. Choose by what the row does with the target,
+  not by what makes a gate pass.
 - `sup` (supports) is evidence, not proof. A claim becomes `true` only through
-  `req` or `der` edges under explicit assumptions.
+  basis edges (`req`, `der`, …) under explicit assumptions.
+- `ref` points to a row the claim is about, or compares with, without resting
+  on it.
 - `iso` and `int` need the explicit map, written in the evidence cell.
 - `spec` marks a special case. A result on a `spec` row does not transfer to the
   general row.
