@@ -129,9 +129,12 @@ class Handbook:
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         self._hooks: list[Callable[[], None]] = []
         self._quiet = 0
-        self.db = sqlite3.connect(self.path, check_same_thread=False)
+        self.db = sqlite3.connect(self.path, check_same_thread=False, timeout=30)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA foreign_keys = ON")
+        if self.path != ":memory:":  # the server and the runner share the file: readers never block a writer
+            self.db.execute("PRAGMA journal_mode = WAL")
+            self.db.execute("PRAGMA busy_timeout = 30000")
         self.db.executescript(SCHEMA)
         with self.db:
             self.db.executemany(

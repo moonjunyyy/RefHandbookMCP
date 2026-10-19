@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from typing import Annotated, Any, Literal
 
 from mcp.server.mcpserver import MCPServer
@@ -12,7 +13,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
-from . import render, research_api
+from . import render, research_api, sandbox_api
 from .store import Handbook, HandbookError
 
 INSTRUCTIONS = """\
@@ -25,7 +26,11 @@ Cards are linked: RELATED lists what to open next (escalates_to, requires, see_a
 When you solve a problem no card covers, record it with `save_entry` and link it with `relate`.
 Research work runs as a ledgered turn loop over the research cards (rs-*): start every turn with
 `research_begin`, work the plan objects with `research_next` / `research_push` / `research_done`, and
-close with `research_end`; its last line (NEXT) is the first action of the next turn."""
+close with `research_end`; its last line (NEXT) is the first action of the next turn.
+Computation runs in the user's sandbox: write a script with `sandbox_script`, run it with
+`sandbox_run` (a background job; read it later with `sandbox_job`), and keep files in the workspace
+with `sandbox_files`. A script needs no approval: it can use only what the user's policy
+(`sandbox_policy`) puts in the sandbox. Never ask the user to approve a run."""
 
 def _version() -> str:
     from .manifest import project_version
@@ -232,6 +237,28 @@ def audit() -> str:
 
 for _fn in research_api.READ_TOOLS:
     tool(READ)(_fn)
+for _fn in sandbox_api.READ_TOOLS:
+    tool(READ)(_fn)
+for _fn in sandbox_api.WRITE_TOOLS:
+    tool(LEDGER_WRITE)(_fn)
+
+
+@contextlib.contextmanager
+def _unlocked() -> Iterator[None]:
+    """Inside a tool call (which holds _CALLS once): let other calls run while this one waits.
+    Called outside one (the CLI, a test), there is nothing to release."""
+    try:
+        _CALLS.release()
+    except RuntimeError:
+        yield
+        return
+    try:
+        yield
+    finally:
+        _CALLS.acquire()
+
+
+sandbox_api.configure(handbook, _CALLS, _unlocked)
 for _fn in research_api.WRITE_TOOLS:
     tool(LEDGER_WRITE)(_fn)
 for _fn in research_api.DELETE_TOOLS:

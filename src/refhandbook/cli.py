@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import sys
+import threading
 from importlib import resources
 from pathlib import Path
 
 from . import render
-from .store import Handbook, HandbookError
+from .store import Handbook, HandbookError, default_db_path
 
 
 def load_env_file(path: str) -> None:
@@ -60,6 +62,20 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--retire", metavar="RULE", action="append", default=[],
                     help="retire this rule in the same step (the one the proposal replaces)")
     sub.add_parser("proposals", help="list the model's open rule proposals")
+    po = sub.add_parser("policy", help="the user's channel: show or grant a sandbox policy")
+    po.add_argument("name", nargs="?", default="")
+    po.add_argument("--commands", help="space-separated commands the sandbox shows (replaces the list)")
+    po.add_argument("--add", help="space-separated commands to add")
+    po.add_argument("--network", choices=["on", "off"])
+    for k in ("timeout", "memory_mb", "disk_mb", "tmp_mb", "concurrent"):
+        po.add_argument(f"--{k.replace('_', '-')}", type=int)
+    po.add_argument("--cpus", type=float)
+    po.add_argument("--description")
+    rn = sub.add_parser("runner", help="run sandbox jobs: of --db, or of every store under --data-dir (remote)")
+    rn.add_argument("--data-dir", help="the remote server's data directory (RHB_DATA_DIR)")
+    rn.add_argument("--once", action="store_true", help="start what is queued, wait for it, and exit")
+    rn.add_argument("--workers", type=int, default=4)
+    sub.add_parser("sandbox-check", help="report the sandbox primitives this host offers")
     sub.add_parser("reject", help="the user's channel: reject a proposed rule (the model cannot revive it)"
                    ).add_argument("name")
     ix = sub.add_parser("research-index", help="print (or --write into a SKILL.md) the research skill's abnormal index")
@@ -131,7 +147,18 @@ def main(argv: list[str] | None = None) -> int:
         server.mcp.run()
         return 0
 
+    if args.command == "sandbox-check":
+        from .agents import sandbox
+
+        rows = sandbox.check()
+        for name, ok, detail in rows:
+            print(f"{'ok ' if ok else 'NO '} {name}: {detail}")
+        return 0 if all(ok for name, ok, _ in rows if name in ("user namespaces", "seccomp")) else 1
+    if args.command == "runner":
+        return _runner(args)
     hb = Handbook(args.db)
+    if args.command == "policy":
+        return _policy(args, hb)
     if args.command in ("approve", "proposals", "reject"):
         return _approve(args, hb)
     if args.command in ("research", "research-index", "research-hook"):
@@ -254,6 +281,73 @@ def _approve(args: argparse.Namespace, hb: Handbook) -> int:
         print(f"error: {e}", file=sys.stderr)
         return 1
     print(f"{args.what} {args.name} approved" + "".join(f"; {o} retired" for o in args.retire))
+    return 0
+
+
+def _policy(args: argparse.Namespace, hb: Handbook) -> int:
+    """The terminal on the server is the user's channel: a policy granted here is the user's."""
+    from . import sandbox_api
+    from .agents.workspace import Workspace
+
+    ws = Workspace(hb)
+    sandbox_api.configure(lambda: hb, threading.RLock(), contextlib.nullcontext)
+    changes: dict = {}
+    if args.commands is not None:
+        changes["commands"] = args.commands.split()
+    if args.add:
+        name = args.name or "default"
+        current = ws.policy(name if name in ws.policies() else "default")["attrs"]["commands"]
+        changes["commands"] = list(changes.get("commands", current)) + args.add.split()
+    if args.network:
+        changes["network"] = args.network == "on"
+    for k in ("timeout", "memory_mb", "disk_mb", "tmp_mb", "concurrent", "cpus", "description"):
+        if getattr(args, k) is not None:
+            changes[k] = getattr(args, k)
+    try:
+        if changes:
+            ws.set_policy(args.name or "default", actor="user", **changes)
+        print(sandbox_api.sandbox_policy(args.name))
+    except HandbookError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def _runner(args: argparse.Namespace) -> int:
+    """Run sandbox jobs. With --data-dir, every user's store (users/<uid>.db) that has a queued job
+    (a marker in users/<uid>.db.sandbox/queue/) is opened and its jobs started."""
+    import signal
+    import time
+
+    from .agents.workspace import Runner, Workspace
+
+    runners: dict[str, Runner] = {}
+
+    def runner_for(db: str) -> Runner:
+        r = runners.get(db)
+        if r is None:
+            r = runners[db] = Runner(Workspace(Handbook(db)), workers=args.workers)
+        return r
+
+    def stores() -> list[str]:
+        if args.data_dir:
+            root = Path(args.data_dir) / "users"
+            out = {str(m.parent.parent)[: -len(".sandbox")] for m in root.glob("*.db.sandbox/queue/*")}
+            return sorted(out | set(runners))
+        return [args.db or str(default_db_path())]
+
+    stop = {"now": False}
+    signal.signal(signal.SIGTERM, lambda *_: stop.update(now=True))
+    while not stop["now"]:
+        for db in stores():
+            r = runner_for(db)
+            r.reap_lost()
+            r.poll()
+        if args.once:
+            break
+        time.sleep(0.5)
+    for r in runners.values():
+        r.close()
     return 0
 
 
