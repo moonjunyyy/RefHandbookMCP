@@ -905,8 +905,7 @@ def test_the_approval_page_needs_the_site_sign_in_and_an_allowed_account(sso):
 
 
 def test_a_proposal_is_approved_only_by_the_user_on_the_page(sso):
-    from refhandbook.kernel import runtime
-    from refhandbook.kernel.graph import rule_sha
+    from refhandbook.kernel import proposals, runtime
 
     c, key = sso
     tok = {"X-Auth-Token": sso_token(key)}
@@ -915,8 +914,8 @@ def test_a_proposal_is_approved_only_by_the_user_on_the_page(sso):
         g.define_rule("rv_page", "check", 'rv_page(R) :- rs_row(Self, X, R, "H").', actor="model",
                       applies_to="ledger", message="{R}")
     page = c.get("/agents", headers=tok).text
-    sha = rule_sha(g.get_rule("rv_page"))[:12]
-    assert "rv_page" in page and f"sha {sha}" in page
+    sha = proposals.approval_sha(g, "rv_page")[:12]
+    assert "rv_page" in page and f"승인 해시 {sha}" in page
     form = {"rule": "rv_page", "seen": sha, "csrf": _csrf(page)}
     r = c.post("/agents/approve", data={**form, "csrf": "0" * 64}, headers={**tok, "Origin": BASE}, follow_redirects=False)
     assert r.status_code == 403

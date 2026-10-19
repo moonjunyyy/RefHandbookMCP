@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import contextlib
 import functools
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from typing import Annotated, Any, Literal
 
 from mcp.server.mcpserver import MCPServer
@@ -243,22 +242,7 @@ for _fn in sandbox_api.WRITE_TOOLS:
     tool(LEDGER_WRITE)(_fn)
 
 
-@contextlib.contextmanager
-def _unlocked() -> Iterator[None]:
-    """Inside a tool call (which holds _CALLS once): let other calls run while this one waits.
-    Called outside one (the CLI, a test), there is nothing to release."""
-    try:
-        _CALLS.release()
-    except RuntimeError:
-        yield
-        return
-    try:
-        yield
-    finally:
-        _CALLS.acquire()
-
-
-sandbox_api.configure(handbook, _CALLS, _unlocked)
+sandbox_api.configure(handbook, _CALLS)
 for _fn in research_api.WRITE_TOOLS:
     tool(LEDGER_WRITE)(_fn)
 for _fn in research_api.DELETE_TOOLS:

@@ -27,7 +27,7 @@ import anyio
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, RedirectResponse, Response
 
-from ..kernel.graph import rule_sha
+from ..kernel import proposals
 from ..store import Handbook, HandbookError
 from .workspace import Workspace
 
@@ -99,22 +99,15 @@ def install(m: Any, *, stores: Callable[[str], Handbook], uid_of: Callable[[str]
     @m.custom_route("/agents/approve", methods=["POST"])
     async def approve(request: Request) -> Response:
         def act(ws: Workspace, f: dict[str, str]) -> str:
-            rule, seen = f.get("rule", ""), f.get("seen", "")
-            with ws.g.tx():
-                ws.g.approve("rule", rule, actor="user", seen=seen)
-                for old in f.get("retire", "").split():
-                    ws.g.retire_rule(old, actor="user")
-            return f"규칙 {rule} 승인" + (f", {f['retire']} 은퇴" if f.get("retire") else "")
+            retired = proposals.approve(ws.g, f.get("rule", ""), f.get("seen", ""), actor="user")
+            return f"규칙 {f.get('rule')} 승인" + (f", {' '.join(retired)} 은퇴" if retired else "")
         return await post(request, act)
 
     @m.custom_route("/agents/reject", methods=["POST"])
     async def reject(request: Request) -> Response:
         def act(ws: Workspace, f: dict[str, str]) -> str:
-            r = ws.g.get_rule(f.get("rule", ""))
-            if r is None or r["authority"] != "proposed":
-                raise HandbookError(f"제안된 규칙이 아닙니다: {f.get('rule')}")
-            ws.g.retire_rule(r["id"], actor="user")
-            return f"규칙 {r['id']} 거절"
+            proposals.reject(ws.g, f.get("rule", ""), actor="user")
+            return f"규칙 {f.get('rule')} 거절"
         return await post(request, act)
 
     @m.custom_route("/agents/policy", methods=["POST"])
@@ -158,25 +151,20 @@ def _overview(ws: Workspace, uid: str, token: str, q: Any) -> str:
     hidden = f"<input type=hidden name=csrf value='{token}'>"
 
     # proposals
-    rules = [dict(r) for r in g.db.execute("SELECT * FROM k_rules WHERE authority = 'proposed' AND state = 'active' "
-                                           "ORDER BY id")]
+    rules = proposals.open_proposals(g)
     out.append(f"<h2>제안된 규칙 ({len(rules)})</h2>")
     if not rules:
         out.append("<p class=note>열린 제안이 없습니다. 제안은 경고로만 돌다가, 여기서 승인하면 막는 규칙이 됩니다.</p>")
     for r in rules:
-        sha = rule_sha(r)[:12]
-        why = g.db.execute("SELECT event FROM k_log WHERE ref = ? AND event LIKE 'proposal %' ORDER BY seq DESC LIMIT 1",
-                           (r["id"],)).fetchone()
-        replaces = ""
-        if why and "(replaces " in why[0]:
-            replaces = why[0].split("(replaces ", 1)[1].split(")", 1)[0]
+        retires = "".join(f"<p class=note>승인하면 은퇴하는 규칙 <b>{_e(o['id'])}</b>: {_e(o.get('message', ''))}</p>"
+                          f"<pre>{_e(o.get('body', ''))}</pre>" for o in r["replaces"])
         out.append(
-            f"<p><b>{_e(r['id'])}</b> <span class=note>[{_e(r['phase'])}, 승인하면 {_e(r['severity'])}] sha {sha}</span><br>"
-            f"{_e(r['message'])}<br><span class=note>{_e(why[0] if why else '')}</span></p><pre>{_e(r['body'])}</pre>"
+            f"<p><b>{_e(r['id'])}</b> <span class=note>[{_e(r['phase'])}, 승인하면 {_e(r['severity'])}] "
+            f"승인 해시 {r['approval']}</span><br>{_e(r['message'])}<br><span class=note>{_e(r['why'])}</span></p>"
+            f"<pre>{_e(r['body'])}</pre>{retires}"
             f"<form class=inline method=post action='/agents/approve'>{hidden}<input type=hidden name=rule value='{_e(r['id'])}'>"
-            f"<input type=hidden name=seen value='{sha}'>"
-            + (f"<input type=hidden name=retire value='{_e(replaces)}'>" if replaces else "")
-            + f"<button>승인{' (' + _e(replaces) + ' 대체)' if replaces else ''}</button></form>"
+            f"<input type=hidden name=seen value='{r['approval']}'>"
+            f"<button>승인{' (' + _e(' '.join(o['id'] for o in r['replaces'])) + ' 대체)' if r['replaces'] else ''}</button></form>"
             f"<form class=inline method=post action='/agents/reject'>{hidden}<input type=hidden name=rule value='{_e(r['id'])}'>"
             "<button>거절</button></form>")
 

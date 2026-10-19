@@ -25,19 +25,29 @@ from .store import Handbook
 
 _resolve: Callable[[], Handbook] | None = None
 _lock: threading.RLock = threading.RLock()
-_unlocked: Callable[[], contextlib.AbstractContextManager[None]] = contextlib.nullcontext
 _spaces: dict[int, Workspace] = {}
 _runners: dict[int, tuple[Runner, threading.Thread]] = {}
 SHOW = 20_000  # characters of output a tool result shows
 MAX_WAIT = 50.0
 
 
-def configure(resolve: Callable[[], Handbook], lock: threading.RLock,
-              unlocked: Callable[[], contextlib.AbstractContextManager[None]]) -> None:
-    """The server's store resolver, its call lock, and a context that releases that lock while a
-    tool waits for a job (so other calls go on)."""
-    global _resolve, _lock, _unlocked
-    _resolve, _lock, _unlocked = resolve, lock, unlocked
+def configure(resolve: Callable[[], Handbook], lock: threading.RLock) -> None:
+    """The server's store resolver and its call lock. Every store access here holds the lock (it is
+    re-entrant: a tool call already holds it once); a tool waiting for a job lets go of it entirely,
+    so other calls, and the runner's threads, go on."""
+    global _resolve, _lock
+    _resolve, _lock = resolve, lock
+
+
+def _locked(fn: Callable[..., str]) -> Callable[..., str]:
+    import functools
+
+    @functools.wraps(fn)
+    def tool(*args: Any, **kwargs: Any) -> str:
+        with _lock:
+            return fn(*args, **kwargs)
+
+    return tool
 
 
 def W() -> Workspace:
@@ -78,8 +88,12 @@ def _ensure_runner(ws: Workspace) -> None:
 
 @contextlib.contextmanager
 def _waiting() -> Iterator[None]:
-    with _unlocked():
+    """Let go of the lock entirely (however many times this thread holds it), then take it back."""
+    state = _lock._release_save()  # type: ignore[attr-defined]  (threading.Condition's own primitive)
+    try:
         yield
+    finally:
+        _lock._acquire_restore(state)  # type: ignore[attr-defined]
 
 
 def _render(ws: Workspace, j: dict[str, Any], show: int = SHOW) -> str:
@@ -217,6 +231,7 @@ def sandbox_policy(name: str = "") -> str:
     return "\n".join(out)
 
 
-READ_TOOLS = [sandbox_policy]
-WRITE_TOOLS = [sandbox_script, sandbox_run, sandbox_job, sandbox_files]
+READ_TOOLS = [_locked(sandbox_policy)]
+WRITE_TOOLS = [_locked(f) for f in (sandbox_script, sandbox_run, sandbox_job, sandbox_files)]
+globals().update({f.__name__: f for f in READ_TOOLS + WRITE_TOOLS})
 TOOLS = {f.__name__: f for f in READ_TOOLS + WRITE_TOOLS}

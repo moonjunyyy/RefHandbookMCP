@@ -817,11 +817,14 @@ class Research:
             out = [f"REVIEW recorded at turn {lg['turn']}: {why.strip()}"]
             if not specs:
                 return "\n".join(out)
-            replaces = {s["id"]: s.pop("replaces", "") for s in specs}
+            from .kernel import proposals
+
+            asked = {s["id"]: s.pop("replaces", None) for s in specs}
             g.define_rules(specs, actor="model")
+            replaces = {rid: proposals.record(g, rid, r) for rid, r in asked.items()}
             for s in specs:
                 rid = s["id"]
-                note = f" (replaces {replaces[rid]})" if replaces[rid] else ""
+                note = f" (replaces {' '.join(replaces[rid])})" if replaces[rid] else ""
                 g.log("model", f"proposal {rid}{note}: {why.strip()}", rid)
                 self._log(ledger, lg["turn"], f"proposed rule {rid}{note}")
                 if s["phase"] in ("check", "obligation"):
@@ -840,25 +843,22 @@ class Research:
         return self._write(ledger, token, fn)
 
     def proposals(self) -> str:
-        """The model's open rule proposals in this store, with the review that made each."""
+        """The model's open rule proposals in this store: what each says, the rules it would retire,
+        and the approval hash that names all of it."""
         if self.k is None:
             return "no kernel"
-        g = self.k.g
-        from .kernel.graph import rule_sha
+        from .kernel import proposals
 
-        rows = [dict(r) for r in g.db.execute("SELECT * FROM k_rules WHERE authority = 'proposed' AND state = 'active' "
-                                              "ORDER BY id")]
+        rows = proposals.open_proposals(self.k.g)
         if not rows:
             return "No open proposals."
-        out = [f"{len(rows)} open proposal(s) (approve with: refhandbook approve rule <id> --seen <sha>):"]
-        for rule in rows:
-            rid, body = rule["id"], rule["body"]
-            why = g.db.execute("SELECT event FROM k_log WHERE ref = ? AND event LIKE 'proposal %' ORDER BY seq DESC "
-                               "LIMIT 1", (rid,)).fetchone()
-            out.append(f"  {rid} sha {rule_sha(rule)[:12]} [{rule['phase']}, {rule['severity']} once approved] "
-                       f"{rule['message']}")
-            out.append(f"      {why[0] if why else '(no review recorded)'}")
-            out += ["      " + line.strip() for line in body.strip().splitlines()]
+        out = [f"{len(rows)} open proposal(s) (approve with: refhandbook approve rule <id> --seen <approval>):"]
+        for r in rows:
+            out.append(f"  {r['id']} approval {r['approval']} [{r['phase']}, {r['severity']} once approved] {r['message']}")
+            out.append(f"      {r['why'] or '(no review recorded)'}")
+            out += ["      " + line.strip() for line in r["body"].strip().splitlines()]
+            for old in r["replaces"]:
+                out.append(f"      retires {old['id']}: " + " ".join(line.strip() for line in old["body"].splitlines()))
         return "\n".join(out)
 
     def carry(self, ledger: str, token: str | None, uid: str, why: str) -> str:

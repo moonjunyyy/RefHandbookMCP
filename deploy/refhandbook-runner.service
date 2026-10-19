@@ -23,14 +23,17 @@ ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
 ReadWritePaths=/var/lib/refhandbook
-ProtectKernelTunables=yes
+# no ProtectKernelTunables: a mount over /proc/sys stops the sandbox from mounting its own /proc
 ProtectKernelModules=yes
 ProtectKernelLogs=yes
 ProtectClock=yes
-RestrictAddressFamilies=AF_UNIX AF_NETLINK
+# AF_INET/6 for policies that grant the network (the sandbox's own netns and Landlock's port list
+# confine them); without the grant the sandbox has a network namespace of its own with no link
+RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_INET AF_INET6
 # the launcher makes these namespaces, then installs its own seccomp filter inside them
 RestrictNamespaces=user mnt pid net ipc uts cgroup
-SystemCallFilter=@system-service @mount unshare pivot_root
+SystemCallFilter=@system-service @mount @sandbox unshare pivot_root sethostname
+SystemCallErrorNumber=EPERM
 SystemCallArchitectures=native
 LockPersonality=yes
 UMask=0077

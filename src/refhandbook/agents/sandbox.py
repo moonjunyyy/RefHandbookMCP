@@ -31,6 +31,7 @@ from __future__ import annotations
 import ctypes
 import ctypes.util
 import errno
+import glob
 import json
 import os
 import platform
@@ -64,7 +65,7 @@ SECCOMP_MODE_FILTER = 2
 # Syscall numbers. x86_64 from asm/unistd_64.h; aarch64 is the asm-generic table.
 _SYSCALLS = {
     "x86_64": dict(
-        clone=56, ptrace=101, capget=125, capset=126, syslog=103, vhangup=153, pivot_root=155, adjtimex=159, chroot=161, acct=163,
+        clone=56, ptrace=101, capget=125, capset=126, memfd_create=319, syslog=103, vhangup=153, pivot_root=155, adjtimex=159, chroot=161, acct=163,
         settimeofday=164, mount=165, umount2=166, swapon=167, swapoff=168, reboot=169, iopl=172, ioperm=173,
         init_module=175, delete_module=176, quotactl=179, lookup_dcookie=212, clock_settime=227, kexec_load=246,
         add_key=248, request_key=249, keyctl=250, unshare=272, perf_event_open=298, name_to_handle_at=303,
@@ -78,7 +79,7 @@ _SYSCALLS = {
         lookup_dcookie=18, umount2=39, mount=40, pivot_root=41, chroot=51, vhangup=58, quotactl=60, acct=89,
         unshare=97, kexec_load=104, init_module=105, delete_module=106, clock_settime=112, syslog=116, ptrace=117,
         reboot=142, settimeofday=170, adjtimex=171, add_key=217, request_key=218, keyctl=219, clone=220, swapon=224,
-        swapoff=225, capget=90, capset=91, perf_event_open=241, name_to_handle_at=264, open_by_handle_at=265, clock_adjtime=266, setns=268,
+        swapoff=225, capget=90, capset=91, memfd_create=279, perf_event_open=241, name_to_handle_at=264, open_by_handle_at=265, clock_adjtime=266, setns=268,
         process_vm_readv=270, process_vm_writev=271, finit_module=273, bpf=280, userfaultfd=282, kexec_file_load=294,
         io_uring_setup=425, io_uring_enter=426, io_uring_register=427, open_tree=428, move_mount=429, fsopen=430,
         fsconfig=431, fsmount=432, fspick=433, clone3=435, pidfd_getfd=438, mount_setattr=442, quotactl_fd=443,
@@ -172,6 +173,9 @@ class Spec:
     # Another id needs a runner with CAP_SETUID/CAP_SETGID (the parent writes the child's map).
     outside_uid: int | None = None
     outside_gid: int | None = None
+    # With the network: the TCP ports a connection may go to (None: any). A list keeps the host's
+    # loopback services (the MCP server, LDAP, the KDC's TCP side) out of reach; UDP is not limited.
+    ports: list[int] | None = None
 
     def to_json(self) -> str:
         return json.dumps(asdict(self))
@@ -199,9 +203,25 @@ class Spec:
             out[name] = os.path.realpath(path)
         return out
 
+    def executable(self) -> list[str]:
+        """Where execution is allowed. With a command view: the view and the dynamic loader only, so
+        a helper binary elsewhere under /usr or /lib does not run by its path (the loader can still
+        map any readable ELF: the view bounds the vocabulary, the namespaces bound the capability)."""
+        if self.commands is None or self.base != "host":
+            return ["/"]
+        loaders = set()
+        for pattern in ("/lib64/ld-linux*.so*", "/lib/ld-linux*.so*", "/lib/ld-musl*.so*", "/usr/lib/*/ld-linux*.so*"):
+            for p in glob.glob(pattern):
+                loaders.add(os.path.realpath(p))
+        out = ["/usr/bin", *sorted(loaders)]
+        if self.upper is not None:  # a layer build installs tools that must run
+            out += ["/" + p for p in self.overlay_points()]
+        return out
+
     def writable(self) -> list[str]:
         """Paths inside the sandbox the command may write under."""
-        out = ["/work", "/tmp", "/run", "/dev"] + [d for _, d in self.binds_rw]
+        out = ["/work", "/tmp", "/run", "/dev/shm", "/dev/null", "/dev/zero", "/dev/full", "/dev/tty"] \
+            + [d for _, d in self.binds_rw]
         out += ["/" + p for p in self.overlay_points()]
         return out
 
@@ -292,15 +312,22 @@ def _ll_fs_rights(abi: int) -> int:
     return rights
 
 
-def landlock_restrict(read_paths: list[str], write_paths: list[str], *, deny_tcp: bool) -> int:
-    """Allow read+execute beneath `read_paths`, everything beneath `write_paths`, nothing else; with
-    `deny_tcp` (ABI 4+) no TCP bind or connect; with ABI 6+ no signals or abstract unix sockets
-    beyond this sandbox. Returns the ABI used (0: Landlock is not available, nothing done)."""
+def landlock_restrict(read_paths: list[str], write_paths: list[str], *, deny_tcp: bool,
+                      exec_paths: list[str] | None = None, tcp_ports: list[int] | None = None) -> int:
+    """Allow reading beneath `read_paths`, executing beneath `exec_paths` (default: the read paths),
+    every change but execution beneath `write_paths`, nothing else. TCP (ABI 4+): with `deny_tcp` no
+    bind or connect; with `tcp_ports` connect to those ports only, and no bind. With ABI 6+ no signals
+    or abstract unix sockets beyond this sandbox. Returns the ABI used (0: Landlock is not available,
+    nothing done)."""
     abi = landlock_abi()
     if abi <= 0:
+        if tcp_ports is not None:
+            raise SandboxError("a port-limited network needs Landlock ABI 4 or later")
         return 0
+    if tcp_ports is not None and abi < 4:
+        raise SandboxError(f"a port-limited network needs Landlock ABI 4 (this kernel has {abi})")
     fs = _ll_fs_rights(abi)
-    net = (LL_NET_BIND_TCP | LL_NET_CONNECT_TCP) if (abi >= 4 and deny_tcp) else 0
+    net = (LL_NET_BIND_TCP | LL_NET_CONNECT_TCP) if (abi >= 4 and (deny_tcp or tcp_ports is not None)) else 0
     scoped = (LL_SCOPE_ABSTRACT_UNIX_SOCKET | LL_SCOPE_SIGNAL) if abi >= 6 else 0
     if abi >= 6:
         attr = struct.pack("QQQ", fs, net, scoped)
@@ -312,9 +339,10 @@ def landlock_restrict(read_paths: list[str], write_paths: list[str], *, deny_tcp
     fd = _libc.syscall(_nr("landlock_create_ruleset"), buf, ctypes.c_size_t(len(attr)), ctypes.c_uint(0))
     if fd < 0:
         raise _err("landlock_create_ruleset")
-    ro = LL_EXECUTE | LL_READ_FILE | LL_READ_DIR
+    ro = LL_READ_FILE | LL_READ_DIR
+    exec_paths = read_paths if exec_paths is None else exec_paths
     try:
-        for paths, rights in ((read_paths, ro), (write_paths, fs)):
+        for paths, rights in ((read_paths, ro), (exec_paths, ro | LL_EXECUTE), (write_paths, fs & ~LL_EXECUTE)):
             for p in paths:
                 try:
                     pfd = os.open(p, os.O_PATH | os.O_CLOEXEC)
@@ -329,6 +357,11 @@ def landlock_restrict(read_paths: list[str], write_paths: list[str], *, deny_tcp
                         raise _err(f"landlock_add_rule {p}")
                 finally:
                     os.close(pfd)
+        for port in tcp_ports or []:  # landlock_net_port_attr {u64 allowed_access; u64 port}, packed
+            rule = struct.pack("=QQ", LL_NET_CONNECT_TCP, int(port))
+            rbuf = ctypes.create_string_buffer(rule, len(rule))
+            if _libc.syscall(_nr("landlock_add_rule"), ctypes.c_int(fd), ctypes.c_int(2), rbuf, ctypes.c_uint(0)) != 0:
+                raise _err(f"landlock_add_rule tcp {port}")
         prctl(PR_SET_NO_NEW_PRIVS, 1)
         if _libc.syscall(_nr("landlock_restrict_self"), ctypes.c_int(fd), ctypes.c_uint(0)) != 0:
             raise _err("landlock_restrict_self")
@@ -347,7 +380,7 @@ def _ins(code: int, k: int, jt: int = 0, jf: int = 0) -> bytes:
     return struct.pack("HBBI", code, jt, jf, k & 0xFFFFFFFF)
 
 
-def seccomp_program(arch: str | None = None) -> bytes:
+def seccomp_program(arch: str | None = None, deny_memfd: bool = False) -> bytes:
     """The deny-list as classic BPF over seccomp_data {int nr; u32 arch; u64 ip; u64 args[6]}."""
     arch = arch or _arch()
     table = _SYSCALLS[arch]
@@ -357,7 +390,7 @@ def seccomp_program(arch: str | None = None) -> bytes:
     if arch == "x86_64":  # the x32 ABI shares this arch value: refuse it outright
         p += [_ins(_BPF_JGE, 0x40000000, 0, 1), _ins(_BPF_RET, _RET_KILL_PROCESS)]
     p += [_ins(_BPF_JGE, KNOWN_MAX + 1, 0, 1), _ins(_BPF_RET, enosys)]  # newer than this table: unjudged
-    for name in DENY:
+    for name in DENY + (["memfd_create"] if deny_memfd else []):
         if name in table:
             p += [_ins(_BPF_JEQ, table[name], 0, 1), _ins(_BPF_RET, eperm)]
     p += [_ins(_BPF_JEQ, table["clone3"], 0, 1), _ins(_BPF_RET, enosys)]
@@ -374,8 +407,8 @@ class _SockFprog(ctypes.Structure):
     _fields_ = [("len", ctypes.c_ushort), ("filter", ctypes.c_void_p)]
 
 
-def seccomp_install() -> None:
-    prog = seccomp_program()
+def seccomp_install(deny_memfd: bool = False) -> None:
+    prog = seccomp_program(deny_memfd=deny_memfd)
     n = len(prog) // 8
     filt = ctypes.create_string_buffer(prog, len(prog))
 
@@ -653,6 +686,9 @@ def build_root(spec: Spec, commands: dict[str, str] | None = None) -> None:
         os.symlink(tgt, f"{root}/dev/{name}")
     _mkdir(f"{root}/dev/shm")
     mount("tmpfs", f"{root}/dev/shm", "tmpfs", MS_NOSUID | MS_NODEV | MS_NOEXEC, "mode=1777,size=64m")
+    # /dev itself: nothing is created there, and nothing there runs (its nodes and /dev/shm are
+    # their own mounts and keep their modes)
+    mount_setattr(f"{root}/dev", MOUNT_ATTR_RDONLY | MOUNT_ATTR_NOSUID | MOUNT_ATTR_NOEXEC, recursive=False)
     mount("proc", f"{root}/proc", "proc", MS_NOSUID | MS_NODEV | MS_NOEXEC)
 
     old = f"{root}/.oldroot"
@@ -692,14 +728,25 @@ def _rlimits(spec: Spec) -> None:
             pass
 
 
+def _memfd_noexec() -> bool:
+    """Memory written by the command must not run either: vm.memfd_noexec=2 is per pid namespace
+    (Linux 6.3+), and this one is ours. False when it cannot be set (then memfd_create is refused)."""
+    try:
+        _write("/proc/sys/vm/memfd_noexec", "2")
+        return Path("/proc/sys/vm/memfd_noexec").read_text().strip() == "2"
+    except OSError:
+        return False
+
+
 def _child(spec: Spec, commands: dict[str, str] | None) -> None:
     prctl(PR_SET_PDEATHSIG, signal.SIGKILL)
     mount(None, "/", None, MS_REC | MS_PRIVATE)
     build_root(spec, commands)
     name = spec.hostname.encode()
     _libc.sethostname(name, len(name))  # best effort: a failure leaves the host's name visible
-    landlock_restrict(["/"], spec.writable(), deny_tcp=not spec.network)
-    seccomp_install()
+    landlock_restrict(["/"], spec.writable(), deny_tcp=not spec.network, exec_paths=spec.executable(),
+                      tcp_ports=spec.ports if spec.network else None)
+    seccomp_install(deny_memfd=not _memfd_noexec())
     env = {"PATH": HOST_PATH, "HOME": "/work",
            "USER": "agent" if spec.uid else "root", "LANG": "C.UTF-8", "TERM": "dumb", "TMPDIR": "/tmp"}
     env.update(spec.env)

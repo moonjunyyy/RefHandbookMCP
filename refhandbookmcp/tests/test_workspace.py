@@ -20,7 +20,7 @@ needs_sandbox = pytest.mark.skipif(not USERNS, reason="user namespaces are not a
 def ws(tmp_path, monkeypatch):
     monkeypatch.setenv("RHB_RUNNER", "inprocess")
     hb = Handbook(tmp_path / "u.db")
-    sandbox_api.configure(lambda: hb, threading.RLock(), lambda: __import__("contextlib").nullcontext())
+    sandbox_api.configure(lambda: hb, threading.RLock())
     sandbox_api._spaces.clear()
     yield sandbox_api.W()
     for runner, _ in sandbox_api._runners.values():
@@ -65,7 +65,7 @@ def test_files_stay_inside_the_workspace(ws, tmp_path):
         with pytest.raises(WorkspaceError, match="outside the workspace"):
             sandbox_api.sandbox_files("read", bad)
     os.symlink("/etc", ws.work / "etc-link")
-    with pytest.raises(WorkspaceError, match="outside the workspace"):
+    with pytest.raises(WorkspaceError, match="symlink"):
         sandbox_api.sandbox_files("read", "etc-link/hostname")
     sandbox_api.sandbox_files("remove", "data")
     assert not (ws.work / "data").exists()
@@ -107,7 +107,10 @@ def test_a_job_can_be_cancelled(ws):
     sandbox_api.sandbox_script("add", "forever", body="sleep 60\n")
     jid = sandbox_api.sandbox_run("forever", wait=0).split()[0]
     deadline = time.monotonic() + 10
-    while ws.job(jid)["state"] != "running" and time.monotonic() < deadline:
+    while time.monotonic() < deadline:
+        with sandbox_api._lock:  # the runner's threads share the store's connection
+            if ws.job(jid)["state"] == "running":
+                break
         time.sleep(0.1)
     sandbox_api.sandbox_job("cancel", jid)
     out = sandbox_api.sandbox_job("wait", jid, wait=20)
@@ -126,7 +129,7 @@ def test_the_runner_unit_runs_jobs_queued_by_the_server(tmp_path, monkeypatch):
     users = tmp_path / "users"
     users.mkdir()
     hb = Handbook(users / "moonny.db")
-    sandbox_api.configure(lambda: hb, threading.RLock(), lambda: __import__("contextlib").nullcontext())
+    sandbox_api.configure(lambda: hb, threading.RLock())
     sandbox_api._spaces.clear()
     sandbox_api.sandbox_script("add", "hi", body="echo hi from the runner\n")
     out = sandbox_api.sandbox_run("hi", wait=0.5)
@@ -156,7 +159,7 @@ def test_through_the_server_a_waiting_run_does_not_hold_up_other_calls(tmp_path,
     monkeypatch.setenv("RHB_RUNNER", "inprocess")
     hb = Handbook(tmp_path / "s.db")
     monkeypatch.setattr(server, "_handbook", hb)
-    sandbox_api.configure(server.handbook, server._CALLS, server._unlocked)
+    sandbox_api.configure(server.handbook, server._CALLS)
     sandbox_api._spaces.clear()
     tools = {t.name for t in asyncio.run(server.mcp.list_tools())}
     assert {"sandbox_script", "sandbox_run", "sandbox_job", "sandbox_files", "sandbox_policy"} <= tools
@@ -181,3 +184,64 @@ def test_through_the_server_a_waiting_run_does_not_hold_up_other_calls(tmp_path,
     for runner, _ in sandbox_api._runners.values():
         runner.close()
     sandbox_api._runners.clear()
+
+
+def test_a_name_swapped_to_a_symlink_never_leads_the_host_outside(ws, tmp_path):
+    """The sandbox writes the workspace while the host reads it: a job swapping a file for a symlink
+    (the review's race) must never make read/write/remove act outside."""
+    outside = tmp_path / "secret"
+    outside.write_text("SECRET")
+    (tmp_path / "outdir").mkdir()
+    stop = threading.Event()
+
+    def swapper():
+        f, link, tmp = ws.work / "f", ws.work / "f.link", ws.work / "f.tmp"
+        d, dlink = ws.work / "d", ws.work / "d.link"
+        while not stop.is_set():
+            for real, l, target in ((f, link, outside), (d, dlink, tmp_path / "outdir")):
+                try:
+                    if not l.is_symlink():
+                        os.symlink(target, l)
+                    if real.is_dir() or not real.exists():
+                        real.mkdir(exist_ok=True) if real == d else real.write_text("inside")
+                    os.rename(l, tmp)
+                    os.rename(real, l)
+                    os.rename(tmp, real)
+                except OSError:
+                    pass
+
+    t = threading.Thread(target=swapper)
+    t.start()
+    try:
+        for _ in range(3000):
+            try:
+                assert "SECRET" not in ws.read("f")
+            except WorkspaceError:
+                pass
+            try:
+                ws.write("d/planted", "x")
+            except WorkspaceError:
+                pass
+    finally:
+        stop.set()
+        t.join()
+    assert outside.read_text() == "SECRET"
+    assert not (tmp_path / "outdir" / "planted").exists()
+
+
+def test_a_fifo_or_device_is_refused_at_once(ws):
+    os.mkfifo(ws.work / "p")
+    t0 = time.monotonic()
+    with pytest.raises(WorkspaceError, match="not a regular file|special"):
+        ws.read("p")
+    with pytest.raises(WorkspaceError):
+        ws.write("p", "x")
+    assert time.monotonic() - t0 < 1
+
+
+def test_removing_a_symlink_removes_the_link(ws, tmp_path):
+    target = tmp_path / "keep"
+    target.write_text("keep")
+    os.symlink(target, ws.work / "l")
+    ws.remove("l")
+    assert target.read_text() == "keep" and not (ws.work / "l").is_symlink()
