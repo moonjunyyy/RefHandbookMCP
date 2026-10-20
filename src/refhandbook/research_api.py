@@ -286,14 +286,20 @@ def research_blob(action: Literal["put", "append", "info"], text: str = "", ref:
 def research_review(ledger: str, action: Literal["done", "proposals"] = "done", session: str | None = None,
                     why: str = "", rules: list[dict[str, Any]] | None = None) -> str:
     """Review the rules against what happened (card rs-rv), when begin lists REVIEW or a process
-    question exposes a gap. done: record the finding in `why` (resets REVIEW), and propose rule
-    changes in `rules`: [{id, phase (check|obligation|close|pre|derive), body, message, severity,
-    replaces}]. A proposal runs at once as a warning on every ledger and blocks nothing until the
-    user approves it. proposals: list the open proposals."""
+    question exposes a gap. done: record the finding in `why` (resets REVIEW). Rule changes are rule
+    capabilities: cap(kind='rule', action='add'|'update', name=<id>, spec={phase, body, message,
+    severity, replaces}); a model's rule warns and blocks nothing until the user approves it.
+    (`rules` here and action='proposals' are deprecated and still work for now.)"""
     r = R()
+    warn = ""
+    if action == "proposals" or rules:
+        from . import cap_api
+        from .kernel import capabilities
+
+        warn = cap_api.deprecated("research_review_rules", capabilities.Registry(r.k.g, {"hb": r.hb})) + "\n"
     if action == "proposals":
-        return r.proposals()
-    return r.review(ledger, session, why, rules)
+        return warn + r.proposals()
+    return warn + r.review(ledger, session, why, rules)
 
 
 def research_check(ledger: str, closure_of: list[str] | None = None) -> str:

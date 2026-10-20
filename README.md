@@ -109,6 +109,8 @@ search                                (FTS5: title, triggers, condition, body)
 | `define_relation_type`, `relation_types` | The relation vocabulary |
 | `audit` | CAP 676 assessment checks over the whole handbook |
 | `research_*` | The research ledger: sessions, rows, plan objects, configurations and verdicts, documents (16 tools; card `rs-ref-ledger`) |
+| `cap` | Capability records of every kind (script, policy, layer, alias, rule, card): versioned, owned, reviewed on a TTL, deprecated and retired; a widening grant waits for the user (docs/kernel.md "Capabilities") |
+| `run`, `job`, `files` | Run a script in the user's sandbox as a background job, read jobs, and keep files in the workspace |
 
 Read tools are annotated `readOnlyHint`, and deletes `destructiveHint`, so a client can ask for
 confirmation on the right ones. Tools return the rendered card as text, since the reader is a
@@ -156,7 +158,7 @@ agree.
 | Configurations | `main` is the set of premises that are on, and only the user switches it. Named configurations switch premises on or off, swap alternatives, or add model premises, and the boundary report shows which single change flips a verdict. Model origin taints: nothing on the main line may rest on it. |
 | Propagation | Changing a row opens hits on everything that rests on it, verdict cells included. Switching a premise off reaches only the main line. Superseding or refuting a premise also reaches the exploration cells that contain it. |
 | Judge | The kernel's rules (`docs/kernel.md`) decide every check, obligation and end refusal; they are data, versioned with the package, and a user's change to one survives upgrades. |
-| Review | Every 7 sessions, or sooner when refusals, UNAFFECTED disposals, carries and drops gather, `research_begin` lists REVIEW (card `rs-rv`). `research_review` records it and may propose rules, which run as warnings until the user approves them on the server. |
+| Review | Every 7 sessions, or sooner when refusals, UNAFFECTED disposals, carries and drops gather, `research_begin` lists REVIEW (card `rs-rv`). `research_review` records it; rule changes are rule records (`cap kind=rule`), which run as warnings until the user approves them on the server. |
 | Documents | Each document has a role. `source` is the user's original: read-only and hash-checked. `deliverable` is for the reader: ids sit in hidden section markers, and a lint keeps ledger artefacts out of the prose. `working` is the model's own. A deliverable changes only through a committed change list: plan, then whole-section rewrites, then sync. Unplanned edits, appended corrections, and citations of replaced rows are refused. |
 
 The research tools are plain functions in `research_api.py`, with no import from `mcp`. The server

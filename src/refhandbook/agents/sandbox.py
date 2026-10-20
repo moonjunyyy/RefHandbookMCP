@@ -169,6 +169,9 @@ class Spec:
     # (host base), each found on the host's PATH and bound at /usr/bin/<name>. The other command
     # directories are empty. What a script can call is what this list put there.
     commands: list[str] | None = None
+    # Where each command of the view comes from, when the caller resolved them (a layer's file, or
+    # the host's); None: each is found on the host's PATH.
+    command_paths: dict[str, str] | None = None
     # The uid/gid outside the sandbox (a per-user subordinate id). None maps the runner's own uid.
     # Another id needs a runner with CAP_SETUID/CAP_SETGID (the parent writes the child's map).
     outside_uid: int | None = None
@@ -197,6 +200,12 @@ class Spec:
         for name in self.commands or []:
             if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", name):
                 raise SandboxError(f"command {name!r}: a bare name (letters, digits, . _ + -)")
+            if self.command_paths and name in self.command_paths:
+                path = _check_path(self.command_paths[name])
+                if not os.path.isfile(path):
+                    raise SandboxError(f"command {name!r}: {path} is not a file")
+                out[name] = os.path.realpath(path)
+                continue
             path = shutil.which(name, path=HOST_PATH)
             if path is None:
                 raise SandboxError(f"command {name!r} is not installed on the host")
@@ -209,11 +218,12 @@ class Spec:
         map any readable ELF: the view bounds the vocabulary, the namespaces bound the capability)."""
         if self.commands is None or self.base != "host":
             return ["/"]
+        layered = ["/" + p for p in self.overlay_points() if p != "etc"] if self.layers else []
         loaders = set()
         for pattern in ("/lib64/ld-linux*.so*", "/lib/ld-linux*.so*", "/lib/ld-musl*.so*", "/usr/lib/*/ld-linux*.so*"):
             for p in glob.glob(pattern):
                 loaders.add(os.path.realpath(p))
-        out = ["/usr/bin", *sorted(loaders)]
+        out = ["/usr/bin", *sorted(loaders), *layered]  # a layer the user stacked runs from its own tree
         if self.upper is not None:  # a layer build installs tools that must run
             out += ["/" + p for p in self.overlay_points()]
         return out

@@ -12,7 +12,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
-from . import render, research_api, sandbox_api
+from . import cap_api, render, research_api
 from .store import Handbook, HandbookError
 
 INSTRUCTIONS = """\
@@ -28,10 +28,14 @@ opens a session with `research_begin` (its first line is the SESSION token every
 works the plan objects with `research_next` / `research_push` / `research_done`, and closes with
 `research_end` before the reply. Sessions run side by side (another conversation, an agent with
 role="agent"); a CONFLICT names objects to re-read, nothing else is shared.
-Computation runs in the user's sandbox: write a script with `sandbox_script`, run it with
-`sandbox_run` (a background job; read it later with `sandbox_job`), and keep files in the workspace
-with `sandbox_files`. A script needs no approval: it can use only what the user's policy
-(`sandbox_policy`) puts in the sandbox. Never ask the user to approve a run."""
+Capabilities are records you keep up to date yourself, one tool for every kind: `cap` (kinds:
+script, policy, layer, alias, rule, card). Each is versioned, owned and reviewed on a TTL: add,
+update, deprecate, remove and restore your own freely; a version that widens a grant (a policy's
+commands, network, mounts; a layer built with the network) waits for the user's approval. When a
+review deprecates one of yours, fix it or remove it. Computation runs in the user's sandbox: write a
+script with `cap(kind="script")`, run it with `run` (a background job; read it later with `job`),
+and keep files in the workspace with `files`. Never ask the user to approve a run. The sandbox_*
+tools are old names of these and will be removed."""
 
 def _version() -> str:
     from .manifest import project_version
@@ -238,13 +242,11 @@ def audit() -> str:
 
 for _fn in research_api.READ_TOOLS:
     tool(READ)(_fn)
-for _fn in sandbox_api.READ_TOOLS:
-    tool(READ)(_fn)
-for _fn in sandbox_api.WRITE_TOOLS:
+for _fn in cap_api.WRITE_TOOLS + cap_api.DEPRECATED:
     tool(LEDGER_WRITE)(_fn)
 
 
-sandbox_api.configure(handbook, _CALLS)
+cap_api.configure(handbook, _CALLS)
 for _fn in research_api.WRITE_TOOLS:
     tool(LEDGER_WRITE)(_fn)
 for _fn in research_api.DELETE_TOOLS:

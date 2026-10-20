@@ -70,6 +70,20 @@ def main(argv: list[str] | None = None) -> int:
         po.add_argument(f"--{k.replace('_', '-')}", type=int)
     po.add_argument("--cpus", type=float)
     po.add_argument("--description")
+    po.add_argument("--ports", help="space-separated TCP ports the network may reach ('any': every port)")
+    po.add_argument("--layers", help="space-separated layers stacked on the base (replaces the list)")
+    po.add_argument("--mount", action="append", metavar="SOURCE:TARGET[:rw]",
+                    help="mount the user's data (under RHB_SANDBOX_MOUNT_ROOTS) at TARGET; repeat; 'none' clears")
+    cp = sub.add_parser("cap", help="the user's channel: capability records (list, show, history, approve, reject, "
+                                    "review, add, update, remove, restore)")
+    cp.add_argument("action", choices=["list", "show", "history", "approve", "reject", "review", "add", "update",
+                                       "remove", "restore", "kinds"])
+    cp.add_argument("kind", nargs="?", default="")
+    cp.add_argument("name", nargs="?", default="")
+    cp.add_argument("--version", type=int, default=0, help="the version to approve, reject or restore")
+    cp.add_argument("--spec", help="JSON object: the record's spec (add, update)")
+    cp.add_argument("--body-file", help="a file holding the body (a script's or a layer build's)")
+    cp.add_argument("--why", default="")
     rn = sub.add_parser("runner", help="run sandbox jobs: of --db, or of every store under --data-dir (remote)")
     rn.add_argument("--data-dir", help="the remote server's data directory (RHB_DATA_DIR)")
     rn.add_argument("--once", action="store_true", help="start what is queued, wait for it, and exit")
@@ -158,6 +172,8 @@ def main(argv: list[str] | None = None) -> int:
     hb = Handbook(args.db)
     if args.command == "policy":
         return _policy(args, hb)
+    if args.command == "cap":
+        return _cap(args, hb)
     if args.command in ("approve", "proposals", "reject"):
         return _approve(args, hb)
     if args.command in ("research", "research-index", "research-hook"):
@@ -287,11 +303,10 @@ def _approve(args: argparse.Namespace, hb: Handbook) -> int:
 
 def _policy(args: argparse.Namespace, hb: Handbook) -> int:
     """The terminal on the server is the user's channel: a policy granted here is the user's."""
-    from . import sandbox_api
+    from . import cap_api
     from .agents.workspace import Workspace
 
     ws = Workspace(hb)
-    sandbox_api.configure(lambda: hb, threading.RLock())
     changes: dict = {}
     if args.commands is not None:
         changes["commands"] = args.commands.split()
@@ -301,14 +316,66 @@ def _policy(args: argparse.Namespace, hb: Handbook) -> int:
         changes["commands"] = list(changes.get("commands", current)) + args.add.split()
     if args.network:
         changes["network"] = args.network == "on"
+    if args.ports:
+        changes["ports"] = None if args.ports.strip() == "any" else [int(x) for x in args.ports.split()]
+    if args.layers is not None:
+        changes["layers"] = args.layers.split()
+    if args.mount:
+        try:
+            changes["mounts"] = [] if args.mount == ["none"] else [
+                {"source": m.split(":")[0], "target": m.split(":")[1], "rw": m.split(":")[2:] == ["rw"]}
+                for m in args.mount]
+        except IndexError:
+            print("error: --mount SOURCE:TARGET[:rw]", file=sys.stderr)
+            return 2
     for k in ("timeout", "memory_mb", "disk_mb", "tmp_mb", "concurrent", "cpus", "description"):
         if getattr(args, k) is not None:
             changes[k] = getattr(args, k)
     try:
         if changes:
             ws.set_policy(args.name or "default", actor="user", **changes)
-        print(sandbox_api.sandbox_policy(args.name))
+        print(cap_api.policy_text(ws, args.name))
     except HandbookError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def _cap(args: argparse.Namespace, hb: Handbook) -> int:
+    """Capability records from the server's terminal, as the user."""
+    import threading
+
+    from . import cap_api
+
+    cap_api.configure(lambda: hb, threading.RLock())
+    cap_api._spaces.clear()
+    ws = cap_api.W()
+    caps = ws.caps
+    try:
+        spec = json.loads(args.spec) if args.spec else None
+        body = Path(args.body_file).read_text() if args.body_file else None
+        a = args.action
+        if a in ("kinds", "list"):
+            print(cap_api.cap(a, kind=args.kind))
+        elif a == "show":
+            print(cap_api._show(ws, args.kind, args.name))
+        elif a == "history":
+            print(cap_api.cap("history", kind=args.kind, name=args.name))
+        elif a == "approve":
+            print(caps.approve(args.kind, args.name, args.version, actor="user"))
+        elif a == "reject":
+            print(caps.reject(args.kind, args.name, args.version, actor="user"))
+        elif a == "review":
+            print(cap_api.cap("review", kind=args.kind or "policy", name=args.name))
+        elif a == "add":
+            print(caps.add(args.kind, args.name, spec=spec, body=body, actor="user")[1])
+        elif a == "update":
+            print(caps.update(args.kind, args.name, spec=spec, body=body, actor="user")[1])
+        elif a == "remove":
+            print(caps.remove(args.kind, args.name, actor="user", why=args.why))
+        elif a == "restore":
+            print(caps.restore(args.kind, args.name, actor="user", version=args.version or None)[1])
+    except (HandbookError, json.JSONDecodeError, OSError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
     return 0
@@ -346,6 +413,9 @@ def _runner(args: argparse.Namespace) -> int:
                 r = runner_for(db)
                 r.reap_lost()
                 r.poll()
+                with r.lock:  # the capability records' TTL reviews of this store
+                    if r.ws.caps.due():
+                        r.ws.caps.sweep()
             except Exception:  # noqa: BLE001
                 log.exception("runner: %s", db)
         if args.once:

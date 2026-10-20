@@ -913,9 +913,22 @@ class Research:
                 return "\n".join(out)
             from .kernel import proposals
 
-            asked = {s["id"]: s.pop("replaces", None) for s in specs}
-            g.define_rules(specs, actor="model")
-            replaces = {rid: proposals.record(g, rid, r) for rid, r in asked.items()}
+            from .kernel import capabilities, capkinds  # noqa: F401 — the rule kind
+
+            reg = capabilities.Registry(g, {"hb": self.hb})
+            replaces = {}
+            for s in specs:  # each proposal is a rule capability record: versioned, reviewed on a TTL
+                rid = s["id"]
+                fields = {k: s[k] for k in capkinds.RULE_FIELDS if k in s}
+                fields["description"] = why.strip()[:200]
+                try:
+                    if reg.find("rule", rid) is None:
+                        reg.add("rule", rid, spec=fields, actor="model", note=why.strip()[:200])
+                    else:
+                        reg.update("rule", rid, spec=fields, actor="model", note=why.strip()[:200], replace=True)
+                except capabilities.CapError as e:
+                    raise ResearchError(str(e)) from e
+                replaces[rid] = proposals.replaces(g, rid)
             for s in specs:
                 rid = s["id"]
                 note = f" (replaces {' '.join(replaces[rid])})" if replaces[rid] else ""

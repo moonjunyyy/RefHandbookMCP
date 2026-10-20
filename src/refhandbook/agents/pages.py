@@ -6,10 +6,13 @@ audience `refhandbook`, and every request here verifies it. What the page writes
 that blocks and where a sandbox policy is granted. Forms carry a token bound to the signed-in uid
 (HMAC with a key kept in the data directory) and must come from this origin.
 
-    GET  /agents          proposals (rules, with the hash of what each says), policies, scripts, jobs
-    POST /agents/approve  rule, seen   → Graph.approve(actor=user, seen=…), optionally retiring `replaces`
-    POST /agents/reject   rule         → retire_rule(actor=user): the model cannot propose that id again
-    POST /agents/policy   name, …      → Workspace.set_policy(actor=user)
+    GET  /agents              grants waiting (capability versions that widen what the model may do),
+                              rule proposals (with the hash of what each says), policies, records, jobs
+    POST /agents/cap/approve  kind, name, version → Registry.approve(actor=user): that version in force
+    POST /agents/cap/reject   kind, name, version → Registry.reject(actor=user)
+    POST /agents/approve      rule, seen   → Graph.approve(actor=user, seen=…), optionally retiring `replaces`
+    POST /agents/reject       rule         → retire_rule(actor=user): the model cannot propose that id again
+    POST /agents/policy       name, …      → Workspace.set_policy(actor=user): a new version of the policy
 """
 
 from __future__ import annotations
@@ -17,7 +20,9 @@ from __future__ import annotations
 import hashlib
 import hmac
 import html
+import json
 import secrets
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -110,11 +115,30 @@ def install(m: Any, *, stores: Callable[[str], Handbook], uid_of: Callable[[str]
             return f"규칙 {f.get('rule')} 거절"
         return await post(request, act)
 
+    @m.custom_route("/agents/cap/approve", methods=["POST"])
+    async def cap_approve(request: Request) -> Response:
+        def act(ws: Workspace, f: dict[str, str]) -> str:
+            return ws.caps.approve(f.get("kind", ""), f.get("name", ""), _int(f.get("version")), actor="user")
+        return await post(request, act)
+
+    @m.custom_route("/agents/cap/reject", methods=["POST"])
+    async def cap_reject(request: Request) -> Response:
+        def act(ws: Workspace, f: dict[str, str]) -> str:
+            return ws.caps.reject(f.get("kind", ""), f.get("name", ""), _int(f.get("version")), actor="user")
+        return await post(request, act)
+
     @m.custom_route("/agents/policy", methods=["POST"])
     async def policy(request: Request) -> Response:
         def act(ws: Workspace, f: dict[str, str]) -> str:
             changes: dict[str, Any] = {"commands": f.get("commands", "").split(), "network": f.get("network") == "on",
-                                       "description": f.get("description", "")}
+                                       "description": f.get("description", ""),
+                                       "layers": f.get("layers", "").split(), "mounts": _mounts(f.get("mounts", ""))}
+            ports = f.get("ports", "").strip()
+            if ports:
+                try:
+                    changes["ports"] = None if ports == "any" else [int(x) for x in ports.split()]
+                except ValueError as e:
+                    raise HandbookError("포트: 숫자 또는 any") from e
             for k, cast in (("timeout", int), ("memory_mb", int), ("disk_mb", int), ("tmp_mb", int),
                             ("concurrent", int), ("cpus", float)):
                 if f.get(k, "").strip():
@@ -126,6 +150,26 @@ def install(m: Any, *, stores: Callable[[str], Handbook], uid_of: Callable[[str]
             ws.set_policy(name, actor="user", **changes)
             return f"정책 {name} 저장"
         return await post(request, act)
+
+
+def _int(x: str | None) -> int:
+    try:
+        return int(x or "")
+    except ValueError as e:
+        raise HandbookError("버전이 숫자가 아닙니다") from e
+
+
+def _mounts(text: str) -> list[dict[str, Any]]:
+    """One mount per line: SOURCE TARGET [rw]."""
+    out = []
+    for line in text.splitlines():
+        parts = line.split()
+        if not parts:
+            continue
+        if len(parts) not in (2, 3) or (len(parts) == 3 and parts[2] != "rw"):
+            raise HandbookError(f"마운트 줄 {line!r}: '원본 대상 [rw]'")
+        out.append({"source": parts[0], "target": parts[1], "rw": len(parts) == 3})
+    return out
 
 
 def _html(body: str, status: int = 200) -> HTMLResponse:
@@ -149,6 +193,29 @@ def _overview(ws: Workspace, uid: str, token: str, q: Any) -> str:
     if q.get("err"):
         out.append(f"<p class=err>{_e(q['err'])}</p>")
     hidden = f"<input type=hidden name=csrf value='{token}'>"
+    caps = ws.caps
+
+    # grants waiting: versions the model wrote that widen what it may do
+    waiting = [r for r in caps.list() if r["attrs"].get("pending")]
+    out.append(f"<h2>승인 대기 중인 권한 ({len(waiting)})</h2>")
+    if not waiting:
+        out.append("<p class=note>모델이 요청한 권한 확장이 없습니다. 좁히는 변경과 스크립트는 승인 없이 바로 적용됩니다.</p>")
+    for r in waiting:
+        a = r["attrs"]
+        k = caps.kind(a["kind"])
+        ver = caps.version(r, a["pending"])
+        cur = caps.version(r) if a.get("version") else None
+        why = k.widens(caps, cur["spec"] if cur else None, ver["spec"])
+        ident = (f"<input type=hidden name=kind value='{_e(a['kind'])}'><input type=hidden name=name value='{_e(a['name'])}'>"
+                 f"<input type=hidden name=version value='{a['pending']}'>")
+        out.append(
+            f"<p><b>{_e(a['kind'])} {_e(a['name'])}</b> v{a['pending']} <span class=note>(작성: {_e(ver['author'])}"
+            f"{', 현재 v' + str(a['version']) if a.get('version') else ', 아직 적용된 버전 없음'})</span><br>"
+            f"넓어지는 것: <b>{_e('; '.join(why) or '-')}</b>{'<br>' + _e(ver['note']) if ver['note'] else ''}</p>"
+            f"<pre>{_e(json.dumps(ver['spec'], ensure_ascii=False, indent=1, sort_keys=True))}</pre>"
+            + (f"<pre>{_e(ver['body'][:20000])}</pre>" if ver["body"] else "")
+            + f"<form class=inline method=post action='/agents/cap/approve'>{hidden}{ident}<button>승인</button></form>"
+            f"<form class=inline method=post action='/agents/cap/reject'>{hidden}{ident}<button>거절</button></form>")
 
     # proposals
     rules = proposals.open_proposals(g)
@@ -180,20 +247,28 @@ def _overview(ws: Workspace, uid: str, token: str, q: Any) -> str:
             + (f"<input type=hidden name=name value='{_e(name)}'>" if name else
                "<label>이름 <input name=name required pattern='[a-z0-9][a-z0-9._-]*'></label>")
             + f"<label>설명 <input name=description value='{_e(p['content'] if p else '')}'></label>"
-            f"<label>명령 (공백으로 구분) <textarea name=commands rows=3>{_e(' '.join(a['commands']))}</textarea></label>"
+            f"<label>명령 (공백으로 구분, * 는 모든 명령) <textarea name=commands rows=3>{_e(' '.join(a['commands']))}</textarea></label>"
+            f"<label>레이어 (공백으로 구분) <input name=layers value='{_e(' '.join(a.get('layers') or []))}'></label>"
+            f"<label>마운트 (한 줄에 하나: 원본 대상 [rw]; 원본은 서버가 허용한 디렉터리 아래, {{user}} 사용 가능) "
+            f"<textarea name=mounts rows=2>{_e(chr(10).join(m['source'] + ' ' + m['target'] + (' rw' if m['rw'] else '') for m in a.get('mounts') or []))}</textarea></label>"
             f"<label><input type=checkbox name=network {'checked' if a['network'] else ''} style='width:auto'> 네트워크</label> "
+            f"<label>포트 <input class=small name=ports value='{_e('any' if a.get('ports') is None else ' '.join(map(str, a.get('ports') or [])))}'></label> "
             + " ".join(f"<label>{lab} <input class=small name={k} value='{_e(a.get(k, ''))}'></label>"
                        for k, lab in (("timeout", "시간(초)"), ("memory_mb", "메모리MB"), ("cpus", "CPU"),
                                       ("disk_mb", "디스크MB"), ("tmp_mb", "tmpMB"), ("concurrent", "동시")))
             + "<br><button>저장</button></form>")
 
-    # scripts and jobs (read-only)
-    names = ws.scripts()
-    out.append(f"<h2>스크립트 ({len(names)})</h2><table><tr><th>이름</th><th>해석기</th><th>정책</th><th>작성</th><th>설명</th></tr>")
-    for n in names:
-        s = ws.script(n)
-        out.append(f"<tr><td>{_e(n)}</td><td>{_e(s['attrs']['interpreter'])}</td><td>{_e(s['attrs']['policy'])}</td>"
-                   f"<td>{_e(s['author'])}</td><td>{_e(s['content'])}</td></tr>")
+    # every record (read-only): what is in force, what a review deprecated
+    recs = caps.list()
+    out.append(f"<h2>기능 기록 ({len(recs)})</h2><p class=note>스크립트·정책·레이어·규칙·카드·별칭. 각 기록은 버전이 남고, "
+               "검토 기한이 지나면 스스로 점검해 갱신되거나 폐기 예정이 됩니다.</p><table><tr><th>종류</th><th>이름</th>"
+               "<th>버전</th><th>상태</th><th>작성</th><th>검토/사유</th><th>설명</th></tr>")
+    for r in recs:
+        a = r["attrs"]
+        note = (a.get("reason") or "") if r["state"] != "active" else time.strftime(
+            "%Y-%m-%d", time.localtime(a.get("review_after") or 0)) if a.get("review_after") else ""
+        out.append(f"<tr><td>{_e(a['kind'])}</td><td>{_e(a['name'])}</td><td>{_e(a.get('version') or '-')}</td>"
+                   f"<td>{_e(r['state'])}</td><td>{_e(r['author'])}</td><td>{_e(note)}</td><td>{_e(r['content'])}</td></tr>")
     out.append("</table><h2>최근 작업</h2><table><tr><th>작업</th><th>상태</th><th>스크립트</th><th>종료</th></tr>")
     for j in ws.jobs(30):
         a = j["attrs"]
