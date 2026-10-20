@@ -843,9 +843,19 @@ class Graph:
         return new
 
     def prune_blobs(self, days: int = 7) -> int:
-        """Blobs carry arguments between calls; none is kept past `days`."""
+        """Blobs carry arguments between calls: one is kept past `days` only while a node names it
+        (a script's body, a job's output)."""
+        old = [r[0] for r in self.db.execute("SELECT sha FROM k_blobs WHERE created < datetime('now', ?)",
+                                             (f"-{days} days",))]
+        if not old:
+            return 0
+        named = set()
+        for (attrs,) in self.db.execute("SELECT attrs FROM k_nodes WHERE attrs LIKE '%\"%'"):
+            named.update(re.findall(r'"([0-9a-f]{64})"', attrs))
+        gone = [sha for sha in old if sha not in named]
         with self.tx():
-            return self.db.execute("DELETE FROM k_blobs WHERE created < datetime('now', ?)", (f"-{days} days",)).rowcount
+            self.db.executemany("DELETE FROM k_blobs WHERE sha = ?", [(sha,) for sha in gone])
+        return len(gone)
 
     def active_rules(self) -> list[dict[str, Any]]:
         return [dict(r) for r in self.db.execute("SELECT * FROM k_rules WHERE state = 'active' ORDER BY id")]

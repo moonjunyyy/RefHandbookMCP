@@ -91,7 +91,7 @@ description: >
   with `confirm` set to the ledger id and only when the user asked.
 - **The rules are reviewed, not worked around.** Every 7 sessions, or sooner when
   refusals, UNAFFECTED disposals, carries and drops gather, `research_begin`
-  lists REVIEW (card rs-rv). A rule change is proposed with `research_review`;
+  lists REVIEW (card rs-rv). A rule change is proposed as a rule record, `cap(kind="rule")`;
   it runs as a warning until the user approves it. Never treat a proposal as
   in force.
 - The handbook does not replace judgment. If no card fits, say so in one line

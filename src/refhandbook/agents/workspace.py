@@ -1,23 +1,28 @@
 """A user's sandbox workspace, shared by Chat sessions (the MCP tools) and agents (the runner):
 policies, scripts and jobs as kernel nodes, files in a work tree, and the runner that executes jobs.
 
-The rule every part follows is the kernel's: the model writes what is proposed, the user writes what
-governs. Here that splits as
+Policies, scripts and layers are capability records (kernel/capabilities.py, kinds in
+agents/capkinds.py): versioned, owned, reviewed on a TTL, deprecated and retired the same way as
+every other capability. The rule the kinds follow is the kernel's: the model writes freely what
+cannot widen what the sandbox may do; a grant that widens it waits for the user.
 
-    policy  written by the user (or the kernel: the default). It IS the sandbox: the commands the
-            sandbox shows, the network, the limits. Granted once, it covers every script that runs
-            under it, so nothing asks again per script or per run.
-    script  written by the model (or the user): an interpreter (a command of its policy) and a body.
-            Adding or revising one needs no approval, because it can do nothing its policy does not
-            already allow: what it can call is what the policy put in the sandbox.
+    policy  the sandbox itself: the commands it shows, network, limits, layers, mounts. The default
+            is the kernel's; a widening version waits for the user's approval. Granted once, it covers
+            every script that runs under it, so nothing asks again per script or per run.
+    script  an interpreter (a command of its policy) and a body; the model adds, revises, deprecates
+            and removes its own freely, since it can do nothing its policy does not already allow.
+    layer   what a policy can stack on the base (toolchains, wheels, datasets), built as a job.
     job     one run of one script version: queued by a tool call, executed by a runner (in this
             process for a local server, the runner unit for a remote one), its output kept as blobs.
+
+The runner reads the version in force from plain nodes the kinds write: policy:<name>, script:<name>.
 
 Layout next to the store (<db> is the store's file, so local and remote stores alike get one):
 
     <db>.sandbox/work/            the workspace, /work inside the sandbox
     <db>.sandbox/jobs/<id>/       one job's root mount point, script and captured output
     <db>.sandbox/hostetc/         the host base's /etc (sandbox.prepare_hostetc)
+    <db>.sandbox/layerstore/      the user's built layers (agents/layers.py)
     <db>.sandbox/queue/<id>       a marker per queued job, so a runner finds work without opening
                                   every store
 """
@@ -39,9 +44,12 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
+from ..kernel import capabilities, capkinds  # noqa: F401 — registers the kernel's kinds
 from ..kernel.graph import Conflict, Forbidden, Graph, KernelError
 from ..store import Handbook, HandbookError
+from . import capkinds as _sandbox_kinds  # noqa: F401 — registers policy, script, layer
 from . import sandbox
+from .layers import LayerStore
 
 PKG = "sandbox"
 VERSION = "1"
@@ -63,6 +71,19 @@ NAME_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789-_."
 
 class WorkspaceError(HandbookError):
     pass
+
+
+def _owner(hb: Handbook) -> tuple[str, int]:
+    """The store's owner: users/<uid>.db on a remote server, else the local account."""
+    import getpass
+    import pwd
+
+    p = Path(str(hb.path))
+    name = p.stem if p.parent.name == "users" else getpass.getuser()
+    try:
+        return name, pwd.getpwnam(name).pw_uid
+    except KeyError:
+        return name, os.getuid()
 
 
 def _name(name: str, what: str) -> str:
@@ -99,8 +120,10 @@ def _du(path: Path) -> int:
 
 
 class Workspace:
-    """One store's sandbox: its policies, scripts, jobs and files. Every method that touches the
-    store expects the caller to serialize access to the store's connection (the server's lock)."""
+    """One store's sandbox: its policies, scripts, layers, jobs and files. Every method that touches
+    the store expects the caller to serialize access to the store's connection (the server's lock)."""
+
+    DEFAULT = DEFAULT_POLICY
 
     def __init__(self, hb: Handbook, base: str | Path | None = None):
         from ..kernel import runtime
@@ -115,59 +138,95 @@ class Workspace:
         for d in ("work", "jobs", "queue"):
             (self.base / d).mkdir(parents=True, exist_ok=True)
         self.work = self.base / "work"
-        self._ensure_default_policy()
+        self.owner, self.owner_uid = _owner(hb)
+        self.on_queue = lambda: None  # the in-process runner's wake-up (sandbox_api)
+        self.caps = capabilities.Registry(self.g, {"ws": self, "hb": hb})
+        self._adopt()
 
-    # ── policies: the user's grant, once ─────────────────────────────────
+    def kick(self) -> None:
+        self.on_queue()
 
-    def _ensure_default_policy(self) -> None:
-        pid = f"policy:{DEFAULT_POLICY}"
-        if self.g.get_node(pid) is None:
-            commands = [c for c in DEFAULT_COMMANDS if shutil.which(c, path=sandbox.HOST_PATH)]
-            self.g.put_node(pid, "policy", actor="kernel", content="the default: computation, no network",
-                            attrs={"commands": commands, "network": False, "ports": [80, 443], "timeout": 120,
-                                   "memory_mb": 2048, "cpus": 2.0, "tmp_mb": 512, "disk_mb": 2048, "concurrent": 2})
+    def layer_store(self) -> LayerStore:
+        return LayerStore(self.base / "layerstore")
+
+    # ── the version in force, as the runner reads it ─────────────────────
+
+    def materialize(self, type_: str, name: str, attrs: dict[str, Any], content: str, state: str = "") -> None:
+        nid = f"{type_}:{name}"
+        if self.g.get_node(nid) is None:
+            self.g.put_node(nid, type_, actor="kernel", state=state, content=content, attrs=attrs)
+        else:
+            self.g.update_node(nid, actor="kernel", state=state or None, content=content, attrs=attrs,
+                               replace_attrs=True)
+
+    def dematerialize(self, type_: str, name: str) -> None:
+        nid = f"{type_}:{name}"
+        n = self.g.get_node(nid)
+        if n is None:
+            return
+        if type_ == "script":
+            self.g.update_node(nid, actor="kernel", state="retired")
+        else:
+            self.g.delete_node(nid, actor="kernel")
+
+    # ── adoption: the default policy, and records for what came before the registry ──
+
+    @staticmethod
+    def default_policy_spec() -> dict[str, Any]:
+        return {"commands": [c for c in DEFAULT_COMMANDS if shutil.which(c, path=sandbox.HOST_PATH)],
+                "network": False, "ports": [80, 443], "timeout": 120.0, "memory_mb": 2048, "cpus": 2.0,
+                "tmp_mb": 512, "disk_mb": 2048, "concurrent": 2, "mounts": [], "layers": [],
+                "description": "the default: computation, no network"}
+
+    def _adopt(self) -> None:
+        from .capkinds import POLICY_FIELDS
+
+        caps = self.caps
+        legacy = {r[0]: self.g.node(r[0]) for r in self.g.db.execute(
+            "SELECT id FROM k_nodes WHERE type IN ('policy', 'script') ORDER BY type, id")}
+        if caps.find("policy", DEFAULT_POLICY) is None:
+            old = legacy.get(f"policy:{DEFAULT_POLICY}")
+            spec = self.default_policy_spec()
+            if old is not None:
+                spec.update({k: v for k, v in old["attrs"].items() if k in POLICY_FIELDS})
+                spec["description"] = old["content"] or spec["description"]
+            spec["commands"] = [c for c in spec["commands"] if shutil.which(c, path=sandbox.HOST_PATH)]
+            caps.add("policy", DEFAULT_POLICY, spec=spec, actor=old["author"] if old else "kernel",
+                     note="adopted" if old else "")
+        for nid, n in legacy.items():
+            type_, name = nid.split(":", 1)
+            if caps.find(type_, name) is not None:
+                continue
+            actor = n["author"] if n["author"] in ("user", "model") else "kernel"
+            try:
+                if type_ == "policy":
+                    spec = {k: v for k, v in n["attrs"].items() if k in POLICY_FIELDS}
+                    spec["description"] = n["content"] or name
+                    caps.add("policy", name, spec=spec, actor="user" if actor == "model" else actor, note="adopted")
+                elif n["state"] == "active":
+                    body = self.g.get_blob(n["attrs"]["blob"]).decode()
+                    caps.add("script", name, spec={"interpreter": n["attrs"]["interpreter"],
+                                                   "policy": n["attrs"]["policy"], "description": n["content"]},
+                             body=body, actor=actor, note="adopted")
+            except KernelError as e:
+                self.g.log("kernel", f"could not adopt {nid}: {e}", nid)
+
+    # ── policies: the user's grant ───────────────────────────────────────
 
     def set_policy(self, name: str, *, actor: str, **attrs: Any) -> dict[str, Any]:
-        """Grant or change a policy. Only the user's channel (the approval page, the CLI) calls
-        this with actor='user'; the model cannot write a policy at all."""
-        if actor == "model":
-            raise Forbidden("a policy is the user's grant: the model cannot write one (ask the user to grant it "
-                            "on the approval page)")
+        """Grant or change a policy (a new version of its record). The user's version takes effect
+        at once; the model's, if it widens the policy, waits for the user's approval."""
         name = _name(name, "policy")
-        known = {"commands", "network", "ports", "timeout", "memory_mb", "cpus", "tmp_mb", "disk_mb", "concurrent",
-                 "description"}
-        bad = set(attrs) - known
-        if bad:
-            raise WorkspaceError(f"unknown policy fields {sorted(bad)}; known: {sorted(known)}")
-        if "commands" in attrs:
-            cmds = list(dict.fromkeys(attrs["commands"]))
-            missing = [c for c in cmds if not shutil.which(c, path=sandbox.HOST_PATH)]
-            if missing:
-                raise WorkspaceError(f"not installed on the host: {', '.join(missing)}")
-            attrs["commands"] = cmds
-        if "ports" in attrs and attrs["ports"] is not None:
-            ports = [int(x) for x in attrs["ports"]]
-            if not all(0 < x < 65536 for x in ports):
-                raise WorkspaceError("ports are TCP port numbers (1-65535)")
-            attrs["ports"] = ports
-        desc = attrs.pop("description", None)
-        pid = f"policy:{name}"
-        with self.g.tx():
-            if self.g.get_node(pid) is None:
-                base = dict(self.policy(DEFAULT_POLICY)["attrs"])
-                base.update(attrs)
-                self.g.put_node(pid, "policy", actor=actor, content=desc or name, attrs=base)
-            else:
-                self.g.update_node(pid, actor=actor, attrs=attrs, content=desc)
-            self.g.log(actor, f"policy {name} granted: {json.dumps(attrs, sort_keys=True)}", pid)
-        return self.policy(name)
+        if self.caps.find("policy", name) is None:
+            self.caps.add("policy", name, spec=attrs, actor=actor)
+        else:
+            self.caps.update("policy", name, spec=attrs, actor=actor)
+        return self.policy(name) if self.g.get_node(f"policy:{name}") else self.caps.get("policy", name)
 
     def policy(self, name: str) -> dict[str, Any]:
         n = self.g.get_node(f"policy:{_name(name, 'policy')}")
         if n is None:
-            raise WorkspaceError(f"no policy {name!r}; policies: {', '.join(self.policies()) or 'none'}")
-        if n["author"] == "model":  # cannot happen through this module; a forged row is not a grant
-            raise Forbidden(f"policy {name!r} was not written by the user")
+            raise WorkspaceError(f"no policy {name!r} in force; policies: {', '.join(self.policies()) or 'none'}")
         return n
 
     def policies(self) -> list[str]:
@@ -177,33 +236,28 @@ class Workspace:
     # ── scripts: the model's, freely, within a policy ────────────────────
 
     def put_script(self, name: str, body: str, *, actor: str, interpreter: str = "sh", description: str = "",
-                   policy: str = DEFAULT_POLICY) -> dict[str, Any]:
+                   policy: str = DEFAULT_POLICY, requires: list[str] | None = None,
+                   test: dict[str, Any] | None = None) -> dict[str, Any]:
         name = _name(name, "script")
-        pol = self.policy(policy)
-        if interpreter not in pol["attrs"]["commands"]:
-            raise WorkspaceError(f"interpreter {interpreter!r} is not a command of policy {policy!r} "
-                                 f"({' '.join(pol['attrs']['commands'])})")
-        if not body.strip():
-            raise WorkspaceError("a script needs a body")
-        sha = self.g.put_blob(body)
-        sid = f"script:{name}"
-        attrs = {"interpreter": interpreter, "blob": sha, "policy": _name(policy, "policy"), "size": len(body.encode())}
-        with self.g.tx():
-            old = self.g.get_node(sid)
-            if old is None:
-                self.g.put_node(sid, "script", actor=actor, state="active", content=description, attrs=attrs)
-            else:
-                if actor == "model" and old["author"] != "model":
-                    raise Forbidden(f"script {name!r} is the user's: add yours under another name")
-                self.g.update_node(sid, actor=actor, state="active", content=description or old["content"],
-                                   attrs=attrs)
-            self.g.log(actor, f"script {name} {'revised' if old else 'added'} ({sha[:12]})", sid)
+        spec: dict[str, Any] = {"interpreter": interpreter, "policy": _name(policy, "policy"), "description": description}
+        if requires is not None:
+            spec["requires"] = requires
+        if test is not None:
+            spec["test"] = test
+        rec = self.caps.find("script", name)
+        if rec is None:
+            self.caps.add("script", name, spec=spec, body=body, actor=actor)
+        else:
+            if rec["state"] == "retired":
+                self.caps._may(rec, actor)
+                self.caps.restore("script", name, actor=actor)
+            self.caps.update("script", name, spec=spec, body=body, actor=actor)
         return self.script(name)
 
     def script(self, name: str) -> dict[str, Any]:
         n = self.g.get_node(f"script:{_name(name, 'script')}")
-        if n is None:
-            raise WorkspaceError(f"no script {name!r}; scripts: {', '.join(self.scripts()) or 'none'}")
+        if n is None or n["state"] != "active":
+            raise WorkspaceError(f"no script {name!r} in force; scripts: {', '.join(self.scripts()) or 'none'}")
         return n
 
     def scripts(self) -> list[str]:
@@ -211,14 +265,12 @@ class Workspace:
             "SELECT id FROM k_nodes WHERE type = 'script' AND state = 'active' ORDER BY id")]
 
     def retire_script(self, name: str, *, actor: str) -> None:
-        n = self.script(name)
-        if actor == "model" and n["author"] != "model":
-            raise Forbidden(f"script {name!r} is the user's")
-        self.g.update_node(n["id"], actor=actor, state="retired")
+        self.caps.remove("script", _name(name, "script"), actor=actor)
 
     # ── jobs ─────────────────────────────────────────────────────────────
 
     def submit(self, name: str, args: list[str] | None = None, *, actor: str, timeout: float | None = None) -> str:
+        self.caps.in_force("script", _name(name, "script"))
         s = self.script(name)
         pol = self.policy(s["attrs"]["policy"])
         if not isinstance(args, (list, tuple)) or not all(isinstance(a, str) for a in args or []):
@@ -235,7 +287,17 @@ class Workspace:
         self.g.put_node(jid, "job", actor=actor, state="queued", content=name,
                         attrs={"script": name, "blob": s["attrs"]["blob"], "interpreter": s["attrs"]["interpreter"],
                                "policy": s["attrs"]["policy"], "args": list(args or []), "timeout": t,
-                               "submitted": time.time()})
+                               "version": s["attrs"].get("version"), "submitted": time.time()})
+        (self.base / "queue" / jid[4:]).touch()
+        return jid
+
+    def submit_build(self, name: str, ver: dict[str, Any]) -> str:
+        """A layer build as a job: the runner builds it and records the result on the layer's record."""
+        jid = f"job:{secrets.token_hex(5)}"
+        self.g.put_node(jid, "job", actor="kernel", state="queued", content=f"layer {name}",
+                        attrs={"build": name, "version": ver["version"], "script": f"layer:{name}", "args": [],
+                               "blob": self.g.put_blob(ver["body"]), "policy": None,
+                               "timeout": float(ver["spec"]["timeout"]), "submitted": time.time()})
         (self.base / "queue" / jid[4:]).touch()
         return jid
 
@@ -402,10 +464,22 @@ class Runner:
                 if j is None or j["state"] != "queued":
                     marker.unlink(missing_ok=True)
                     continue
-                running = self.ws.g.db.execute("SELECT count(*) FROM k_nodes WHERE type = 'job' AND state = 'running'"
-                                               " AND json_extract(attrs, '$.policy') = ?",
-                                               (j["attrs"]["policy"],)).fetchone()[0]
-                if running >= int(self.ws.policy(j["attrs"]["policy"])["attrs"].get("concurrent", 2)):
+                if j["attrs"].get("build"):  # one layer build at a time per store
+                    running = self.ws.g.db.execute("SELECT count(*) FROM k_nodes WHERE type = 'job' AND state = "
+                                                   "'running' AND json_extract(attrs, '$.build') IS NOT NULL").fetchone()[0]
+                    limit = 1
+                else:
+                    running = self.ws.g.db.execute("SELECT count(*) FROM k_nodes WHERE type = 'job' AND state = "
+                                                   "'running' AND json_extract(attrs, '$.policy') = ?",
+                                                   (j["attrs"]["policy"],)).fetchone()[0]
+                    try:
+                        limit = int(self.ws.policy(j["attrs"]["policy"])["attrs"].get("concurrent", 2))
+                    except WorkspaceError as e:  # its policy went out of force while it waited
+                        self.ws.g.update_node(jid, actor="kernel", state="failed", expect=j["version"],
+                                              attrs={"error": str(e), "finished": time.time()})
+                        marker.unlink(missing_ok=True)
+                        continue
+                if running >= limit:
                     continue
                 try:
                     self.ws.g.update_node(jid, actor="kernel", state="running", expect=j["version"],
@@ -449,8 +523,12 @@ class Runner:
             return self.ws.job(jid)
 
     def _spec(self, j: dict[str, Any], jobdir: Path) -> sandbox.Spec:
+        from .capkinds import layer_trees, mount_source, resolve_command
+
         with self.lock:
             pol = self.ws.policy(j["attrs"]["policy"])["attrs"]
+            trees = layer_trees(self.ws.caps, pol.get("layers") or []) if pol.get("layers") else []
+            mounts = [(mount_source(self.ws, m["source"]), m["target"], m["rw"]) for m in pol.get("mounts") or []]
         (jobdir / "root").mkdir(parents=True, exist_ok=True)
         script = jobdir / "script"
         with self.lock:
@@ -459,14 +537,67 @@ class Runner:
         limits = sandbox.Limits(memory_mb=int(pol["memory_mb"]), cpus=float(pol["cpus"]), tmp_mb=int(pol["tmp_mb"]),
                                 address_space=self.cg is None)
         leaf = str(self.cg.leaf(j["id"][4:], limits)) if self.cg is not None else None
+        every = pol["commands"] == ["*"]
+        paths = None if every else {c: p for c in pol["commands"] if (p := resolve_command(c, trees))}
+        argv0 = f"/usr/bin/{interp}"
+        if every:  # no command view: the interpreter is where the layers or the host put it
+            found = [f"/{d}/{interp}" for t in trees for d in sandbox.COMMAND_DIRS if os.path.lexists(f"{t}/{d}/{interp}")]
+            argv0 = found[0] if found else (shutil.which(interp, path=sandbox.HOST_PATH) or argv0)
         return sandbox.Spec(
-            argv=[f"/usr/bin/{interp}", "/job/script", *j["attrs"]["args"]],
+            argv=[argv0, "/job/script", *j["attrs"]["args"]],
             root=str(jobdir / "root"), work=str(self.ws.work), hostetc=str(self.hostetc),
-            binds_ro=[(str(script), "/job/script")], network=bool(pol["network"]),
-            ports=list(pol.get("ports") or [80, 443]) if pol["network"] else None,
-            timeout=float(j["attrs"]["timeout"]), commands=list(pol["commands"]), limits=limits, cgroup=leaf)
+            binds_ro=[(str(script), "/job/script")] + [(src, dst) for src, dst, rw in mounts if not rw],
+            binds_rw=[(src, dst) for src, dst, rw in mounts if rw],
+            layers=trees, network=bool(pol["network"]),
+            ports=(list(pol["ports"]) if pol.get("ports") is not None else None) if pol["network"] else None,
+            timeout=float(j["attrs"]["timeout"]), commands=None if every else list(paths or {}),
+            command_paths=paths, limits=limits, cgroup=leaf)
+
+    def _build(self, j: dict[str, Any]) -> None:
+        """A layer build: the layer store builds it in a sandbox over the base and its parents; the
+        layer's record learns the result (built, or the build's error)."""
+        from .capkinds import built_layers, layer_dir
+
+        name, v = j["attrs"]["build"], j["attrs"]["version"]
+        result: dict[str, Any] = {}
+        out = ""
+        try:
+            with self.lock:
+                ver = self.ws.caps.version(self.ws.caps.get("layer", name), v)
+                parents = built_layers(self.ws.caps, ver["spec"]["parents"])
+                body = self.ws.g.get_blob(j["attrs"]["blob"]).decode()
+            store = self.ws.layer_store()
+            d = layer_dir(None, name, v)
+            if (store.root / "layers" / d).exists():
+                store.remove(d)
+            _, code, out = store.build(d, body, parents=parents, network=bool(ver["spec"]["network"]),
+                                       description=ver["spec"]["description"], timeout=float(ver["spec"]["timeout"]))
+            result["exit"] = code
+            state = "done" if code == 0 else "failed"
+        except Exception as e:  # noqa: BLE001 — a runner never dies of one job
+            state, result["error"] = "failed", f"{type(e).__name__}: {e}"
+        with self.lock:
+            data = out.encode()
+            result.update(stdout=self.ws.g.put_blob(_cap(data)), stdout_bytes=len(data), finished=time.time())
+            self.ws.g.update_node(j["id"], actor="kernel", state=state, attrs=result)
+            rec = self.ws.caps.find("layer", name)
+            if rec is not None and rec["attrs"].get("building") == j["id"]:
+                if state == "done":
+                    self.ws.g.update_node(rec["id"], actor="kernel", attrs={"built": v, "building": None,
+                                                                            "build_error": None})
+                    store = self.ws.layer_store()
+                    for lay in store.list():  # earlier builds, unless another layer stands on one
+                        if lay.name.startswith(f"{name}.v") and lay.name != layer_dir(None, name, v) and \
+                                not any(lay.name in o.parents for o in store.list()):
+                            store.remove(lay.name)
+                else:
+                    err = result.get("error") or f"exit {result.get('exit')}: {out[-400:].strip()}"
+                    self.ws.g.update_node(rec["id"], actor="kernel", attrs={"building": None, "build_error": err})
 
     def _execute(self, j: dict[str, Any]) -> None:
+        if j["attrs"].get("build"):
+            self._build(j)
+            return
         jobdir = self.ws.base / "jobs" / j["id"][4:]
         jobdir.mkdir(parents=True, exist_ok=True)
         result: dict[str, Any] = {}

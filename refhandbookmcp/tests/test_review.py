@@ -96,7 +96,7 @@ def test_a_proposal_warns_until_the_user_approves_it(api, capsys):
     assert cli.main(["--db", str(api.path), "approve", "rule", "rv_says_drops", "--seen", sha]) == 0
     assert "rule rv_says_drops approved" in capsys.readouterr().out
     assert "ERROR H1: says 'drops'" in research_api.research_check("geo")
-    assert research_api.research_review("geo", action="proposals") == "No open proposals."
+    assert research_api.research_review("geo", action="proposals").endswith("No open proposals.")
 
 
 def test_a_proposal_must_be_whole_and_parse(api):

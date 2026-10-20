@@ -32,14 +32,16 @@ the rows that changed is the obvious optimisation.
 
 The rules are data, so they are reviewed like data (card `rs-rv`):
 
-- **When.** `rs_o_review` lists REVIEW at `research_begin` 7 turns after the last review, or
+- **When.** `rs_o_review` lists REVIEW at `research_begin` 7 sessions after the last review, or
   sooner once 3 signals gather: refusals of the work (logged as `refused: …` by every tool on a
-  ledger; protocol refusals such as a stale token are not signals), UNAFFECTED disposals,
-  carries and drops. The thresholds are the rule's text, so revising the rule retunes them.
-- **Proposals.** `research_review` records the review (`review: <why>`) and may propose rules.
-  A proposal is a kernel rule written by the model, so its authority is `proposed`: it runs at once
-  on every ledger of the store, its findings shown as warnings, and it never blocks. The review
-  prints its trial findings on the ledger at hand, so overconstraint shows before adoption.
+  ledger; protocol refusals such as a missing session or a CONFLICT are not signals), UNAFFECTED
+  disposals, carries and drops. The thresholds are the rule's text, so revising the rule retunes them.
+- **Proposals.** `research_review` records the review (`review: <why>`). A rule change is a rule
+  capability record (below): `cap(kind="rule", action="add"|"update", name=<id>, spec=…)`. A rule
+  the model writes has authority `proposed`: it runs at once on every ledger of the store, its
+  findings shown as warnings, and it never blocks. The write prints its trial findings on every
+  ledger, so overconstraint shows before adoption. (`research_review rules=…` still works, as a
+  deprecated alias.)
 - **Adoption.** Only the user's channel approves (`/agents`, or `refhandbook proposals` and
   `refhandbook approve rule <id> --seen <approval>` on the server). The rules a proposal replaces
   are recorded as data beside it (`replaces`), never read from the model's prose, and the approval
@@ -50,19 +52,68 @@ The rules are data, so they are reviewed like data (card `rs-rv`):
   exceeds it is refused at proposal or retired by the kernel when it meets a large ledger; the
   sealed rules of a phase together get 30 s, past which the call fails instead of hanging.
 
+## Sessions
+
+A session (`kernel/sessions.py`, table `k_sessions`) is one participant's span of work on a scope:
+a chat session per user message, an agent session per delegated run. Its token is stable for the
+whole session. Sessions run side by side: a write names the objects it changes and is refused
+(CONFLICT) only if another session changed one of them after this one read it (`k_writes`, and
+`k_seen` for what a session read since its begin). A session closes over what it opened (the
+pending hits it raised, the K it runs, the document plans it committed); a chat session also answers
+for the user's directives and the continuation. One left open is resumed by the next
+`research_begin` of its role once idle (30 min).
+
+## Capabilities
+
+Everything added to what the system does is a capability record (`kernel/capabilities.py`): a
+script, a sandbox policy, a layer, a rule, a card, an alias. One tool family, `cap`, for every kind.
+
+- **Records and versions.** `cap:<kind>:<name>` is a node with its owner (the author), the version in
+  force, and a TTL; `k_cap_versions` holds every version, immutable (spec as JSON, a body for scripts
+  and layers, author, note). `update` writes a new version; `restore` brings back an old one as a
+  new version; history is never rewritten.
+- **States.** proposed → active → deprecated (still works, warns, names what replaces it) → retired
+  (out of force, history kept) → purged after 90 days. A proposal nobody approves expires after the
+  kind's grace.
+- **Who.** The owner changes a record; the model changes only its own. A version the model writes
+  that widens a grant (each kind says what widens: a policy's commands, network, ports, limits,
+  layers, mounts; a layer built with the network) waits for the user's approval on `/agents` (or
+  `refhandbook cap approve <kind> <name> --version N`), with the version in force kept meanwhile.
+  Everything else is in force at once.
+- **TTL.** When `review_after` passes, the sweep (at most once a minute: on the cap tools, and in
+  the runner loop) runs the kind's check on the version in force: a pass renews the TTL, a failure
+  deprecates the record with the reason and counts a review signal (`cap:signals`). The kernel's own
+  records repair themselves where the kind knows how (the default policy drops a command the host
+  no longer has). A script's check can run its own self-test as a job.
+- **Kinds** are registered by packages: `rule`, `alias`, `card` (`kernel/capkinds.py`); `policy`,
+  `script`, `layer` (`agents/capkinds.py`). A kind validates a spec, says what widens, applies a
+  version (writes what the rest of the system reads: the policy and script nodes the runner reads,
+  the kernel rule, the handbook card) and checks it.
+- **Old tool names** (`sandbox_*`, `research_review rules=`) are kernel-owned alias records,
+  deprecated from the start: they work with a warning and stop when the alias retires (30 days).
+
 ## The sandbox workspace
 
-One sandbox per user, shared by Chat sessions (the `sandbox_*` tools) and agents
-(`agents/workspace.py`), on the same rule as the rules: the model writes what is proposed, the user
-writes what governs.
+One sandbox per user, shared by Chat sessions (the `cap`, `run`, `job`, `files` tools) and agents
+(`agents/workspace.py`). Policies, scripts and layers are capability records.
 
-- **Policy** — the user's grant, and the sandbox itself: the commands the sandbox shows (its
-  `/usr/bin` holds only those; every other command directory is empty), the network, the limits.
-  The model cannot write one. The kernel installs `default`: a coreutils-like set, a shell and
-  Python, no network. Granted on `/agents` or with `refhandbook policy <name> …` on the server.
-- **Script** — the model's to add and revise with no approval, because it can call only what its
-  policy shows. A user's script cannot be overwritten by the model.
-- **Job** — one run of one script version, queued by `sandbox_run`. The tool waits up to 50 s and
+- **Policy** — the sandbox itself: the commands it shows (its `/usr/bin` holds only those; every
+  other command directory is empty; `["*"]` shows every command of the host and its layers), the
+  network and its ports, the limits, the layers it stacks, and mounts of the user's own data. The
+  kernel installs `default`: a coreutils-like set, a shell and Python, no network. The user grants
+  on `/agents` or with `refhandbook policy <name> …` on the server; the model may propose one.
+- **Mounts** — `{source, target, rw}`. The administrator names the directories users may mount with
+  `RHB_SANDBOX_MOUNT_ROOTS` (colon-separated; `{user}` and `{uid}` name the store's owner, e.g.
+  `/data/{user}`); a source outside them, or a target over the sandbox's own directories, is
+  refused. Read-only unless `rw`; a read-write mount is noexec like every writable mount.
+- **Layer** — what a policy can stack on the base: a build script run as root inside a sandbox (the
+  build's own, with the network only if granted), whose changes under `/usr/local`, `/opt` and
+  `/etc` become a read-only tree (`<db>.sandbox/layerstore/`). Built as a job; a policy that lists a
+  layer resolves its commands from the layer first, and may execute beneath `/usr/local` and `/opt`.
+- **Script** — the model's to add, revise, deprecate and remove with no approval, because it can
+  call only what its policy shows; `requires` names the commands it needs, checked at every write
+  and review. A user's script cannot be overwritten by the model.
+- **Job** — one run of one script version, queued by `run`. The tool waits up to 50 s and
   otherwise returns the job id, so long computations run while the conversation goes on; while it
   waits it releases the server's call lock. A local server runs jobs in process; a remote one
   queues them for `refhandbook-runner.service`, the only unit that may create namespaces. Runners
@@ -85,7 +136,7 @@ rule below.
 - **Limits**: memory and cpu through a delegated cgroup leaf per job (the runner unit has
   `Delegate=yes`), else RLIMIT_AS; the workspace's size is watched during a run and a job that takes
   it over the policy's `disk_mb` is stopped.
-- **The host never follows a name the sandbox can write**: `sandbox_files` walks paths on directory
+- **The host never follows a name the sandbox can write**: `files` walks paths on directory
   descriptors with O_NOFOLLOW, opens only regular files (O_NONBLOCK, then fstat), and removes a
   symlink as a link.
 
@@ -95,8 +146,9 @@ per-user id, but it needs a runner with CAP_SETUID and per-user ownership of the
 ## The approval page
 
 `/agents`, behind the site sign-in (RHB_AUTH=sso; nginx passes the SSO's X-Auth-Token for the
-audience `refhandbook`): open proposals with the hash of what each says (approve or reject),
-policies (grant or change), scripts and recent jobs. Forms carry a token bound to the signed-in uid
+audience `refhandbook`): grants waiting (each capability version that widens what the model may do,
+with what it widens; approve or reject), rule proposals with the hash of what each says, policies
+(grant or change, with layers and mounts), every capability record and recent jobs. Forms carry a token bound to the signed-in uid
 and must come from the site's own origin. What it writes is written as `user`.
 
 ## Large arguments

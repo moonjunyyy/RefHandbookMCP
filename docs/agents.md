@@ -1,9 +1,10 @@
 # Autonomous agents
 
-Status: partly built, untested. `src/refhandbook/agents/` holds a first sandbox, team, provider,
-key and layer implementation without tests. Next (item 4 of `docs/kernel.md`): one sandbox shared by
-Agent and Chat sessions, a seccomp allow-list, per-user subuid ranges, the script registry, and
-escape tests before anything runs on the server.
+Status: partly built. The sandbox, the workspace it shares with Chat sessions (policies, scripts,
+layers and mounts as capability records, jobs and the runner) are built and tested; see
+`docs/kernel.md` ("Capabilities", "The sandbox workspace"). The agents themselves (`team.py`,
+`providers.py`, `keys.py`) are first implementations without tests, and run on the research
+ledger as `agent` sessions (`research_begin(role="agent")`), which answer only for what they open.
 
 A user who has registered their own API keys (Anthropic, OpenAI, Google) asks for a **run**: a goal,
 a grant (how many agents, how deep, how much), and a pruning policy. On the remote server, a

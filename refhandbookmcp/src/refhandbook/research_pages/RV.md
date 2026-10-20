@@ -10,21 +10,25 @@ ENTRY — object: a K routed `@RV`, from X2 or X3 when a diagnosis exposes a mis
 
 1. Read what happened since the last review: `research_show(recent=…)` over
    those sessions and the log lines `refused:`, `UNAFFECTED`, `carry`, `dropped`.
-   `research_review(action="proposals")` lists proposals still open.
+   `cap(kind="rule")` lists the rule records, with the ones still awaiting
+   approval and any a review deprecated.
 2. For each signal, name the **generating rule**: the rule (or its absence)
    that produced the refusal, the drop or the carry. Group signals that one rule
    explains. A signal the rules handled as intended is not a gap: say so.
 3. For a real gap, write the **smallest** change that removes the class of
    failure:
-   - a kernel rule (check, obligation, close) in the rule language
-     (`research_review rules=[{id, phase, body, message, severity, replaces}]`);
-     prefer revising one rule (`replaces`) over adding a second that overlaps it;
+   - a kernel rule (check, obligation, close) in the rule language, as a rule
+     record: `cap(kind="rule", action="add", name=<id>, spec={phase, body,
+     message, severity, replaces})`; revise it with `action="update"` (a new
+     version; the old ones stay in its history), and withdraw it with
+     `action="remove"`; prefer revising one rule (`replaces`) over adding a
+     second that overlaps it;
    - or a card wording change, recorded as a `P` row (`proposal: <card> …`).
 
    State the expected benefit and the plausible overconstraint (which correct
    work it would also stop). A one-off slip does not become a rule.
 4. Read the trial: a proposal runs at once on every ledger as a **warning**.
-   Its findings on this ledger are printed. A finding on correct work is
+   Its findings on the ledgers are printed. A finding on correct work is
    overconstraint: revise the proposal (same id) before asking for adoption.
 5. Record the review with `research_review(why=…)`, even when no gap was
    found: `why` holds the finding, or "no gap: <signals read>". This resets
