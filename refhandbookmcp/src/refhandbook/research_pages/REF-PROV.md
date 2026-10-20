@@ -20,7 +20,7 @@ user's words before labeling it.
 
 A model item stays out of the main line until the user adopts it; it may be
 explored in a named configuration meanwhile. On adoption, `set` its
-origin to `user(adopted, turn N)`. Content cells hold only the user's words for
+origin to `user(adopted, session N)`. Content cells hold only the user's words for
 user items; notes go in the evidence cell.
 
 **Relations** (typed `dep` edges; syntax in REF-LEDGER). Record the exact relation. Never

@@ -78,12 +78,12 @@ that rests on an external result `T` needs that `T` in the configuration.
 |---|---|
 | `research_ledgers` | list · init · status · export (`include_log`) · import (`to`, `dry_run`, `ref`) · copy · rename |
 | `research_ledger_delete` | delete a ledger permanently (`confirm` repeats its id) |
-| `research_begin` | open a turn: TOKEN, ledger view (`recent` · `brief` · `full`), OBLIGATIONS |
+| `research_begin` | open a session (`role` chat · agent): SESSION token, ledger view (`recent` · `brief` · `full`), OBLIGATIONS |
 | `research_show` | read the ledger (`open_only`, `ids`, `recent`) |
 | `research_add` | add a row |
 | `research_set` | replace one cell, or the map `M` |
 | `research_dispose` | VALID · RECHECK · INVALID · UNAFFECTED for a PENDING hit |
-| `research_carry` | keep a `U` open past this turn, with a reason |
+| `research_carry` | keep a `U` open past this session, with a reason |
 | `research_push` | push a plan object |
 | `research_next` | take the next plan object and print its card |
 | `research_done` | finish a plan object through an exit |
@@ -93,9 +93,9 @@ that rests on an external result `T` needs that `T` in the configuration.
 | `research_blob` | put · append · info: send a long text once (in pieces if needed), then pass its `ref` |
 | `research_review` | done: record a review of the rules (`why`) and propose rule changes (`rules`), tried as warnings until the user adopts them · proposals: the open ones (card RV) |
 | `research_check` | consistency check, or the `closure` of ids |
-| `research_end` | close the turn: RECEIPT, ledger, Δ, NEXT |
+| `research_end` | close the session: RECEIPT, changed rows, Δ |
 
-Every write needs the newest TOKEN. A REFUSED names what to resolve (card X7).
+Every write names its session. A REFUSED or CONFLICT names what to resolve (card X7).
 
 **Checks to know when porting a ledger.**
 - `check` judges the basis of `proposed` rows as well as settled ones: a

@@ -232,14 +232,13 @@ def _research(args, hb: Handbook) -> int:
             payload = json.loads(sys.stdin.read() or "{}")
             if payload.get("stop_hook_active"):
                 return 0
-            st = research_api.R().status(args.ledger)
-            if st["open"]:
-                print(f"Research turn {st['turn']} on {args.ledger!r} is still open: dispose PENDING, settle U rows, "
-                      "then research_end.", file=sys.stderr)
-                return 2
-            if st["prompts"] > st["last_closed"]:
-                print(f"Prompt {st['prompts']} has no closed research turn (last closed {st['last_closed']}): "
-                      f"research_begin turn={st['prompts']}, register the message, research_end.", file=sys.stderr)
+            # a reply may end with its session open (the next prompt resumes it), but not mid-work:
+            # a pending hit it raised, a K it runs, a plan it has not synced
+            r = research_api.R()
+            left = r.unfinished(args.ledger)
+            if left:
+                print(f"Research on {args.ledger!r}: finish before ending the reply (or research_end):\n  "
+                      + "\n  ".join(left), file=sys.stderr)
                 return 2
             return 0
         if args.tool == "list":

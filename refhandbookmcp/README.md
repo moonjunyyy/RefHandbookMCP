@@ -11,9 +11,9 @@ cross-references) with a relational store that changes at runtime.
 
 The same store also carries the **research cards** (`rs-*`) and the **research ledger**: the run
 state of a research conversation (directives, premises, claims and their verdicts per
-assumption configuration, plan objects, documents). The `research` skill drives a turn loop over
-them, so a turn continues from stored state instead of from the model's memory, and so does the
-next session.
+assumption configuration, plan objects, documents). The `research` skill drives a session loop over
+them (one session per message, or per delegated agent run), so each continues from stored state
+instead of from the model's memory, and several can work on one ledger side by side.
 
 Status: prototype.
 
@@ -108,7 +108,7 @@ search                                (FTS5: title, triggers, condition, body)
 | `relate`, `unrelate` | Typed edges between cards |
 | `define_relation_type`, `relation_types` | The relation vocabulary |
 | `audit` | CAP 676 assessment checks over the whole handbook |
-| `research_*` | The research ledger: turns, rows, plan objects, configurations and verdicts, documents (16 tools; card `rs-ref-ledger`) |
+| `research_*` | The research ledger: sessions, rows, plan objects, configurations and verdicts, documents (16 tools; card `rs-ref-ledger`) |
 
 Read tools are annotated `readOnlyHint`, and deletes `destructiveHint`, so a client can ask for
 confirmation on the right ones. Tools return the rendered card as text, since the reader is a
@@ -150,13 +150,13 @@ agree.
 
 | Mechanism | What it enforces |
 | :- | :- |
-| Turn protocol: `research_begin` → token on every write → `research_end` | A write proves the caller read the current state. `research_end` refuses while any of these remain: a pending hit, a running plan object, no continuation, an unaddressed directive, an unsynced document plan, or a check error. |
-| Plan objects (K) | Every card exit returns objects. `research_done` refuses an exit that pushed nothing. One K waits for the user across turns: a push to page USER re-arms it, so a one-word turn adds no K. |
-| Volume | `research_begin` shows the rows changed in the last 3 turns and every live row (`view=recent`; `brief` and `full` too), and `research_end` prints only the rows the turn changed. `research_show(ids=…)` reads the rest. |
+| Session protocol: `research_begin` → its token on every call → `research_end` | Sessions (kernel `k_sessions`) run side by side: a write is refused with CONFLICT only when it changes an object another session changed after this one read it (`k_writes` / `k_seen`, per object). `research_end` refuses while what the session opened remains (a pending hit it raised, a K it runs, a plan it committed and has not synced) or a check error; a `chat` session also answers for the user's directives and the continuation, an `agent` session does not. A session left open is resumed by the next `research_begin` of its role once idle (30 min). |
+| Plan objects (K) | Every card exit returns objects. `research_done` refuses an exit that pushed nothing. One K waits for the user across sessions: a push to page USER re-arms it, so a one-word message adds no K. |
+| Volume | `research_begin` shows the rows changed in the last 3 sessions and every live row (`view=recent`; `brief` and `full` too), and `research_end` prints only the rows the session changed. `research_show(ids=…)` reads the rest. |
 | Configurations | `main` is the set of premises that are on, and only the user switches it. Named configurations switch premises on or off, swap alternatives, or add model premises, and the boundary report shows which single change flips a verdict. Model origin taints: nothing on the main line may rest on it. |
 | Propagation | Changing a row opens hits on everything that rests on it, verdict cells included. Switching a premise off reaches only the main line. Superseding or refuting a premise also reaches the exploration cells that contain it. |
 | Judge | The kernel's rules (`docs/kernel.md`) decide every check, obligation and end refusal; they are data, versioned with the package, and a user's change to one survives upgrades. |
-| Review | Every 7 turns, or sooner when refusals, UNAFFECTED disposals, carries and drops gather, `research_begin` lists REVIEW (card `rs-rv`). `research_review` records it and may propose rules, which run as warnings until the user approves them on the server. |
+| Review | Every 7 sessions, or sooner when refusals, UNAFFECTED disposals, carries and drops gather, `research_begin` lists REVIEW (card `rs-rv`). `research_review` records it and may propose rules, which run as warnings until the user approves them on the server. |
 | Documents | Each document has a role. `source` is the user's original: read-only and hash-checked. `deliverable` is for the reader: ids sit in hidden section markers, and a lint keeps ledger artefacts out of the prose. `working` is the model's own. A deliverable changes only through a committed change list: plan, then whole-section rewrites, then sync. Unplanned edits, appended corrections, and citations of replaced rows are refused. |
 
 The research tools are plain functions in `research_api.py`, with no import from `mcp`. The server
@@ -200,15 +200,16 @@ tool calls are serialized, and a refusal is raised as `ToolError` so its text re
 Two skills ship with the plugin:
 - `skills/handbook/SKILL.md` teaches the lookup, confirm, follow discipline and how to write a
   card;
-- `skills/research/SKILL.md` runs the research turn loop over the `rs-*` cards and the ledger.
+- `skills/research/SKILL.md` runs the research session loop over the `rs-*` cards and the ledger.
 
 Optional Claude Code hooks for the research loop are left unwired, because Cowork rarely uses
 hooks. They read a local store, so they only help with the local declaration. To use them, add
 these to `.claude/settings.json`:
 - `UserPromptSubmit`: `refhandbook research-hook prompt <ledger>`, which counts prompts and names
-  the first action of the turn;
-- `Stop`: `refhandbook research-hook stop <ledger>`, which exits 2 while a turn is open, or while
-  the latest prompt has no closed turn.
+  the first action of the reply;
+- `Stop`: `refhandbook research-hook stop <ledger>`, which exits 2 while an active chat session is
+  still open, or while the latest prompt has no session (agent sessions and idle ones are not
+  the reply's).
 
 ### Remote server
 

@@ -119,6 +119,32 @@ CREATE TABLE IF NOT EXISTS k_log (
     meta  TEXT NOT NULL DEFAULT '{}'
 );
 CREATE INDEX IF NOT EXISTS k_log_ref ON k_log(ref, seq);
+CREATE TABLE IF NOT EXISTS k_sessions (   -- one participant's span of work on a scope (kernel/sessions.py)
+    id      TEXT PRIMARY KEY,               -- the session token: opaque, stable for the session
+    scope   TEXT NOT NULL,                  -- what it works on (a ledger, a run, …)
+    seq     INTEGER NOT NULL,               -- the scope's session number (logs, recency, cadences)
+    role    TEXT NOT NULL,                  -- chat | agent | …: which close rules apply to it
+    label   TEXT NOT NULL DEFAULT '',
+    opened  REAL NOT NULL,
+    active  REAL NOT NULL,                  -- last use (an idle session of the same role is adopted)
+    seen    INTEGER NOT NULL DEFAULT 0,     -- the clock up to which it has read the scope
+    closed  REAL,
+    UNIQUE (scope, seq)
+);
+CREATE INDEX IF NOT EXISTS k_sessions_scope ON k_sessions(scope, closed);
+CREATE TABLE IF NOT EXISTS k_writes (     -- the last write of each object, for conflict detection
+    scope   TEXT NOT NULL,
+    key     TEXT NOT NULL,
+    clock   INTEGER NOT NULL,
+    session TEXT NOT NULL,
+    PRIMARY KEY (scope, key)
+);
+CREATE TABLE IF NOT EXISTS k_seen (       -- objects a session re-read after a conflict
+    session TEXT NOT NULL,
+    key     TEXT NOT NULL,
+    clock   INTEGER NOT NULL,
+    PRIMARY KEY (session, key)
+);
 CREATE TABLE IF NOT EXISTS k_blobs (
     sha     TEXT PRIMARY KEY,          -- sha256 of data, hex
     size    INTEGER NOT NULL,

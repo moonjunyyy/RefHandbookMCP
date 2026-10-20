@@ -14,6 +14,7 @@ pending hits and turn marks are edges. A reference to something that does not ex
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from .. import research as legacy
@@ -55,8 +56,13 @@ def _cfg_id(L: str, name: str) -> str:
     return f"{L}:c:{name}"
 
 
-def _turn_id(L: str, n: int) -> str:
-    return f"{L}:t:{n}"
+# what a session marks on the ledger (rl_turnmarks.kind; the table keeps its old name, its `turn`
+# column is the session's number): rows it changed or carried, hits it raised, K it runs, plans it made
+SESSION_MARKS = ("touched", "carry", "raised", "runs", "planned")
+
+
+def _session_id(L: str, n: int) -> str:
+    return f"{L}:s:{n}"
 
 
 class _LedgerRefs:
@@ -65,7 +71,7 @@ class _LedgerRefs:
 
     def node(self, ref: str) -> str:
         """The node for a legacy reference (a row, or a verdict cell claim@config), or a placeholder."""
-        nid = (_verdict_id if "@" in ref else _row_id)(self.L, ref)
+        nid = (_verdict_id if "@" in ref else _doc_id if re.fullmatch(r"D\d+", ref) else _row_id)(self.L, ref)
         if self.g.get_node(nid) is None:
             self.g.ensure_missing(nid, actor=ACTOR, attrs={"rid": ref})
             self.g.link(self.L, CONTAINS, nid, actor=ACTOR)
@@ -143,10 +149,13 @@ def ledger_to_graph(g: Graph, data: dict[str, Any]) -> str:
                        attrs={"rid": d["id"], **{k: d[k] for k in DOC_KEYS}})
             g.link(L, CONTAINS, nid, actor=ACTOR)
         marks = tables.get("rl_turnmarks", [])
-        for n in sorted({m["turn"] for m in marks} | {lg["turn"]}):
-            nid = _turn_id(L, n)
-            g.put_node(nid, "turn", actor=ACTOR, state="open" if lg["open"] and n == lg["turn"] else "closed",
-                       attrs={"n": n})
+        live = {r[0]: r[1] for r in g.db.execute("SELECT seq, role FROM k_sessions WHERE scope = ? AND closed IS NULL", (L,))}
+        known = live or g.db.execute("SELECT 1 FROM k_sessions WHERE scope = ? LIMIT 1", (L,)).fetchone()
+        for n in sorted({m["turn"] for m in marks} | {lg["turn"]} | set(live)):
+            nid = _session_id(L, n)
+            is_open = n in live if known else bool(lg["open"]) and n == lg["turn"]  # before sessions: one open turn
+            g.put_node(nid, "session", actor=ACTOR, state="open" if is_open else "closed",
+                       attrs={"n": n, "role": live.get(n, "chat")})
             g.link(L, CONTAINS, nid, actor=ACTOR)
         # structure: the meaning held in the cells
         for r in rows:
@@ -167,9 +176,9 @@ def ledger_to_graph(g: Graph, data: dict[str, Any]) -> str:
         for p in tables.get("rl_pending", []):
             g.link(refs.node(p["src"]), "pending_hit", refs.node(p["hit"]), actor=ACTOR)
         for m in marks:
-            if m["kind"] not in ("touched", "carry"):
-                raise KernelError(f"turn mark kind {m['kind']!r} is not known")
-            g.link(_turn_id(L, m["turn"]), m["kind"], refs.node(m["ref"]), actor=ACTOR, attrs={"note": m["note"]})
+            if m["kind"] not in SESSION_MARKS:
+                raise KernelError(f"session mark kind {m['kind']!r} is not known")
+            g.link(_session_id(L, m["turn"]), m["kind"], refs.node(m["ref"]), actor=ACTOR, attrs={"note": m["note"]})
         for e in tables.get("rl_log", []):
             g.db.execute("INSERT INTO k_log (clock, actor, event, ref, meta) VALUES (?, ?, ?, ?, ?)",
                          (g.clock(), LOG_ACTOR, e["msg"], L, json.dumps({"turn": e["turn"], "ts": e["ts"]})))
@@ -227,14 +236,14 @@ def ledger_from_graph(g: Graph, L: str, include_log: bool = True) -> dict[str, A
                                           "evidence": a["evidence"], "turn": a["turn"], "clock": a["clock"]})
         elif t == "document":
             tables["rl_docs"].append({"ledger": L, "id": a["rid"], **{k: a[k] for k in DOC_KEYS}})
-        elif t == "turn":
+        elif t == "session":
             turns[n["id"]] = a["n"]
     for e in g.db.execute("SELECT e.src, e.dst FROM k_edges e JOIN k_edges c ON c.dst = e.src"
                           " WHERE c.src = ? AND c.type = ? AND e.type = 'pending_hit'", (L, CONTAINS)):
         tables["rl_pending"].append({"ledger": L, "src": rid[e[0]], "hit": rid[e[1]]})
     for tid, n in turns.items():
         for e in g.edges(src=tid):
-            if e["type"] in ("touched", "carry"):
+            if e["type"] in SESSION_MARKS:
                 tables["rl_turnmarks"].append({"ledger": L, "turn": n, "kind": e["type"], "ref": rid[e["dst"]],
                                                "note": e["attrs"].get("note", "")})
     if include_log:
@@ -246,17 +255,15 @@ def ledger_from_graph(g: Graph, L: str, include_log: bool = True) -> dict[str, A
     return {"ledger": ledger, "tables": tables}
 
 
-def ensure_turn(g: Graph, L: str, n: int, idle: str = "") -> str:
-    """The turn scope node for turn n (created closed-or-open from the ledger's state), with the
-    `idle` reason research_end was given, so the close rules can be evaluated for it."""
-    nid = _turn_id(L, n)
-    lg = g.node(L)["attrs"]
+def ensure_session(g: Graph, L: str, n: int, idle: str = "", role: str = "chat") -> str:
+    """The scope node of session n of ledger L, with its role and the `idle` reason research_end was
+    given, so the close rules can be evaluated for it."""
+    nid = _session_id(L, n)
     with g.tx():
         if g.get_node(nid) is None:
-            g.put_node(nid, "turn", actor=ACTOR, state="open" if lg["open"] and n == lg["turn"] else "closed",
-                       attrs={"n": n})
+            g.put_node(nid, "session", actor=ACTOR, state="open", attrs={"n": n})
             g.link(L, CONTAINS, nid, actor=ACTOR)
-        g.update_node(nid, actor=ACTOR, attrs={"idle": idle or None}, validate=False)
+        g.update_node(nid, actor=ACTOR, attrs={"idle": idle or None, "role": role}, validate=False)
     return nid
 
 
@@ -340,5 +347,5 @@ def handbook_from_graph(g: Graph) -> dict[str, Any]:
     return {"relation_types": types, "entries": entries, "relations": relations}
 
 
-__all__ = ["MISSING", "drop_handbook", "drop_ledger", "ensure_turn", "ledgers_in_graph", "handbook_from_graph", "handbook_to_graph", "install", "ledger_from_graph",
+__all__ = ["MISSING", "drop_handbook", "drop_ledger", "ensure_session", "ledgers_in_graph", "handbook_from_graph", "handbook_to_graph", "install", "ledger_from_graph",
            "ledger_to_graph"]

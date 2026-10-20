@@ -1,8 +1,8 @@
 """The research package's judgments, read off the kernel, and the projection's round-trip check.
 
   check       → (errors, warnings, findings)  the package's check rules on a ledger
-  obligations → {(kind, ref, src)}            what a turn starts from (research_begin)
-  blockers    → {(kind, ref, src)}            what keeps a turn from closing (research_end), with the
+  obligations → {(kind, ref, src)}            what a session starts from (research_begin)
+  blockers    → {(kind, ref, src)}            what keeps a session from closing (research_end), with the
                                              ledger's check errors as ("check", message, "")
   roundtrip   → [differences]                 the ledger's export rebuilt from the graph vs the export
 """
@@ -55,8 +55,8 @@ def obligations(g: Graph, L: str) -> set[tuple[str, str, str]]:
     return items(evaluate(g, "obligation", L, "ledger"), OBLIGATION_KIND)
 
 
-def blockers(g: Graph, L: str, turn: int, idle: str = "") -> set[tuple[str, str, str]]:
-    return items(findings(g, migrate.ensure_turn(g, L, turn, idle)), BLOCKER_KIND)
+def blockers(g: Graph, L: str, seq: int, idle: str = "", role: str = "chat") -> set[tuple[str, str, str]]:
+    return items(findings(g, migrate.ensure_session(g, L, seq, idle, role)), BLOCKER_KIND)
 
 
 def canon(export: dict[str, Any]) -> dict[str, Any]:

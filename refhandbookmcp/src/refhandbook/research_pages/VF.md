@@ -18,7 +18,7 @@ ENTRY — object: a K `@VF` (from N3 dispatch or another page's exit), `on` the 
 ### VF2 — Granularity
 
 - **Derivation chain** (dependent steps):
-  1. Take one step per turn.
+  1. Take one step per message.
   2. Give each line a basis tag, naming the term or operation it comes from.
   3. Show the step's own check (signs, indices, units, substitution) before its
      result.

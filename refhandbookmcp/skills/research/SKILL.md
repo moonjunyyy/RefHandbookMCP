@@ -2,25 +2,25 @@
 name: research
 description: >
   Operating procedure for theoretical research (mathematics, physics,
-  theoretical ML) as a research colleague, not a tutor, run as a ledgered turn
-  loop over the research cards of the refhandbook MCP server. Use when the user
+  theoretical ML) as a research colleague, not a tutor, run as a ledgered
+  session loop (one session per message) over the research cards of the refhandbook MCP server. Use when the user
   floats an idea or conjecture, wants a notion made precise, asks to derive or
   construct a general structure or operator, asks to check a derivation or
   claim, asks "what if" about an assumption, wants a formal object implemented,
   measured, or simulated, resumes earlier work ("last time", "this paper",
   "where were we"), challenges an earlier step, or is stuck circling a point,
   even when phrased casually or in another language. Once a ledger RECEIPT or
-  NEXT line appears in the conversation, use this skill on every later turn of
-  it, including one-word, meta, process, and complaint turns: nothing else
-  continues the cycle. Not for textbook explanations, known-answer exercises,
+  SESSION line appears in the conversation, use this skill on every later
+  message of it, including one-word, meta, process, and complaint messages:
+  nothing else continues the cycle. Not for textbook explanations, known-answer exercises,
   or coding unrelated to a research claim. Respond in the user's language.
 ---
 
 # research — Quick Reference Handbook
 
-> **Program counter.** Two places carry the cycle from one turn to the next,
-> and nothing else does:
-> - the `NEXT:` line that ends your previous reply;
+> **Program counter.** Two places carry the cycle from one message to the
+> next, and nothing else does:
+> - the RECEIPT line that ends your previous reply;
 > - the plan objects (K) awaiting the user in the ledger.
 >
 > If either exists, your first action now is `research_begin` (card rs-n1),
@@ -38,8 +38,8 @@ description: >
     acts on;
   - numbered steps;
   - EXITS: each exit returns objects, the K objects it pushes;
-  - a closing item: done → continue → close → next turn.
-- **Work is object → objects.** Each turn runs: `research_begin` → for each
+  - a closing item: done → continue → close → next message.
+- **Work is object → objects.** Each message runs one session: `research_begin` → for each
   K: `research_next` → run the card → push the exit's objects →
   `research_done` → `research_end`.
 
@@ -55,15 +55,18 @@ description: >
   ```
 
   — is given only when the user asks how a step was processed. The RECEIPT
-  line and then the `NEXT:` line close every reply, `NEXT:` last.
+  line closes every reply, last.
 - **Abnormal (X) takes precedence** over normal. When several X rows match, run
   the lowest number first. `◆` marks a memory item: do it at once, then run
   the card.
-- **The ledger persists** in the server's store across sessions. Several
-  sessions may share one ledger: the token makes a session re-read before it
-  writes.
+- **The ledger persists** in the server's store across conversations.
+  Several sessions work on one ledger side by side (another conversation, an
+  agent with `role="agent"`): each holds its own SESSION token, runs its own K
+  and answers for what it opened. A write that meets another session's change
+  to the same object is refused with CONFLICT: read the object again
+  (`research_show(ids=…, session=…)`) and redo the change.
 - **Tools** are the `research_*` tools; card rs-ref-ledger lists them. Every
-  write needs the newest TOKEN. A REFUSED names what to resolve (card rs-x7).
+  call names its `session`. A REFUSED names what to resolve (card rs-x7).
 - **No research tools in this session?** The refhandbook connector is not
   connected, and the ledgers on the server cannot be seen from here.
   1. Say so in one line, and ask the user to connect it from the plugin's
@@ -86,7 +89,7 @@ description: >
 - **Ledgers are managed, not recreated.** `research_ledgers` copies (a sandbox
   to try something on) and renames; `research_ledger_delete` deletes, only
   with `confirm` set to the ledger id and only when the user asked.
-- **The rules are reviewed, not worked around.** Every 7 turns, or sooner when
+- **The rules are reviewed, not worked around.** Every 7 sessions, or sooner when
   refusals, UNAFFECTED disposals, carries and drops gather, `research_begin`
   lists REVIEW (card rs-rv). A rule change is proposed with `research_review`;
   it runs as a warning until the user approves it. Never treat a proposal as
@@ -100,8 +103,8 @@ description: >
 
 | situation | card |
 |---|---|
-| every turn, without exception | `rs-n1` (§2) |
-| first turn on a question, or resuming earlier work, files, or sessions | `rs-n2` |
+| every message, without exception | `rs-n1` (§2) |
+| first message on a question, or resuming earlier work, files, or sessions | `rs-n2` |
 | choosing the next piece of work | `rs-n3` |
 | something this conversation and the ledger cannot resolve, or outside knowledge is needed | `rs-rf` |
 | a verdict may hinge on a premise, or "what if" / "without X" / "which assumptions are needed" | `rs-ex` |
@@ -121,22 +124,22 @@ description: >
 | the user asserts that a step is correct or urgent, and you have not reproduced it. | **X4** — Do not agree on the basis of assertion. | `rs-x4` |
 | an action has no basis tag, cites an item against its use rule (SKILL.md §4), or rests on a model-origin item. | **X5** — Remove the dependent work. | `rs-x5` |
 | one of the following: a row was changed, rejected, weakened, strengthened, or reclassified; a verdict flipped; the user corrected something. | **X6** — A correction is a state change, not a remark. **Change exactly what was corrected, nothing more.** Propagate to closure. Never revive a rejected branch. | `rs-x6` |
-| a check fails, the device REFUSES or reports an outside edit, or you want to narrow, filter, or re-tune a check. | **X7** — Report the output exactly as produced. Resolve what it names; never work around it. | `rs-x7` |
+| a check fails, the device REFUSES, reports a CONFLICT or an outside edit, or you want to narrow, filter, or re-tune a check. | **X7** — Report the output exactly as produced. Resolve what it names; never work around it. | `rs-x7` |
 | the meaning of a symbol, an agreement, or a source is uncertain, or you are about to say "not available", "never said", or "impossible". | **X8** — No absence claim without a failed tool call behind it. | `rs-x8` |
 | you are about to ask the user for a concrete function or values. | **X9** — Build the general form with symbols first. | `rs-x9` |
 <!-- END GENERATED -->
 
-## 2. Every turn: card rs-n1
+## 2. Every message: card rs-n1
 
 BEGIN → REGISTER → DISPATCH → LOOP → PROPAGATE → SETTLE → END → SHOW.
 
 `research_begin` repeats this line, and the ledger's OBLIGATIONS are the
-turn's input. Its view is the rows changed in the last 3 turns plus every live
-row; read any other row with `research_show(ids="…")` before you build on it.
-The K awaiting the user stands across turns: dispatch the new message from its
-`U`, and a closing push to USER re-arms that K. `research_end` prints only the
-rows changed this turn. Open `rs-n1` in full on the first turn of a session, and whenever
-a step is unclear.
+session's input. Its view is the rows changed in the last 3 sessions plus every
+live row; read any other row with `research_show(ids="…")` before you build on
+it. The K awaiting the user stands across sessions: dispatch the new message
+from its `U`, and a closing push to USER re-arms that K. `research_end` prints
+only the rows changed in the session. Open `rs-n1` in full on the first message
+of a conversation, and whenever a step is unclear.
 
 ## 3. Documents and exploration in one paragraph
 
@@ -161,7 +164,7 @@ a step is unclear.
 
 A model item stays out of the main line until the user adopts it. It may be
 used inside named exploration configurations meanwhile, and anything built on
-it is `model` too. On adoption, set its origin to `user(adopted, turn N)`.
+it is `model` too. On adoption, set its origin to `user(adopted, session N)`.
 Content cells hold only the user's words for user items; notes go in the
 evidence cell.
 

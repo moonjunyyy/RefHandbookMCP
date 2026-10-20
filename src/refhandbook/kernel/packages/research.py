@@ -1,5 +1,5 @@
 """The research ledger as a kernel package: its vocabulary as types and state classes, and its
-obligations, turn-end blockers and integrity checks as rules.
+obligations, session-end blockers and integrity checks as rules.
 
 Nothing here is Python logic about ledgers: the sections are node types, the status sets of
 research.py are state classes, and every check is a Datalog rule. tests/conftest.py runs the legacy
@@ -7,7 +7,7 @@ test-suite with a differential harness that requires these rules to reproduce th
 exactly (obligations, end blockers, check() messages) after every ledger write.
 
 Node ids inside a ledger L: rows `L:<rid>`, verdict cells `L:<claim>@<config>`, configurations
-`L:cfg:<name>`, documents `L:<D#>`, turns `L:turn:<n>`. Every node a rule names carries the attr
+`L:cfg:<name>`, documents `L:<D#>`, sessions `L:session:<n>`. Every node a rule names carries the attr
 `rid` (its legacy id), so messages read exactly as before.
 """
 
@@ -67,8 +67,9 @@ def install(g: Graph, actor: str = "kernel", skip: set[str] | frozenset[str] = f
     with g.tx():
         g.define_type("ledger", "scope", actor=actor, pkg=PKG, binding="manual",
                       description="One research question: its rows, configurations, verdicts and documents.")
-        g.define_type("turn", "scope", actor=actor, pkg=PKG, binding="tick",
-                      description="One exchange with the user; opened by the user's message.")
+        g.define_type("session", "scope", actor=actor, pkg=PKG, binding="manual",
+                      description="One participant's span of work on a ledger (kernel/sessions.py): a chat "
+                                  "conversation's, or an agent's. Its role decides which close rules apply.")
         for sec, t in SEC_TYPE.items():
             g.define_type(t, "node", actor=actor, pkg=PKG, states=_row_states(sec),
                           classes=["row"] + (["premise"] if sec in "AT" else []),
@@ -89,6 +90,9 @@ def install(g: Graph, actor: str = "kernel", skip: set[str] | frozenset[str] = f
             ("of", "has_verdict", "A verdict cell judges this claim."),
             ("under", "judges", "A verdict cell is judged under this configuration."),
             ("pending_hit", "pending_from", "A change to the source still awaits a disposition of the target."),
+            ("raised", "raised_by", "The session whose change opened this pending hit (it answers for it)."),
+            ("runs", "run_by", "The session that started this plan object."),
+            ("planned", "planned_by", "The session that committed this document plan."),
         ):
             g.define_type(name, "edge", actor=actor, pkg=PKG, inverse=inverse, description=desc)
         g.define_rules([r for r in RULES if r["id"] not in skip], actor=actor)
@@ -131,17 +135,25 @@ RULES = [
     _r("rs_doc", "derive",
        "rs_doc(L, Dn, D, Role) :- edge(L, contains, Dn), node(Dn, document, _), attr(Dn, rid, D), attr(Dn, role, Role)."),
     _r("rs_doc_planned", "derive", 'rs_doc_planned(Dn) :- attr(Dn, plan, P), P != null, P != "".'),
-    _r("rs_turn_ledger", "derive", "rs_turn_ledger(T, L) :- edge(L, contains, T), node(T, turn, _), node(L, ledger, _)."),
+    _r("rs_session_ledger", "derive",
+       "rs_session_ledger(T, L) :- edge(L, contains, T), node(T, session, _), node(L, ledger, _)."),
+    _r("rs_chat", "derive", 'rs_chat(T) :- node(T, session, _), attr(T, role, "chat").'),
+    # what some session owns; what no session owns (a ledger older than sessions) is every chat's
+    _r("rs_owned", "derive", """
+        rs_owned(X) :- edge(T, raised, X), node(T, session, _).
+        rs_owned(X) :- edge(T, runs, X), node(T, session, _).
+        rs_owned(X) :- edge(T, planned, X), node(T, session, _).
+    """),
     _r("rs_has_k", "derive", 'rs_has_k(L) :- rs_row(L, _, _, "K").'),
     _r("rs_has_cont", "derive", 'rs_has_cont(L) :- rs_row(L, X, _, "K"), class(X, continuation).'),
     _r("rs_touched_u", "derive", 'rs_touched_u(T) :- edge(T, touched, X), attr(X, rid, R), prefix(R, "U").'),
     _r("rs_idle", "derive", 'rs_idle(T) :- attr(T, idle, I), I != null, I != "".'),
 
-    # ── integrity (check): applies to the ledger; an error blocks the end of a turn inside it ──
+    # ── integrity (check): applies to the ledger; an error blocks the end of a session on it ──
     _r("rs_c_status", "check", "rs_c_status(R, St, Sec) :- rs_row(Self, X, R, Sec), not class(X, allowed), attr(X, status, St).",
        "{R}: status {St!r} not allowed in {Sec}", "ledger"),
     _r("rs_c_model_on", "check", 'rs_c_model_on(R) :- rs_row(Self, X, R, "A"), node(X, _, on), rs_model(X).',
-       "{R}: a model premise is on the main line; only the user adopts it (then set origin to 'user(adopted, turn N)'); "
+       "{R}: a model premise is on the main line; only the user adopts it (then set origin to 'user(adopted)'); "
        "explore it in a named configuration instead", "ledger"),
     _r("rs_c_sourced", "check",
        f'rs_c_sourced(R) :- rs_row(Self, X, R, _), attr(X, evidence, E), match(E, "{key("sourced")}"),'
@@ -158,11 +170,11 @@ RULES = [
        'rs_c_closure(R) :- rs_row(Self, X, R, Sec), Sec != "K", node(X, _, proposed), rs_model(X),'
        ' attr(X, evidence, E), not match(lower(E), "closure:").',
        "{R}: model-origin proposed without 'closure: <what the user givens were checked against>'", "ledger"),
-    # history appended into a cell: two or more correction/addendum markers, or two "turn N" stamps.
+    # history appended into a cell: two or more correction/addendum markers, or two "turn N" / "session N" stamps.
     # (A long cell is not by itself history: VF/FM evidence names method, range, result and closure.)
     _r("rs_w_accreting", "check", """
         rs_w_accreting(R) :- rs_row(Self, X, R, _), attr(X, evidence, E), match(lower(E), "(?s)(correction|addendum|update[ds]?|revised|edit(ed)?|was|정정|추가|수정|갱신)\\s*[:：].*(correction|addendum|update[ds]?|revised|edit(ed)?|was|정정|추가|수정|갱신)\\s*[:：]").
-        rs_w_accreting(R) :- rs_row(Self, X, R, _), attr(X, evidence, E), match(lower(E), "(?s)\\bturn\\s*\\d+\\b.*\\bturn\\s*\\d+\\b").
+        rs_w_accreting(R) :- rs_row(Self, X, R, _), attr(X, evidence, E), match(lower(E), "(?s)\\b(turn|session)\\s*\\d+\\b.*\\b(turn|session)\\s*\\d+\\b").
     """, "{R}: evidence cell is accreting; replace it with the current state (history is in the log)", "ledger", "warn"),
     _r("rs_c_missing", "check",
        "rs_c_missing(R, D) :- rs_basis_row(Self, X, R), rs_dep(X, _, Dn), node(Dn, missing, _), attr(Dn, rid, D).",
@@ -197,7 +209,7 @@ RULES = [
     _r("rs_w_open", "check",
        'rs_w_open(R, N) :- rs_row(Self, X, R, "H"), node(X, _, open), attr(Self, turn, LT), attr(X, turn_created, TC),'
        ' N = LT - TC, N >= 3, attr(X, evidence, E), not match(lower(E), "tried:|not found:").',
-       "{R}: open for {N} turns with no recorded attempt", "ledger", "warn"),
+       "{R}: open for {N} sessions with no recorded attempt", "ledger", "warn"),
     _r("rs_c_v_unknown", "check", """
         rs_c_v_unknown(HC, CN) :- rs_verdict(V, H, C, HC, CN), edge(Self, contains, V), node(H, missing, _).
         rs_c_v_unknown(HC, CN) :- rs_verdict(V, H, C, HC, CN), edge(Self, contains, V), node(C, missing, _).
@@ -222,7 +234,7 @@ RULES = [
        " edge(C, member, Mn), node(Mn, missing, _), attr(Mn, rid, M).",
        "configuration {CN}: member {M} missing", "ledger"),
 
-    # ── obligations: what a turn starts from (research_begin's OBLIGATIONS) ──
+    # ── obligations: what a session starts from (research_begin's OBLIGATIONS) ──
     _r("rs_o_pending", "obligation",
        "rs_o_pending(Hit, Src) :- edge(Self, contains, S), edge(S, pending_hit, Hn), attr(S, rid, Src), attr(Hn, rid, Hit).",
        "PENDING {Hit} (from {Src}): dispose", "ledger", "info"),
@@ -244,34 +256,44 @@ RULES = [
         rs_o_doc_behind(D) :- rs_doc(Self, Dn, D, "deliverable"), not rs_doc_planned(Dn), attr(Dn, sync_clock, C),
             C != 0, edge(Self, contains, V), node(V, verdict, _), attr(V, clock, K), K > C.
     """, "DOC {D}: the ledger changed since its sync — plan before the next edit", "ledger", "info"),
-    # a review of the rules against what happened (card rs-rv): every 7 turns, sooner when 3 signals
+    # a review of the rules against what happened (card rs-rv): every 7 sessions, sooner when 3 signals
     # (refusals, UNAFFECTED disposals, carries, drops: runtime.REVIEW_SIGNALS) gather since the last
     # one. The thresholds are this rule's text: revising the rule retunes the cadence.
     _r("rs_o_review", "obligation", """
         rs_o_review(L, W) :- node(Self, ledger, _), L = Self, attr(Self, turn, T), attr(Self, derived_last_review, R),
-            N = T - R, N >= 7, W = "7 turns since the last review".
+            N = T - R, N >= 7, W = "7 sessions since the last review".
         rs_o_review(L, W) :- node(Self, ledger, _), L = Self, attr(Self, derived_signals, S), S >= 3,
             W = "3 or more signals since the last review (refusals, UNAFFECTED, carries, drops)".
     """, "REVIEW {L}: {W}", "ledger", "info"),
 
-    # ── the end of a turn (research_end); check errors of the ledger block it too ──
-    _r("rs_b_pending", "close",
-       "rs_b_pending(Hit, Src) :- rs_turn_ledger(Self, L), edge(L, contains, S), edge(S, pending_hit, Hn),"
-       " attr(S, rid, Src), attr(Hn, rid, Hit).",
-       "PENDING {Hit} (from {Src})", "turn"),
-    _r("rs_b_running", "close", 'rs_b_running(R) :- rs_turn_ledger(Self, L), rs_row(L, X, R, "K"), node(X, _, running).',
-       "K {R} is still running: finish its card with research_done", "turn"),
+    # ── the end of a session (research_end): a session closes over what it opened; check errors of
+    # the ledger block it too. A chat session (the user's conversation) also answers for the
+    # directives and the continuation; an agent session only for its own work.
+    _r("rs_b_pending", "close", """
+        rs_b_pending(Hit, Src) :- rs_session_ledger(Self, L), edge(L, contains, S), edge(S, pending_hit, Hn),
+            edge(Self, raised, Hn), attr(S, rid, Src), attr(Hn, rid, Hit).
+        rs_b_pending(Hit, Src) :- rs_session_ledger(Self, L), rs_chat(Self), edge(L, contains, S),
+            edge(S, pending_hit, Hn), not rs_owned(Hn), attr(S, rid, Src), attr(Hn, rid, Hit).
+    """, "PENDING {Hit} (from {Src})", "session"),
+    _r("rs_b_running", "close", """
+        rs_b_running(R) :- rs_session_ledger(Self, L), rs_row(L, X, R, "K"), node(X, _, running), edge(Self, runs, X).
+        rs_b_running(R) :- rs_session_ledger(Self, L), rs_chat(Self), rs_row(L, X, R, "K"), node(X, _, running),
+            not rs_owned(X).
+    """, "K {R} is still running: finish its card with research_done", "session"),
     _r("rs_b_no_continuation", "close",
-       "rs_b_no_continuation(L) :- rs_turn_ledger(Self, L), rs_has_k(L), not rs_has_cont(L).",
-       "NO CONTINUATION: push the next K (a queued step, or @USER awaiting the user) before ending", "turn"),
+       "rs_b_no_continuation(L) :- rs_session_ledger(Self, L), rs_chat(Self), rs_has_k(L), not rs_has_cont(L).",
+       "NO CONTINUATION: push the next K (a queued step, or @USER awaiting the user) before ending", "session"),
     _r("rs_b_directive", "close",
-       'rs_b_directive(R) :- rs_turn_ledger(Self, L), rs_row(L, X, R, "U"), class(X, u_open),'
+       'rs_b_directive(R) :- rs_session_ledger(Self, L), rs_chat(Self), rs_row(L, X, R, "U"), class(X, u_open),'
        " not edge(Self, touched, X), not edge(Self, carry, X).",
-       "DIRECTIVE {R} neither addressed (set) nor carried", "turn"),
-    _r("rs_b_no_directive", "close", "rs_b_no_directive(Self) :- not rs_touched_u(Self), not rs_idle(Self).",
-       'NO DIRECTIVE this turn: register or update the user\'s message as U, or end with idle="<why nothing was asked>"',
-       "turn"),
-    _r("rs_b_doc_plan", "close",
-       "rs_b_doc_plan(D) :- rs_turn_ledger(Self, L), rs_doc(L, Dn, D, _), attr(Dn, plan, P), P != null.",
-       "DOC-PLAN {D} committed but not synced", "turn"),
+       "DIRECTIVE {R} neither addressed (set) nor carried", "session"),
+    _r("rs_b_no_directive", "close",
+       "rs_b_no_directive(Self) :- rs_chat(Self), not rs_touched_u(Self), not rs_idle(Self).",
+       'NO DIRECTIVE this session: register or update the user\'s message as U, or end with idle="<why nothing was asked>"',
+       "session"),
+    _r("rs_b_doc_plan", "close", """
+        rs_b_doc_plan(D) :- rs_session_ledger(Self, L), rs_doc(L, Dn, D, _), attr(Dn, plan, P), P != null, edge(Self, planned, Dn).
+        rs_b_doc_plan(D) :- rs_session_ledger(Self, L), rs_chat(Self), rs_doc(L, Dn, D, _), attr(Dn, plan, P), P != null,
+            not rs_owned(Dn).
+    """, "DOC-PLAN {D} committed but not synced", "session"),
 ]

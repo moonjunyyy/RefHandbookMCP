@@ -25,7 +25,6 @@ import logging
 import sqlite3
 import threading
 from pathlib import Path
-from typing import Any
 
 from .. import research as legacy
 from ..store import Handbook
@@ -35,6 +34,7 @@ from .graph import Graph
 log = logging.getLogger("refhandbook.kernel")
 _ATTACH = threading.Lock()
 SCHEMA_VERSION = 1
+PROJECTION = "sessions-1"  # the projection's shape; changing it re-projects every ledger on open
 # log lines that say the rules and the work rubbed (rs_o_review counts them since the last review):
 # a refusal of the work, a hit disposed as unaffected, a directive carried, a plan object dropped
 # (GLOB: case-sensitive, anchored at the start of the line research.py writes)
@@ -75,8 +75,9 @@ class Mirror:
 
     @staticmethod
     def _fingerprint(r: legacy.Research, L: str) -> str:
+        """The ledger's data, and the shape the projection gives it (a new shape re-projects every ledger)."""
         row = r.db.execute("SELECT * FROM rl_ledgers WHERE id = ?", (L,)).fetchone()
-        return hashlib.sha1((r._digest(L) + json.dumps(list(row), default=str)).encode()).hexdigest()
+        return hashlib.sha1((PROJECTION + r._digest(L) + json.dumps(list(row), default=str)).encode()).hexdigest()
 
     def _handbook_fingerprint(self) -> str:
         h = hashlib.sha1()
