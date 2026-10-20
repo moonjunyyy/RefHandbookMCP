@@ -8,7 +8,7 @@ from refhandbook.research import Research, ResearchError
 
 
 def tok(out: str) -> str:
-    return re.findall(r"TOKEN (\w+)", out)[-1]
+    return re.findall(r"SESSION (S\d+-\w+)", out)[-1]
 
 
 @pytest.fixture
@@ -21,28 +21,31 @@ def rs():
 
 
 class Turn:
-    """Drive one ledger the way the cards say: begin, writes with the newest token, end."""
+    """Drive one ledger the way the cards say: begin a session, write with its token, end it.
+    begin(n) checks the session got number n (a re-read of an open session keeps its number)."""
 
-    def __init__(self, r: Research, ledger: str = "geo"):
-        self.r, self.L, self.T = r, ledger, None
+    def __init__(self, r: Research, ledger: str = "geo", role: str = "chat"):
+        self.r, self.L, self.T, self.role = r, ledger, None, role
 
-    def begin(self, n):
-        out = self.r.begin(self.L, n)
+    def begin(self, n=None, **kw):
+        out = self.r.begin(self.L, self.T or "", role=self.role, **kw)
         self.T = tok(out)
+        if n is not None:
+            assert self.T.startswith(f"S{n}-"), (n, self.T)
         return out
 
     def __getattr__(self, name):
         fn = getattr(self.r, name)
 
         def call(*args, **kw):
-            out = fn(self.L, self.T, *args, **kw)
-            self.T = tok(out)
-            return out
+            return fn(self.L, self.T, *args, **kw)
 
         return call
 
-    def end(self, n, **kw):
-        return self.r.end(self.L, self.T, n, **kw)
+    def end(self, n=None, **kw):
+        out = self.r.end(self.L, self.T, **kw)
+        self.T = None
+        return out
 
 
 # ── cards ──────────────────────────────────────────────────────────────
@@ -62,7 +65,7 @@ def test_card_numbers_match_page_step_references():
     card = render.card(hb.get_entry("rs-n1"), [])
     # memory items are unnumbered, so "N1 step 4" in any page is the LOOP step on the card
     assert "\n  1. **BEGIN.**" in card and "\n  4. **LOOP.**" in card and "\n  7. **END.**" in card
-    assert "CAUTION: The device owns the turn" in card
+    assert "CAUTION: The device owns the session" in card
     assert card.count("## END\n") + card.count("## END ") >= 3  # every exit ends the card
 
 
@@ -75,29 +78,83 @@ def test_lookup_finds_research_cards_by_symptom():
 
 # ── gate and turn ──────────────────────────────────────────────────────
 
-def test_writes_need_an_open_turn_and_the_newest_token(rs):
-    with pytest.raises(ResearchError, match="no turn is open"):
+def test_writes_need_an_open_session(rs):
+    with pytest.raises(ResearchError, match="no open session"):
         rs.add("geo", "x", "U", "q", "user", "active")
     t = Turn(rs)
     t.begin(1)
-    old = t.T
     t.add("U", "derive", "user", "active")
-    with pytest.raises(ResearchError, match="stale or missing token"):
-        rs.add("geo", old, "A", "p", "user", "on")
+    t.add("A", "p", "user", "on")  # the token stays the same for the whole session
     with pytest.raises(ResearchError, match="not allowed"):
         t.add("A", "p", "user", "active")
     with pytest.raises(ResearchError, match="research_push"):
         t.add("K", "plan", "user", "queued")
+    t.add("S", "s", "user", "proposed")
+    with pytest.raises(ResearchError, match="no open session"):
+        rs.add("geo", t.T + "x", "U", "q", "user", "active")
 
 
-def test_another_session_writing_is_detected(rs):
+def _idle(rs, sid, seconds=4000):
+    rs.k.g.db.execute("UPDATE k_sessions SET active = active - ? WHERE id = ?", (seconds, sid))
+
+
+def test_sessions_write_side_by_side_and_conflict_per_object(rs):
     a, b = Turn(rs), Turn(rs)
     a.begin(1)
-    b.begin(1)  # same turn re-read by a second session: allowed, both hold the same token
-    b.add("U", "from the other session", "user", "active")
-    with pytest.raises(ResearchError, match="another session"):
-        a.add("U", "from the first session", "user", "active")
-    assert "WARNING" not in a.begin(1)  # re-reading syncs the first session (b's write was through the device)
+    a.add("U", "first", "user", "active")
+    out = b.begin(2)  # a is active: b opens beside it, not over it
+    assert "also open: session 1 (chat)" in out
+    a.add("U", "from a", "user", "active")  # different objects never collide
+    b.add("U", "from b", "user", "active")
+    a.set("U1", "content", "first, edited by a")
+    with pytest.raises(ResearchError, match="CONFLICT: .*U1 \\(session 1, chat\\)"):
+        b.set("U1", "content", "edited by b")
+    assert "edited by b" not in rs.render("geo")  # nothing of the refused write
+    rs.seen("geo", b.T, {"U1"})  # research_show ids=U1 session=… : b has read it now
+    b.set("U1", "content", "edited by b, after reading")
+    with pytest.raises(ResearchError, match="CONFLICT"):
+        a.set("U1", "status", "done")
+    assert {s["seq"] for s in rs.k.g.db.execute("SELECT seq FROM k_sessions WHERE closed IS NULL")} == {1, 2}
+
+
+def test_an_idle_session_is_resumed_and_a_closed_token_is_refused(rs):
+    t = Turn(rs)
+    t.begin(1)
+    first = t.T
+    t.add("U", "q", "user", "active")
+    _idle(rs, first)
+    t.T = None  # a new conversation turn without the token
+    out = t.begin(1)
+    assert t.T == first and "resumed session 1" in out
+    t.push("await", "USER", "U1")
+    t.set("U1", "status", "answered")
+    closed = t.T
+    t.end()
+    with pytest.raises(ResearchError, match="no open session"):
+        rs.begin("geo", closed)
+    assert rs.begin("geo").startswith("SESSION S2-")
+
+
+def test_an_agent_answers_only_for_what_it_opened(rs):
+    chat, agent = Turn(rs), Turn(rs, role="agent")
+    chat.begin(1)
+    chat.add("U", "derive", "user", "active")
+    chat.push("dispatch U1", "N3", "U1", on="U1")
+    chat.push("explore", "EX", "U1", on="U1")
+    agent.begin(2)
+    assert "RUN K1" in agent.next()
+    assert "RUN K2" in chat.next()  # each session runs its own K
+    with pytest.raises(ResearchError, match="already runs K1"):
+        agent.next()
+    with pytest.raises(ResearchError, match="K1 is still running"):
+        agent.end()
+    agent.push("formalize", "FM", "K1", exit="a", on="U1")
+    agent.done("K1", "a")
+    agent.add("E", "found", "model", "established", evidence="computed")
+    out = agent.end()  # no directive, no continuation: those are the chat's
+    assert out.startswith("RECEIPT geo · session 2 closed")
+    with pytest.raises(ResearchError, match="K2 is still running"):
+        chat.end()
 
 
 def test_end_requires_a_directive_a_continuation_and_no_running_plan(rs):
@@ -120,11 +177,12 @@ def test_end_requires_a_directive_a_continuation_and_no_running_plan(rs):
         t.end(1)
     t.push("await the user", "USER", "U1")
     t.set("U1", "status", "done")
+    closed = t.T
     out = t.end(1)
-    assert out.startswith("RECEIPT") and out.splitlines()[-1].startswith("NEXT:")
-    with pytest.raises(ResearchError, match="already closed"):
-        rs.begin("geo", 1)
-    assert "K-AWAITING USER K3" in rs.begin("geo", 2)
+    assert out.startswith("RECEIPT") and out.splitlines()[-1].startswith("Δ session 1:")
+    with pytest.raises(ResearchError, match="no open session"):
+        rs.begin("geo", closed)
+    assert "K-AWAITING USER K3" in rs.begin("geo")
 
 
 # ── exploration (request 1) ────────────────────────────────────────────
@@ -205,7 +263,7 @@ def test_rechecking_a_claim_stales_all_its_cells(rs):
     assert "PENDING E1: H1" in out
     out = t.dispose("H1", "E1", "RECHECK")
     assert "2 verdict cell(s) marked stale" in out
-    assert "STALE     H1@smooth" in rs.begin("geo", 1)
+    assert "STALE     H1@smooth" in t.begin(1)
 
 
 # ── provenance checks carried over ─────────────────────────────────────
@@ -304,7 +362,7 @@ The Euler–Lagrange equation in vector form is $E_p = -2(\\dot A\\nabla_p U + \
 checked by symbolic computation.
 """
     out = t.doc_sync("D1", v2)
-    assert "synced at turn 2" in out
+    assert "synced in session 2" in out
 
 
 def test_unplanned_edit_is_refused(rs):
@@ -331,7 +389,7 @@ def test_export_import_moves_a_ledger_between_stores(rs):
     other = Research(Handbook(":memory:"))
     assert "imported ledger 'geo'" in other.import_(data)
     assert other.matrix("geo") == rs.matrix("geo")
-    assert "TOKEN" in other.begin("geo", 1)
+    assert other.begin("geo").startswith("SESSION S2-")  # session numbers continue from the imported ledger
 
 
 # ── surfaces: MCP tools, CLI fallback, skill index ─────────────────────
@@ -354,15 +412,15 @@ def test_research_tools_over_mcp(monkeypatch):
     assert tools["research_show"].annotations.read_only_hint is True
     assert tools["research_add"].annotations.idempotent_hint is False
     assert "created ledger" in asyncio.run(call("research_ledgers", action="init", ledger="t", question="q"))
-    out = asyncio.run(call("research_begin", ledger="t", turn=1))
-    assert out.startswith("TOKEN") and "N1: BEGIN ✓" in out
-    token = tok(out)
-    out = asyncio.run(call("research_add", ledger="t", token=token, sec="U", content="derive", origin="user", status="active"))
-    out = asyncio.run(call("research_push", ledger="t", token=tok(out), do="explore", page="EX", frm="U1"))
-    out = asyncio.run(call("research_next", ledger="t", token=tok(out)))
+    out = asyncio.run(call("research_begin", ledger="t"))
+    assert out.startswith("SESSION S1-") and "N1: BEGIN ✓" in out
+    s = tok(out)
+    asyncio.run(call("research_add", ledger="t", session=s, sec="U", content="derive", origin="user", status="active"))
+    asyncio.run(call("research_push", ledger="t", session=s, do="explore", page="EX", frm="U1"))
+    out = asyncio.run(call("research_next", ledger="t", session=s))
     assert "CARD [rs-ex]" in out and "Explore conditions" in out
     with pytest.raises(Exception, match="returned no object"):
-        asyncio.run(call("research_done", ledger="t", token=tok(out), kid="K1", exit="a"))
+        asyncio.run(call("research_done", ledger="t", session=s, kid="K1", exit="a"))
     # cards are reachable through the handbook tools too
     assert "[rs-ex]" in asyncio.run(call("lookup", situation="what if we drop this assumption", scope="research"))
     assert "rs-" not in asyncio.run(call("lookup", situation="what if we drop this assumption"))  # default: handbook only
@@ -381,11 +439,11 @@ def test_cli_fallback_runs_the_same_tools(tmp_path):
         return p.returncode, p.stdout + p.stderr
 
     assert run("research", "research_ledgers", '{"action": "init", "ledger": "c", "question": "q"}')[0] == 0
-    code, out = run("research", "research_begin", '{"ledger": "c", "turn": 1}')
-    assert code == 0 and out.startswith("TOKEN")
-    code, out = run("research", "research_add", json.dumps({"ledger": "c", "token": "wrong", "sec": "U", "content": "x",
+    code, out = run("research", "research_begin", '{"ledger": "c"}')
+    assert code == 0 and out.startswith("SESSION S1-")
+    code, out = run("research", "research_add", json.dumps({"ledger": "c", "session": "wrong", "sec": "U", "content": "x",
                                                            "origin": "user", "status": "active"}))
-    assert code == 2 and "stale or missing token" in out
+    assert code == 2 and "no open session" in out
     code, out = run("show", "rs-n4")
     assert code == 0 and "Research N4 — Documents" in out
 
@@ -497,3 +555,23 @@ def test_cli_show_loads_cards_on_a_fresh_database(tmp_path):
     p = subprocess.run([sys.executable, "-I", str(script), "--db", str(tmp_path / "f.db"), "show", "rs-n1"],
                        capture_output=True, text=True)
     assert p.returncode == 0 and "Research N1" in p.stdout
+
+
+def test_stop_hook_wants_this_messages_session_closed_and_ignores_agents(rs):
+    assert rs.unfinished("geo") == []
+    assert "research_begin(ledger='geo')" in rs.prompt("geo")
+    assert rs.unfinished("geo") == ["no research session for the last message: research_begin, register it, research_end"]
+    agent = Turn(rs, role="agent")
+    agent.begin(1)
+    assert rs.unfinished("geo")[0].startswith("no research session")  # an agent is not this reply's session
+    chat = Turn(rs)
+    chat.begin(2)
+    left = rs.unfinished("geo")
+    assert len(left) == 1 and left[0].startswith("session 2 is still open: NO DIRECTIVE")
+    chat.add("U", "q", "user", "active")
+    chat.push("await", "USER", "U1")
+    chat.set("U1", "status", "answered")
+    chat.end()
+    assert rs.unfinished("geo") == []
+    st = rs.status("geo")
+    assert [s["role"] for s in st["open_sessions"]] == ["agent"] and st["sessions"] == 2

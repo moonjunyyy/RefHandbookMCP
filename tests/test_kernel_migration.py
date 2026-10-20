@@ -97,7 +97,7 @@ def test_every_research_rule_fires(everything):
     g.update_node(L, actor="kernel", validate=False, attrs={"derived_last_review": 0, "derived_signals": 3})
     fired = {f.rule for f in evaluate(g, "check", L, "ledger")}
     fired |= {f.rule for f in evaluate(g, "obligation", L, "ledger")}
-    fired |= {f.rule for f in findings(g, migrate.ensure_turn(g, L, 5))}
+    fired |= {f.rule for f in findings(g, migrate.ensure_session(g, L, 5))}
     assert GATES - fired == set()
 
 

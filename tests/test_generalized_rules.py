@@ -95,7 +95,7 @@ def test_rerecording_a_verdict_or_moving_a_directive_does_not_put_a_document_beh
     t.set("U1", "status", "answered")                              # a process row
     t.set("E1", "evidence", "computed")                            # same value
     assert not [o for o in rs.obligation_items("geo") if o[0] == "doc_behind"]
-    assert "changes since turn 1: none" in rs.doc_plan("geo", None, "D1", DOC_V1)
+    assert "changes since session 1: none" in rs.doc_plan("geo", None, "D1", DOC_V1)
 
 
 def test_a_flipped_verdict_does_put_it_behind(t, rs):
@@ -138,7 +138,7 @@ def test_a_document_is_sent_once_and_named_by_its_ref(rs, tmp_path):
     hb = Handbook(tmp_path / "u.db")
     research_api.bind(hb)
     research_api.research_ledgers(action="init", ledger="geo", question="q")
-    out = research_api.research_begin("geo", 1)
+    out = research_api.research_begin("geo")
     tok = out.split()[1]
     ref = research_api.research_blob(action="put", text=DOC_V1).split()[1]
     out = research_api.research_doc("geo", "register", tok, label="summary.md", role="deliverable", ref=ref[:12])

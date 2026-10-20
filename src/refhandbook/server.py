@@ -23,9 +23,11 @@ and follow it in order: memory items first, then the numbered steps, taking GO T
 step's IF holds. Stop at END. Keep deferred items in mind until their moment arrives.
 Cards are linked: RELATED lists what to open next (escalates_to, requires, see_also, ...).
 When you solve a problem no card covers, record it with `save_entry` and link it with `relate`.
-Research work runs as a ledgered turn loop over the research cards (rs-*): start every turn with
-`research_begin`, work the plan objects with `research_next` / `research_push` / `research_done`, and
-close with `research_end`; its last line (NEXT) is the first action of the next turn.
+Research work runs as a ledgered session loop over the research cards (rs-*): every user message
+opens a session with `research_begin` (its first line is the SESSION token every later call names),
+works the plan objects with `research_next` / `research_push` / `research_done`, and closes with
+`research_end` before the reply. Sessions run side by side (another conversation, an agent with
+role="agent"); a CONFLICT names objects to re-read, nothing else is shared.
 Computation runs in the user's sandbox: write a script with `sandbox_script`, run it with
 `sandbox_run` (a background job; read it later with `sandbox_job`), and keep files in the workspace
 with `sandbox_files`. A script needs no approval: it can use only what the user's policy
@@ -45,7 +47,7 @@ DELETE = ToolAnnotations(read_only_hint=False, destructive_hint=True, idempotent
 LEDGER_WRITE = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=False)
 
 # mcp 2 runs sync tools on worker threads. A store is one SQLite connection, and a ledger write
-# reads the token, checks it, then writes: so tool calls run one at a time.
+# checks its session's claims, then writes: so tool calls run one at a time.
 _CALLS = threading.RLock()
 
 

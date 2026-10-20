@@ -22,12 +22,12 @@ def legacy_store(path, ledgers=("geo",)):
     r = Research(hb)
     for L in ledgers:
         r.init(L, "vector EL")
-        t = tok(r.begin(L, 1))
-        t = tok(r.add(L, t, "U", "derive it", "user", "active"))
-        t = tok(r.add(L, t, "A", "flat metric", "user", "on"))
-        t = tok(r.push(L, t, "await the user", "USER", "U1"))
-        t = tok(r.set(L, t, "U1", "status", "answered"))
-        r.end(L, t, 1)
+        t = tok(r.begin(L))
+        r.add(L, t, "U", "derive it", "user", "active")
+        r.add(L, t, "A", "flat metric", "user", "on")
+        r.push(L, t, "await the user", "USER", "U1")
+        r.set(L, t, "U1", "status", "answered")
+        r.end(L, t)
     hb.save_entry(title="Disk full", condition="ENOSPC", items=["free space"])
     hb.db.commit()
     hb.db.execute("PRAGMA foreign_keys = OFF")
@@ -97,7 +97,7 @@ def test_a_migration_decision_is_durable_before_any_tool_runs(tmp_path, monkeypa
     r = Research(hb)
     assert not hb.db.in_transaction
     with pytest.raises(ResearchError):
-        r.begin("geo", 1)  # a refusal rolls back its own transaction, and nothing of the migration
+        r.begin("geo", "S9-none")  # a refusal rolls back its own transaction, and nothing of the migration
     assert r.k.meta("quarantine:bad") and r.k.schema() == 1
     assert sqlite3.connect(path).execute("SELECT value FROM k_meta WHERE key = 'schema'").fetchone() == ("1",)
 
@@ -143,10 +143,10 @@ def test_the_projection_follows_every_write_and_keeps_the_log(tmp_path):
     legacy_store(path)
     hb = Handbook(path)
     r = Research(hb)
-    t = tok(r.begin("geo", 2))
-    t = tok(r.add("geo", t, "U", "go on", "user", "active"))
-    t = tok(r.set("geo", t, "U2", "status", "answered"))
-    r.end("geo", t, 2)
+    t = tok(r.begin("geo"))
+    r.add("geo", t, "U", "go on", "user", "active")
+    r.set("geo", t, "U2", "status", "answered")
+    r.end("geo", t)
     assert verify.roundtrip(r, r.k.g, "geo") == []
     events = [e[0] for e in hb.db.execute("SELECT event FROM k_log WHERE ref = 'geo' AND actor = 'legacy' ORDER BY seq")]
     assert events == [e[0] for e in hb.db.execute("SELECT msg FROM rl_log WHERE ledger = 'geo' ORDER BY seq")]
@@ -209,5 +209,5 @@ def test_tools_run_on_the_kernel(tmp_path):
     research_api.bind(hb)
     assert research_api.R().k is hb._kernel
     research_api.research_ledgers(action="init", ledger="geo", question="q")
-    assert "OBLIGATIONS THIS TURN" in research_api.research_begin("geo", 1)
+    assert "OBLIGATIONS" in research_api.research_begin("geo")
     assert json.loads(research_api.research_ledgers(action="export", ledger="geo"))["ledger"]["id"] == "geo"

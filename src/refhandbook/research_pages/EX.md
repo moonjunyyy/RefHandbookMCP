@@ -45,7 +45,7 @@ configuration.
    An exploration result never stands in for a main-line result.
 7. **Adoption.** Propose a premise for the user to adopt once, together with
    the boundary that motivates it. Only the user switches the main line: the
-   `A` row is set `on`, with origin `user(adopted, turn N)`.
+   `A` row is set `on`, with origin `user(adopted, session N)`.
 
 **EXITS**
 

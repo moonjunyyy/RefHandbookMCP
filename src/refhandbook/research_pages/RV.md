@@ -4,12 +4,12 @@ TAGS: research, normal
 TRIGGERS: REVIEW; review the rules; rule gap; the rules got in the way; propose a rule; device change; loophole
 OBJECTIVE: Judge the device's rules against what happened since the last review, and propose the smallest rule change that removes a class of failure.
 
-ENTRY — obligation: `REVIEW` in research_begin (7 turns since the last review, or 3 signals: refusals, UNAFFECTED disposals, carries, drops).
+ENTRY — obligation: `REVIEW` in research_begin (7 sessions since the last review, or 3 signals: refusals, UNAFFECTED disposals, carries, drops).
 ENTRY — object: a K routed `@RV`, from X2 or X3 when a diagnosis exposes a missing, ambiguous, conflicting or stale rule.
 ◆ The rule, not the instance. Propose; never patch around it.
 
 1. Read what happened since the last review: `research_show(recent=…)` over
-   those turns and the log lines `refused:`, `UNAFFECTED`, `carry`, `dropped`.
+   those sessions and the log lines `refused:`, `UNAFFECTED`, `carry`, `dropped`.
    `research_review(action="proposals")` lists proposals still open.
 2. For each signal, name the **generating rule**: the rule (or its absence)
    that produced the refusal, the drop or the carry. Group signals that one rule

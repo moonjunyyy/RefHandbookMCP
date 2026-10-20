@@ -148,7 +148,7 @@ def test_full_flow_and_per_user_isolation(client, cfg):
     names = {t["name"] for t in tools}
     assert {"lookup", "open_entry", "research_begin", "research_end", "research_doc"} <= names
 
-    refused = call(client, t_moon["access_token"], s1, "research_end", {"ledger": "none", "turn": 1, "token": "x"}, rid=7)
+    refused = call(client, t_moon["access_token"], s1, "research_end", {"ledger": "none", "session": "x"}, rid=7)
     assert refused["isError"] and "no ledger 'none'" in refused["content"][0]["text"]  # the reason survives mcp 2
     out = call(client, t_moon["access_token"], s1, "research_ledgers",
                {"action": "init", "ledger": "gauss", "question": "Gaussian on the t-measure"})
@@ -161,7 +161,7 @@ def test_full_flow_and_per_user_isolation(client, cfg):
     assert "gauss" not in other["content"][0]["text"]
     # the research cards are in every user's store
     card = call(client, t_kim["access_token"], s2, "open_entry", {"id": "rs-n1"}, rid=5)
-    assert "Turn loop" in card["content"][0]["text"]
+    assert "Session loop" in card["content"][0]["text"]
     assert (cfg.data_dir / "users" / "moon.db").exists() and (cfg.data_dir / "users" / "kim.db").exists()
 
 

@@ -1,19 +1,23 @@
 """Research ledger: the run state of the research cards (rs-*).
 
 The handbook holds the procedures as cards; this module holds what a research
-conversation has established, assumed, planned and written, so the next turn
-(or the next session) continues from the stored state instead of from memory.
+conversation has established, assumed, planned and written, so the next session
+continues from the stored state instead of from memory.
 
-    rl_ledgers   one row per research question: turn, token, open flag, map
+    rl_ledgers   one row per research question: its session counter (column `turn`), map
     rl_rows      the ledger rows, one table for every section (U C R S A Z T E H X P K)
     rl_configs   named assumption configurations (exploration); 'main' is derived
     rl_verdicts  claim x configuration -> verdict
     rl_docs      registered documents: source / deliverable / working
     rl_pending   propagation hits that still need a disposition
-    rl_log       every change, by turn
+    rl_log       every change, by session number
+    rl_turnmarks what each session marked: rows touched or carried, hits raised, K run, plans made
 
-Every write is gated: a turn must be open and the caller must pass the token the
-last device output printed, so a write proves the caller read the current state.
+Work happens in sessions (kernel/sessions.py): research_begin opens one (or resumes this
+conversation's) and returns its token; every write names it. Sessions run side by side: a write is
+refused only if another session changed the same object after this one read it. The columns named
+`turn` (rows' turn_created/turn_updated, configs', verdicts', logs', marks') hold session numbers:
+their names are kept so exports of every version import unchanged.
 """
 
 from __future__ import annotations
@@ -25,6 +29,7 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any
 
+from .kernel import sessions
 from .store import Handbook, HandbookError, slugify
 
 # ── vocabulary ───────────────────────────────────────────────────────────
@@ -74,7 +79,7 @@ LINK_RELS = {"sup", "con", "ref"}
 RELS = BASIS_RELS | LINK_RELS
 ID_RE = re.compile(r"\b([UCRSAZTEHXPK]\d+)\b")
 EDGE_RE = re.compile(r"(?:(\w+):)?([UCRSAZTEHXPK]\d+)\b")
-VIRTUAL_PAGES = {"USER": "Wait for the user's next message; it is resolved at N1 step 3 of the next turn."}
+VIRTUAL_PAGES = {"USER": "Wait for the user's next message; it is resolved at N1 step 3 of the next session."}
 CARD_PREFIX = "rs-"
 
 SCHEMA = """
@@ -156,7 +161,7 @@ END;
 # Visible text of a deliverable must read as prose: these are ledger artefacts.
 LEAKS = [
     (re.compile(r"⟵"), "basis tag"),
-    (re.compile(r"\b(RECEIPT|TOKEN|PENDING)\b|NEXT:"), "device output"),
+    (re.compile(r"\b(RECEIPT|TOKEN|PENDING|CONFLICT)\b|NEXT:|\bSESSION S\d+-"), "device output"),
     (re.compile(r"\[unverified\]"), "status token [unverified]; write 미검증 / unverified in words"),
     (re.compile(r"\[(?:[UCRSAZTEHXPK]\d+(?:\s*[;,]\s*|\s+)?)+\]"), "bracketed ledger ids; move them to the section's basis comment"),
     (re.compile(r"`(computed|measured|sourced|followed|proposed|superseded|stale|entailed|pointer)[^`]*`"), "status vocabulary in code"),
@@ -171,7 +176,7 @@ class ResearchError(HandbookError):
 
 
 class ProtocolRefused(ResearchError):
-    """A refusal of the protocol (no open turn, a stale token, the wrong turn number), not of the work:
+    """A refusal of the protocol (no open session, a conflict with another session), not of the work:
     it says nothing about the rules, so it is not a review signal (see Research.note_refusal)."""
 
 
@@ -267,27 +272,30 @@ class Research:
             if self.k is not None:
                 self.k.sync_ledger(self, ledger)
 
-    def _gate(self, ledger: str, token: str | None) -> dict[str, Any]:
-        lg = self._ledger(ledger)
-        if not lg["open"]:
-            raise ProtocolRefused(f"REFUSED: no turn is open on {ledger!r}. Run research_begin first (untruncated).")
-        if self._digest(ledger) != lg["token"]:
-            raise ProtocolRefused(
-                f"REFUSED: ledger {ledger!r} changed outside this caller since the last device output "
-                f"(another session, or a direct edit). Report it (X7), then re-read with research_begin turn={lg['turn']}."
-            )
-        if token != lg["token"]:
-            raise ProtocolRefused(
-                f"REFUSED: stale or missing token (the ledger moved on, perhaps through another session). "
-                f"Re-read with research_begin turn={lg['turn']}: the token is on the first line of its output."
-            )
+    def _session(self, ledger: str, sid: str | None) -> dict[str, Any]:
+        if self.k is None:
+            raise ResearchError("sessions need the kernel")
+        try:
+            return sessions.get(self.k.g, sid or "", ledger)
+        except sessions.SessionError as e:
+            raise ProtocolRefused(str(e)) from e
+
+    def _gate(self, ledger: str, session: str | None) -> dict[str, Any]:
+        """The ledger as the session sees it: `turn` is the session's number, every log line and mark
+        this write makes carries it."""
+        lg = dict(self._ledger(ledger))
+        s = self._session(ledger, session)
+        lg.update(turn=s["seq"], session=s["id"], role=s["role"])
+        self._s = s
         return lg
 
     def _seal(self, ledger: str) -> str:
-        token = self._digest(ledger)
-        self.db.execute("UPDATE rl_ledgers SET token = ? WHERE id = ?", (token, ledger))
+        """Record the ledger's digest (a change outside the device shows at the next begin) and
+        project it into the kernel."""
+        digest = self._digest(ledger)
+        self.db.execute("UPDATE rl_ledgers SET token = ? WHERE id = ?", (digest, ledger))
         self._sealed(ledger)
-        return token
+        return digest
 
     def _sealed(self, ledger: str) -> None:
         """After every write that seals the ledger, inside its transaction: the kernel's projection
@@ -295,18 +303,40 @@ class Research:
         if self.k is not None:
             self.k.sync_ledger(self, ledger)
 
+    def _claim(self, *keys: str) -> None:
+        """The objects this write changes: refused if another session changed one since this one read it."""
+        s = getattr(self, "_s", None)
+        if s is not None and self.k is not None:
+            sessions.claim(self.k.g, s, list(keys))
+
+    def _mark(self, ledger: str, seq: int, kind: str, ref: str, note: str = "") -> None:
+        self.db.execute("INSERT OR REPLACE INTO rl_turnmarks VALUES (?, ?, ?, ?, ?)", (ledger, seq, kind, ref, note))
+
     def _touch(self, ledger: str, turn: int, *ids: str) -> None:
+        self._claim(*ids)
         self.db.executemany("INSERT OR IGNORE INTO rl_turnmarks VALUES (?, ?, 'touched', ?, '')",
                             [(ledger, turn, i) for i in ids])
 
-    def _write(self, ledger: str, token: str | None, fn) -> str:
-        """Run fn(lg) inside one transaction behind the gate; return its text plus the next token."""
-        with self.db:
-            lg = self._gate(ledger, token)
-            self.db.execute("UPDATE rl_ledgers SET clock = clock + 1 WHERE id = ?", (ledger,))
-            out = fn(lg)
-            new = self._seal(ledger)
-        return f"{out}\nTOKEN {new}"
+    def _pend(self, ledger: str, src: str, hit: str) -> None:
+        """A pending hit, raised by the writing session: it answers for it at research_end."""
+        self.db.execute("INSERT OR IGNORE INTO rl_pending VALUES (?, ?, ?)", (ledger, src, hit))
+        s = getattr(self, "_s", None)
+        if s is not None:
+            self._mark(ledger, s["seq"], "raised", hit)
+
+    def _write(self, ledger: str, session: str | None, fn) -> str:
+        """Run fn(lg) inside one transaction for the session; a conflict leaves nothing written."""
+        try:
+            with self.db:
+                lg = self._gate(ledger, session)
+                self.db.execute("UPDATE rl_ledgers SET clock = clock + 1 WHERE id = ?", (ledger,))
+                out = fn(lg)
+                self._seal(ledger)
+        except sessions.Conflict as e:
+            raise ProtocolRefused(str(e)) from e
+        finally:
+            self._s = None
+        return out
 
     # ── ledgers ──────────────────────────────────────────────────────────
 
@@ -315,8 +345,12 @@ class Research:
             "SELECT id, question, turn, open, last_closed FROM rl_ledgers ORDER BY id").fetchall()
         if not rows:
             return "No research ledgers yet. Create one with init."
-        return "\n".join(f"{r['id']}  turn {r['turn']}{' (open)' if r['open'] else ''} · last closed {r['last_closed']} · {r['question']}"
+        return "\n".join(f"{r['id']}  {self._sessions_line(r['id'])} · {r['turn']} sessions · {r['question']}"
                          for r in rows)
+
+    def _sessions_line(self, ledger: str) -> str:
+        live = sessions.open_sessions(self.k.g, ledger) if self.k is not None else []
+        return ("open: " + ", ".join(f"{o['id']} ({o['role']})" for o in live)) if live else "no open session"
 
     def init(self, ledger: str, question: str) -> str:
         lid = slugify(ledger)
@@ -326,22 +360,27 @@ class Research:
             self.db.execute("INSERT INTO rl_ledgers (id, question, created_at, map) VALUES (?, ?, ?, ?)",
                             (lid, question, _now(), f"Q  {question}"))
             self._seal(lid)
-        return f"created ledger {lid!r}: {question}\nNext: research_begin(ledger={lid!r}, turn=1)"
+        return f"created ledger {lid!r}: {question}\nNext: research_begin(ledger={lid!r})"
 
     def status(self, ledger: str) -> dict[str, Any]:
         lg = self._ledger(ledger)
         pend = self._column("SELECT hit FROM rl_pending WHERE ledger = ?", ledger)
-        return {k: lg[k] for k in ("turn", "open", "last_closed", "closed_count", "prompts", "running")} | {"pending": pend}
+        live = sessions.open_sessions(self.k.g, ledger) if self.k is not None else []
+        return ({k: lg[k] for k in ("open", "last_closed", "closed_count", "prompts", "running")}
+                | {"sessions": lg["turn"], "pending": pend,
+                   "open_sessions": [{"id": o["id"], "role": o["role"], "seq": o["seq"]} for o in live]})
 
     def prompt(self, ledger: str) -> str:
-        """Hook support: count one user prompt and say what the turn must start with."""
+        """Hook support: count one user prompt and say how the reply starts."""
+        import time
         with self.db:
             self.db.execute("UPDATE rl_ledgers SET prompts = prompts + 1 WHERE id = ?", (ledger,))
-            lg = self._ledger(ledger)
-            # a hook is not a model write: keep the token valid for the reader
+            # a hook is not a model write: keep the digest valid for the reader
             self.db.execute("UPDATE rl_ledgers SET token = ? WHERE id = ?", (self._digest(ledger), ledger))
-        nxt = lg["turn"] if lg["open"] else lg["prompts"]
-        return f"[research cycle active on {ledger!r}] First action this turn: research_begin(ledger={ledger!r}, turn={nxt})."
+            if self.k is not None:
+                self.k.set_meta(f"prompt:{ledger}", repr(time.time()))
+        return (f"[research cycle active on {ledger!r}] First action: research_begin(ledger={ledger!r}); "
+                "one session per message: research_end before the reply ends.")
 
     def _column(self, sql: str, *params: Any) -> list[Any]:
         return [r[0] for r in self.db.execute(sql, params)]
@@ -362,7 +401,7 @@ class Research:
         """The ledger as tables. `only` restricts the rows (sections without rows are left out, and so
         are the configuration, verdict and document blocks unless a claim or K is among the rows)."""
         lg = self._ledger(ledger)
-        out = [f"# Ledger — {lg['question']}  [{ledger}] · turn {lg['turn']}{' (open)' if lg['open'] else ''}"
+        out = [f"# Ledger — {lg['question']}  [{ledger}] · {lg['turn']} sessions · {self._sessions_line(ledger)}"
                + (f" · {title}" if title else "")]
         rows = self._rows(ledger)
         for sec, name in SECTIONS.items():
@@ -389,7 +428,7 @@ class Research:
         docs = self.db.execute("SELECT * FROM rl_docs WHERE ledger = ? ORDER BY id", (ledger,)).fetchall()
         if docs:
             out += ["", "## D — documents"]
-            out += [f"- {d['id']} {d['role']} ({d['owner']}) {d['label']} · synced turn {d['sync_turn']}"
+            out += [f"- {d['id']} {d['role']} ({d['owner']}) {d['label']} · synced in session {d['sync_turn']}"
                     + (" · PLAN PENDING" if d["plan"] else "") for d in docs]
         out += ["", "## M — question map", lg["map"]]
         return "\n".join(out)
@@ -435,7 +474,22 @@ class Research:
                         out.append(f"{h}: swapping {only_a[0]} ({a}, {va}) for {only_b[0]} ({b}, {vb}) flips it")
         return out
 
-    # ── turn protocol ────────────────────────────────────────────────────
+    # ── session protocol ────────────────────────────────────────────────────
+
+    def seen(self, ledger: str, session: str, only: set[str] | None = None, open_only: bool = False) -> None:
+        """The session has read these rows (all of the ledger when neither filter is given): a later
+        write to them by this session is checked against what it saw now."""
+        s = self._session(ledger, session)
+        if only is None and not open_only:
+            sessions.ack(self.k.g, s["id"])
+            return
+        ids = set(only or ())
+        if open_only:
+            ids |= {r["id"] for r in self._rows(ledger) if key(r["status"]) in NONTERMINAL}
+        keys = set(ids)
+        for i in ids:  # a claim's verdicts are read with it
+            keys |= {f"{i}@{c}" for c in self._column("SELECT config FROM rl_verdicts WHERE ledger = ? AND claim = ?", ledger, i)}
+        sessions.ack(self.k.g, s["id"], sorted(keys))
 
     def recent_ids(self, ledger: str, turns: int) -> set[str]:
         lg = self._ledger(ledger)
@@ -452,28 +506,42 @@ class Research:
                 ids.add(r["id"])
         return ids
 
-    def begin(self, ledger: str, turn: int, view: str = "recent", recent: int = 3) -> str:
+    def begin(self, ledger: str, session: str = "", view: str = "recent", recent: int = 3, role: str = "chat",
+              label: str = "") -> str:
+        """Open a session on the ledger (or re-read one): the token on the first line goes with every
+        later call. A chat session is one exchange (a user message and the reply); an agent session is
+        one delegated run. Without `session`, an idle session of the same role (one left open: it
+        still answers for what it opened) is resumed; otherwise a new one opens beside any others."""
         if view not in ("brief", "recent", "full"):
             raise ResearchError("view must be brief, recent or full")
+        if self.k is None:
+            raise ResearchError("sessions need the kernel")
         lg = self._ledger(ledger)
+        g = self.k.g
         notes = []
-        with self.db:
-            if self._digest(ledger) != lg["token"]:
-                notes.append("WARNING: ledger changed outside this caller since the last device output "
-                             "(another session or a direct edit) — report it (X7) and re-read the changed rows.")
-            if lg["open"] and lg["turn"] != turn:
-                raise ProtocolRefused(f"REFUSED: turn {lg['turn']} is still open. Close it with research_end, "
-                                    "or report why it cannot close.")
-            if not lg["open"] and turn <= lg["last_closed"]:
-                raise ProtocolRefused(f"REFUSED: turn {turn} is already closed (last closed {lg['last_closed']}). "
-                                    f"Use turn={lg['last_closed'] + 1}.")
-            if not lg["open"] and turn > lg["last_closed"] + 1:
-                notes.append(f"WARNING: turn gap — last closed turn is {lg['last_closed']}, this is {turn}. "
-                             "Turns ran outside the cycle; report it (X7) and register what they changed.")
-                self._log(ledger, turn, f"gap: last closed {lg['last_closed']}")
-            self.db.execute("UPDATE rl_ledgers SET open = 1, turn = ? WHERE id = ?", (turn, ledger))
-            token = self._seal(ledger)
-        out = [f"TOKEN {token}   LEDGER {ledger}   TURN {turn}   (every write needs this token; never truncate this output)"]
+        try:
+            with self.db:
+                if lg["token"] and self._digest(ledger) != lg["token"]:
+                    notes.append("WARNING: the ledger changed outside the device since its last write (a direct "
+                                 "edit) — report it (X7) and re-read the changed rows.")
+                if session:
+                    s = sessions.get(g, session, ledger)
+                    adopted = True
+                else:
+                    s, adopted = sessions.open(g, ledger, role, label=label, floor=lg["turn"])
+                sessions.ack(g, s["id"])
+                self.db.execute("UPDATE rl_ledgers SET open = 1, turn = max(turn, ?) WHERE id = ?", (s["seq"], ledger))
+                self._seal(ledger)
+        except sessions.SessionError as e:
+            raise ProtocolRefused(str(e)) from e
+        if adopted and not session:
+            notes.append(f"resumed session {s['seq']} ({s['role']}), idle since its last call")
+        others = [o for o in sessions.open_sessions(g, ledger) if o["id"] != s["id"]]
+        if others:
+            notes.append("also open: " + ", ".join(f"session {o['seq']} ({o['role']})" for o in others)
+                         + " — they write beside this one; a change to the same object is refused until re-read")
+        out = [f"SESSION {s['id']}   LEDGER {ledger}   ({s['role']}; pass session={s['id']!r} to every call; "
+               "never truncate this output)"]
         out += notes
         n = self.db.execute("SELECT count(*) FROM rl_rows WHERE ledger = ?", (ledger,)).fetchone()[0]
         if view == "full":
@@ -481,11 +549,11 @@ class Research:
         elif view == "recent":
             ids = self.recent_ids(ledger, recent)
             out += [self.render(ledger, only=ids, title=f"VIEW recent: {len(ids)} of {n} rows (changed in the last "
-                                                       f"{recent} turns, or live); research_show for the rest"),
+                                                       f"{recent} sessions, or live); research_show for the rest"),
                     "", "## M — question map", self._ledger(ledger)["map"]]
         else:
             out += [f"VIEW brief: {n} rows not shown; research_show (or research_begin view=recent) reads them"]
-        out += ["", "=" * 20 + " OBLIGATIONS THIS TURN " + "=" * 20]
+        out += ["", "=" * 20 + " OBLIGATIONS " + "=" * 20]
         out += self._obligations(ledger)
         return "\n".join(out)
 
@@ -551,12 +619,12 @@ class Research:
                    "DIRECTIVES or an unsynced DOC-PLAN remain.")
         return out
 
-    def blockers(self, ledger: str, turn: int, idle: str = "") -> list[tuple[str, str, str, str]]:
-        """(kind, ref, src, text) for everything that keeps turn `turn` from closing: the kernel's close
-        rules for the turn, and the check errors of its ledger."""
+    def blockers(self, ledger: str, seq: int, idle: str = "", role: str = "chat") -> list[tuple[str, str, str, str]]:
+        """(kind, ref, src, text) for everything that keeps session `seq` from closing: the kernel's
+        close rules for a session of this role, and the check errors of its ledger."""
         from .kernel import verify
 
-        items = verify.blockers(self._kernel(ledger), ledger, turn, idle)
+        items = verify.blockers(self._kernel(ledger), ledger, seq, idle, role)
         order = ("pending", "running", "no_continuation", "directive", "no_directive", "doc_plan", "check")
         out = []
         for kind, ref, src in sorted(items, key=lambda i: (order.index(i[0]) if i[0] in order else 99,
@@ -565,6 +633,28 @@ class Research:
                 continue
             out.append((kind, ref, src, self._blocker_text(ledger, kind, ref, src)))
         out += [("check", e, "", f"CHECK {e}") for e in self.check(ledger)[0]]
+        return out
+
+    def unfinished(self, ledger: str) -> list[str]:
+        """For the stop hook: a chat session is one exchange (the user's message and the reply), so a
+        reply may not end with this conversation's session open, nor without a session for the
+        last message. Agent sessions and idle ones (another conversation's, abandoned) are not
+        this reply's."""
+        if self.k is None:
+            return []
+        import time
+        now = time.time()
+        out = []
+        for s in sessions.open_sessions(self.k.g, ledger):
+            if s["role"] != "chat" or now - s["active"] >= sessions.ADOPT_IDLE:
+                continue
+            left = [text for *_, text in self.blockers(ledger, s["seq"], "", "chat")]
+            out.append(f"session {s['seq']} is still open: " + ("; ".join(left) + "; then " if left else "")
+                       + "research_end")
+        last = float(self.k.meta(f"prompt:{ledger}") or 0)
+        if last and not out and not self.db.execute(
+                "SELECT 1 FROM k_sessions WHERE scope = ? AND role = 'chat' AND active >= ?", (ledger, last)).fetchone():
+            out.append("no research session for the last message: research_begin, register it, research_end")
         return out
 
     def _blocker_text(self, ledger: str, kind: str, ref: str, src: str) -> str:
@@ -576,40 +666,42 @@ class Research:
             "running": f"K {ref} is still running: finish its card with research_done",
             "no_continuation": "NO CONTINUATION: push the next K (a queued step, or @USER awaiting the user) before ending",
             "directive": f"DIRECTIVE {ref} neither addressed (set) nor carried",
-            "no_directive": "NO DIRECTIVE this turn: register or update the user's message as U, "
+            "no_directive": "NO DIRECTIVE this session: register or update the user's message as U, "
                             "or end with idle=\"<why nothing was asked>\"",
         }.get(kind, f"{kind.upper()} {ref}" + (f" (from {src})" if src else ""))
 
-    def end(self, ledger: str, token: str | None, turn: int, idle: str = "") -> str:
+    def end(self, ledger: str, session: str | None, idle: str = "") -> str:
+        """Close the session: refused while what it opened remains (its pending hits, its running K, its
+        unsynced plan; for a chat session also the directives and the continuation) or a check error."""
         with self.db:
-            lg = self._gate(ledger, token)
-            if lg["turn"] != turn:
-                raise ProtocolRefused(f"REFUSED: the open turn is {lg['turn']}, not {turn}")
-            blockers = [text for *_, text in self.blockers(ledger, turn, idle)]
+            lg = self._gate(ledger, session)
+            seq, role = lg["turn"], lg["role"]
+            blockers = [text for *_, text in self.blockers(ledger, seq, idle, role)]
             _, warnings = self.check(ledger)
             if blockers:
-                raise ResearchError("REFUSED: turn cannot close:\n  " + "\n  ".join(blockers))
+                raise ResearchError("REFUSED: session cannot close:\n  " + "\n  ".join(blockers))
             if idle:
-                self._log(ledger, turn, f"idle: {idle}")
-            self.db.execute("UPDATE rl_ledgers SET open = 0, last_closed = ?, closed_count = closed_count + 1 WHERE id = ?",
-                            (turn, ledger))
-            token = self._seal(ledger)
-        delta = self._column("SELECT msg FROM rl_log WHERE ledger = ? AND turn = ? ORDER BY seq", ledger, turn)
-        out = [f"RECEIPT ledger {ledger} · turn {turn} · token {token} · Δ {len(delta)} · check 0 errors, {len(warnings)} warnings"]
-        out += [f"WARN  {w}" for w in warnings]
+                self._log(ledger, seq, f"idle: {idle}")
+            sessions.close(self.k.g, lg["session"])
+            still = len(sessions.open_sessions(self.k.g, ledger))
+            self.db.execute("UPDATE rl_ledgers SET open = ?, last_closed = max(last_closed, ?), "
+                            "closed_count = closed_count + 1 WHERE id = ?", (1 if still else 0, seq, ledger))
+            self._seal(ledger)
+            self._s = None
+        delta = self._column("SELECT msg FROM rl_log WHERE ledger = ? AND turn = ? ORDER BY seq", ledger, seq)
         changed = set(self._column("SELECT ref FROM rl_turnmarks WHERE ledger = ? AND turn = ? AND kind = 'touched'",
-                                   ledger, turn))
+                                   ledger, seq))
         changed &= set(self._column("SELECT id FROM rl_rows WHERE ledger = ?", ledger))
-        out += [self.render(ledger, only=changed, title=f"rows changed this turn: {len(changed)}")
-                if changed else "(no row changed this turn)",
-                "", f"Δ turn {turn}: " + (" · ".join(delta) if delta else "none"),
-                f"NEXT: first action of the next turn, before anything else, even for a one-word message: "
-                f"research_begin(ledger={ledger!r}, turn={turn + 1})"]
+        out = [f"RECEIPT {ledger} · session {seq} closed · Δ {len(delta)} · check 0 errors, {len(warnings)} warnings"]
+        out += [f"WARN  {w}" for w in warnings]
+        if changed:
+            out += [self.render(ledger, only=changed, title=f"rows changed in this session: {len(changed)}")]
+        out += [f"Δ session {seq}: " + (" · ".join(delta) if delta else "none")]
         return "\n".join(out)
 
     # ── rows ─────────────────────────────────────────────────────────────
 
-    def add(self, ledger: str, token: str | None, sec: str, content: str, origin: str, status: str,
+    def add(self, ledger: str, session: str | None, sec: str, content: str, origin: str, status: str,
             evidence: str = "", dep: str = "", grp: str = "") -> str:
         sec = sec.upper()
         if sec not in SECTIONS:
@@ -641,18 +733,19 @@ class Research:
                 self._open_main_hits(ledger, rid, lg["turn"])
             return rid
 
-        return self._write(ledger, token, fn)
+        return self._write(ledger, session, fn)
 
-    def set(self, ledger: str, token: str | None, rid: str, field: str, value: str) -> str:
+    def set(self, ledger: str, session: str | None, rid: str, field: str, value: str) -> str:
         if rid == "M":
             if field != "content":
                 raise ResearchError("the map M has one field: content (replaced whole)")
 
             def fm(lg):
+                self._claim("map")
                 self.db.execute("UPDATE rl_ledgers SET map = ? WHERE id = ?", (value, ledger))
                 self._log(ledger, lg["turn"], "~M replaced")
                 return "map replaced"
-            return self._write(ledger, token, fm)
+            return self._write(ledger, session, fm)
         if field not in ("content", "origin", "status", "evidence", "dep", "grp"):
             raise ResearchError("field must be one of content, origin, status, evidence, dep, grp")
 
@@ -685,22 +778,22 @@ class Research:
                 if r["sec"] in ("A", "T") and field == "status" and (key(old) == "on") != (key(value) == "on"):
                     hits |= self._main_verdict_hits(ledger)
                 for h in sorted(hits):
-                    self.db.execute("INSERT OR IGNORE INTO rl_pending VALUES (?, ?, ?)", (ledger, rid, h))
+                    self._pend(ledger, rid, h)
                 if hits:
                     msg.append(f"PENDING {rid}: {' '.join(sorted(hits))} — dispose each before research_end")
             elif r["sec"] in ("A", "T") and field == "status" and (key(old) == "on") != (key(value) == "on"):
                 hits = self._main_verdict_hits(ledger)
                 for h in sorted(hits):
-                    self.db.execute("INSERT OR IGNORE INTO rl_pending VALUES (?, ?, ?)", (ledger, rid, h))
+                    self._pend(ledger, rid, h)
                 if hits:
                     msg.append(f"PENDING {rid}: {' '.join(sorted(hits))} — the main line changed; dispose each")
             return "\n".join(msg)
 
-        return self._write(ledger, token, fn)
+        return self._write(ledger, session, fn)
 
     def _open_main_hits(self, ledger: str, rid: str, turn: int) -> None:
         for h in self._main_verdict_hits(ledger):
-            self.db.execute("INSERT OR IGNORE INTO rl_pending VALUES (?, ?, ?)", (ledger, rid, h))
+            self._pend(ledger, rid, h)
 
     def _main_verdict_hits(self, ledger: str) -> set[str]:
         return {f"{c}@main" for c in self._column(
@@ -725,7 +818,7 @@ class Research:
             hits |= self._main_verdict_hits(ledger)
         return hits
 
-    def dispose(self, ledger: str, token: str | None, hit: str, of: str, as_: str, why: str = "") -> str:
+    def dispose(self, ledger: str, session: str | None, hit: str, of: str, as_: str, why: str = "") -> str:
         v = as_.upper()
         if v not in {"VALID", "RECHECK", "INVALID", "UNAFFECTED"}:
             raise ResearchError("as must be VALID, RECHECK, INVALID or UNAFFECTED")
@@ -748,11 +841,11 @@ class Research:
                                         (f"stale({of})", lg["turn"], ledger, claim))
                         more = self._direct_hits(ledger, claim) - {hit}
                         for h in sorted(more):
-                            self.db.execute("INSERT OR IGNORE INTO rl_pending VALUES (?, ?, ?)", (ledger, claim, h))
+                            self._pend(ledger, claim, h)
                         if more:
                             msg.append(f"PENDING {claim}: {' '.join(sorted(more))}")
                 if v == "VALID" and hit not in touched:
-                    raise ResearchError(f"REFUSED: VALID needs the verdict {hit} re-recorded this turn (research_explore verdict)")
+                    raise ResearchError(f"REFUSED: VALID needs the verdict {hit} re-recorded in this session (research_explore verdict)")
             else:
                 r = self._row(ledger, hit)
                 k = key(r["status"])
@@ -764,7 +857,7 @@ class Research:
                     if was_main:  # it left the main line: every main verdict is suspect
                         cells = self._main_verdict_hits(ledger)
                         for h in sorted(cells):
-                            self.db.execute("INSERT OR IGNORE INTO rl_pending VALUES (?, ?, ?)", (ledger, hit, h))
+                            self._pend(ledger, hit, h)
                         if cells:
                             msg.append(f"{hit} left the main line until re-derived; PENDING {hit}: {' '.join(sorted(cells))}")
                     if r["sec"] == "H":  # the claim itself is in doubt: every verdict cell of it is
@@ -774,25 +867,26 @@ class Research:
                             msg.append(f"{hit}: {n} verdict cell(s) marked stale")
                     more = self._direct_hits(ledger, hit)
                     for h in sorted(more):
-                        self.db.execute("INSERT OR IGNORE INTO rl_pending VALUES (?, ?, ?)", (ledger, hit, h))
+                        self._pend(ledger, hit, h)
                     if more:
                         msg.append(f"PENDING {hit}: {' '.join(sorted(more))}")
                 elif v == "INVALID" and k not in INVALIDATING:
                     raise ResearchError(f"REFUSED: set {hit} to false / superseded / refuted first, then dispose INVALID")
                 elif v == "VALID" and hit not in touched:
-                    raise ResearchError(f"REFUSED: VALID needs {hit} re-derived this turn (a new row, or a set), then dispose")
+                    raise ResearchError(f"REFUSED: VALID needs {hit} re-derived in this session (a new row, or a set), then dispose")
             if v == "UNAFFECTED" and not why:
                 raise ResearchError("REFUSED: UNAFFECTED needs a why")
             self.db.execute("DELETE FROM rl_pending WHERE ledger = ? AND hit = ?", (ledger, hit))
+            self.db.execute("DELETE FROM rl_turnmarks WHERE ledger = ? AND kind = 'raised' AND ref = ?", (ledger, hit))
             self._log(ledger, lg["turn"], f"dispose {hit} of {of}: {v}" + (f" ({why})" if why else ""))
             self._touch(ledger, lg["turn"], hit)
             return "\n".join([f"{hit} of {of}: {v}"] + msg)
 
-        return self._write(ledger, token, fn)
+        return self._write(ledger, session, fn)
 
     # ── review: the rules, judged against what happened (card rs-rv) ─────
 
-    def review(self, ledger: str, token: str | None, why: str, rules: list[dict[str, Any]] | None = None) -> str:
+    def review(self, ledger: str, session: str | None, why: str, rules: list[dict[str, Any]] | None = None) -> str:
         """Record a review of the rules on this ledger (`review: <why>` in the log, which resets the
         REVIEW obligation) and propose rule changes. A proposal is a kernel rule written by the model:
         it is evaluated at once on every ledger of the store, its findings shown as warnings (a
@@ -814,7 +908,7 @@ class Research:
 
             g = self.k.g
             self._log(ledger, lg["turn"], f"review: {why.strip()}")
-            out = [f"REVIEW recorded at turn {lg['turn']}: {why.strip()}"]
+            out = [f"REVIEW recorded in session {lg['turn']}: {why.strip()}"]
             if not specs:
                 return "\n".join(out)
             from .kernel import proposals
@@ -840,7 +934,7 @@ class Research:
                        "Push `await adoption of <ids>` @USER.")
             return "\n".join(out)
 
-        return self._write(ledger, token, fn)
+        return self._write(ledger, session, fn)
 
     def proposals(self) -> str:
         """The model's open rule proposals in this store: what each says, the rules it would retire,
@@ -861,7 +955,7 @@ class Research:
                 out.append(f"      retires {old['id']}: " + " ".join(line.strip() for line in old["body"].splitlines()))
         return "\n".join(out)
 
-    def carry(self, ledger: str, token: str | None, uid: str, why: str) -> str:
+    def carry(self, ledger: str, session: str | None, uid: str, why: str) -> str:
         def fn(lg):
             r = self._row(ledger, uid)
             if r["sec"] != "U":
@@ -871,7 +965,7 @@ class Research:
             self.db.execute("INSERT OR REPLACE INTO rl_turnmarks VALUES (?, ?, 'carry', ?, ?)", (ledger, lg["turn"], uid, why))
             self._log(ledger, lg["turn"], f"carry {uid}: {why}")
             return f"carry {uid}: {why}"
-        return self._write(ledger, token, fn)
+        return self._write(ledger, session, fn)
 
     # ── plan objects (K) ─────────────────────────────────────────────────
 
@@ -886,7 +980,7 @@ class Research:
         names = " ".join(c[len(CARD_PREFIX):].upper() for c in cards)
         raise ResearchError(f"REFUSED: unknown page {page!r}; research pages: {names} USER (or any handbook card id)")
 
-    def push(self, ledger: str, token: str | None, do: str, page: str, frm: str, on: str = "", exit: str = "") -> str:
+    def push(self, ledger: str, session: str | None, do: str, page: str, frm: str, on: str = "", exit: str = "") -> str:
         target = self._resolve_page(page)
 
         def fn(lg):
@@ -917,13 +1011,16 @@ class Research:
             self._log(ledger, lg["turn"], f"+{kid} {status}")
             self._touch(ledger, lg["turn"], kid)
             return kid
-        return self._write(ledger, token, fn)
+        return self._write(ledger, session, fn)
 
-    def next(self, ledger: str, token: str | None, kid: str = "") -> str:
+    def next(self, ledger: str, session: str | None, kid: str = "") -> str:
         def fn(lg):
             ks = self._rows(ledger, "K")
-            if any(key(r["status"]) == "running" for r in ks):
-                raise ResearchError("REFUSED: a K is already running; finish it with research_done first")
+            mine = set(self._column("SELECT ref FROM rl_turnmarks WHERE ledger = ? AND turn = ? AND kind = 'runs'",
+                                    ledger, lg["turn"]))
+            busy = [r["id"] for r in ks if key(r["status"]) == "running" and r["id"] in mine]
+            if busy:
+                raise ResearchError(f"REFUSED: this session already runs {busy[0]}; finish it with research_done first")
             pick = [r for r in ks if (r["id"] == kid and key(r["status"]) in {"queued", "blocked"})] if kid else \
                 [r for r in ks if key(r["status"]) == "queued"][:1]
             if not pick:
@@ -935,14 +1032,15 @@ class Research:
             self.db.execute("UPDATE rl_ledgers SET running = ? WHERE id = ?", (r["id"], ledger))
             self._log(ledger, lg["turn"], f"~{r['id']}.status: {r['status']} → running")
             self._touch(ledger, lg["turn"], r["id"])
+            self._mark(ledger, lg["turn"], "runs", r["id"])
             head = f"RUN {r['id']}: {r['content']}  on [{r['dep']}]"
             if page in VIRTUAL_PAGES:
                 return f"{head}\nPAGE {page}: {VIRTUAL_PAGES[page]}"
             from . import render
             return f"{head}\n----- CARD [{page}] -----\n" + render.card(self.hb.get_entry(page), self.hb.neighbors(page))
-        return self._write(ledger, token, fn)
+        return self._write(ledger, session, fn)
 
-    def done(self, ledger: str, token: str | None, kid: str, exit: str) -> str:
+    def done(self, ledger: str, session: str | None, kid: str, exit: str) -> str:
         def fn(lg):
             r = self._row(ledger, kid)
             if key(r["status"]) != "running":
@@ -955,12 +1053,14 @@ class Research:
             st = f"done ({exit} → {' '.join(pushed)})"
             self.db.execute("UPDATE rl_rows SET status = ?, turn_updated = ? WHERE ledger = ? AND id = ?",
                             (st, lg["turn"], ledger, kid))
-            self.db.execute("UPDATE rl_ledgers SET running = NULL WHERE id = ?", (ledger,))
+            self.db.execute("UPDATE rl_ledgers SET running = NULL WHERE id = ? AND running = ?", (ledger, kid))
+            self.db.execute("DELETE FROM rl_turnmarks WHERE ledger = ? AND kind = 'runs' AND ref = ?", (ledger, kid))
+            self._claim(kid)
             self._log(ledger, lg["turn"], f"~{kid}: running → done via {exit} → {' '.join(pushed)}")
             return f"{kid} done via {exit} → {' '.join(pushed)}"
-        return self._write(ledger, token, fn)
+        return self._write(ledger, session, fn)
 
-    def drop(self, ledger: str, token: str | None, kid: str, why: str) -> str:
+    def drop(self, ledger: str, session: str | None, kid: str, why: str) -> str:
         def fn(lg):
             r = self._row(ledger, kid)
             if r["sec"] != "K" or key(r["status"]) not in {"queued", "blocked"}:
@@ -970,9 +1070,11 @@ class Research:
             self.db.execute("UPDATE rl_rows SET status = 'dropped', evidence = ?, turn_updated = ? WHERE ledger = ? AND id = ?",
                             (f"{r['evidence']} · dropped: {why}", lg["turn"], ledger, kid))
             self.db.execute("DELETE FROM rl_pending WHERE ledger = ? AND hit = ?", (ledger, kid))
+            self.db.execute("DELETE FROM rl_turnmarks WHERE ledger = ? AND kind = 'raised' AND ref = ?", (ledger, kid))
+            self._claim(kid)
             self._log(ledger, lg["turn"], f"~{kid}: dropped ({why})")
             return f"{kid} dropped"
-        return self._write(ledger, token, fn)
+        return self._write(ledger, session, fn)
 
     # ── exploration ──────────────────────────────────────────────────────
 
@@ -1008,7 +1110,7 @@ class Research:
                 groups[r["grp"]] = m
         return sorted(dict.fromkeys(members), key=lambda i: (i[0], int(i[1:])))
 
-    def config(self, ledger: str, token: str | None, name: str, spec: str, purpose: str = "") -> str:
+    def config(self, ledger: str, session: str | None, name: str, spec: str, purpose: str = "") -> str:
         name = slugify(name).replace("-", "_")
         if name == "main":
             raise ResearchError("REFUSED: 'main' is the user's line: it is the set of A/T rows that are on. "
@@ -1016,6 +1118,7 @@ class Research:
 
         def fn(lg):
             members = self._resolve_spec(ledger, spec)
+            self._claim(f"config:{name}")
             old = self.db.execute("SELECT members FROM rl_configs WHERE ledger = ? AND name = ?", (ledger, name)).fetchone()
             if old and self._column("SELECT 1 FROM rl_verdicts WHERE ledger = ? AND config = ?", ledger, name):
                 if old[0] != " ".join(members):
@@ -1026,9 +1129,9 @@ class Research:
             model = [m for m in members if self._row(ledger, m)["origin"].lower().startswith("model")]
             note = f"  (explores model premise(s) {' '.join(model)})" if model else ""
             return f"config {name} = {{{', '.join(members)}}}{note}"
-        return self._write(ledger, token, fn)
+        return self._write(ledger, session, fn)
 
-    def verdict(self, ledger: str, token: str | None, claim: str, config: str, verdict: str, evidence: str) -> str:
+    def verdict(self, ledger: str, session: str | None, claim: str, config: str, verdict: str, evidence: str) -> str:
         verdict = key(verdict)
         if verdict not in VERDICTS - {"stale"}:
             raise ResearchError(f"verdict must be one of {sorted(VERDICTS - {'stale'})}")
@@ -1063,11 +1166,11 @@ class Research:
             if old and old[0] in {"true", "false"} and old[0] != verdict:
                 hits = self._direct_hits(ledger, claim)
                 for hh in sorted(hits):
-                    self.db.execute("INSERT OR IGNORE INTO rl_pending VALUES (?, ?, ?)", (ledger, claim, hh))
+                    self._pend(ledger, claim, hh)
                 if hits:
                     msg.append(f"PENDING {claim}: {' '.join(sorted(hits))} — the verdict flipped; dispose each")
             return "\n".join(msg)
-        return self._write(ledger, token, fn)
+        return self._write(ledger, session, fn)
 
     # ── tracing and checking ─────────────────────────────────────────────
 
@@ -1147,7 +1250,7 @@ class Research:
             raise ResearchError(f"no document {did!r}; register it first")
         return dict(d)
 
-    def doc_register(self, ledger: str, token: str | None, label: str, role: str, text: str, owner: str = "") -> str:
+    def doc_register(self, ledger: str, session: str | None, label: str, role: str, text: str, owner: str = "") -> str:
         role = role.lower()
         if role not in {"source", "deliverable", "working"}:
             raise ResearchError("role must be source (the user's original), deliverable (written for the user) "
@@ -1157,6 +1260,7 @@ class Research:
         def fn(lg):
             n = 1 + len(self._column("SELECT id FROM rl_docs WHERE ledger = ?", ledger))
             did = f"D{n}"
+            self._claim(f"doc:{did}")
             sha = hashlib.sha256(text.encode()).hexdigest()
             secs = {}
             if role == "deliverable" and text.strip():
@@ -1170,7 +1274,7 @@ class Research:
                     "deliverable": "readable prose; ids only in section basis comments; plan before every change",
                     "working": "the model's scratch; never handed to the user as the deliverable"}[role]
             return f"{did} registered as {role} ({owner}): {label} — {rule}"
-        return self._write(ledger, token, fn)
+        return self._write(ledger, session, fn)
 
     def _changed_since(self, ledger: str, clock: int) -> set[str]:
         """Rows and claims changed by any device write after the given write clock."""
@@ -1222,9 +1326,9 @@ class Research:
             out.append(f"… and {len(seen) - limit} more")
         return out
 
-    def doc_plan(self, ledger: str, token: str | None, did: str, text: str,
+    def doc_plan(self, ledger: str, session: str | None, did: str, text: str,
                  items: list[dict[str, Any]] | None = None) -> str:
-        """Without items: a read-only draft of the change list. With items: commit it (needs the token)."""
+        """Without items: a read-only draft of the change list. With items: commit it (needs a session)."""
         d = self._doc(ledger, did)
         self._need_text(d, text)
         if d["role"] != "deliverable":
@@ -1263,7 +1367,7 @@ class Research:
                      + ([{"sec": "new:<name>", "op": "add", "rows": unplaced,
                           "why": "not yet in the document; one add item per new section — split, or move rows to omit"}]
                         if unplaced else []))
-            out = [f"PLAN DRAFT for {did} {d['label']} (changes since turn {d['sync_turn']}: {' '.join(sorted(changed)) or 'none'})",
+            out = [f"PLAN DRAFT for {did} {d['label']} (changes since session {d['sync_turn']}: {' '.join(sorted(changed)) or 'none'})",
                    f"  affected sections: {' '.join(affected) or 'none'}",
                    f"  sections citing replaced/stale rows: {' '.join(stale_cite) or 'none'}",
                    f"  rows not in the document: {' '.join(unplaced) or 'none'}",
@@ -1272,7 +1376,7 @@ class Research:
                 out.append(f"  WARNING sections edited since the last sync without a plan: {' '.join(drift)}")
             out += ["", "Decide one op per item — rewrite | extend (sec, rows: new rows into an existing section) | merge (into) | "
                     "add (rows: a new section) | retire | keep (why) | omit (rows, why) —",
-                    "then commit with research_doc(action='plan', items=[…], token=…). Draft:",
+                    "then commit with research_doc(action='plan', items=[…], session=…). Draft:",
                     json.dumps(draft, ensure_ascii=False, indent=1)]
             return "\n".join(out)
 
@@ -1309,16 +1413,20 @@ class Research:
                     problems.append(f"row {u} changed and is not in the document: plan add or omit (with why)")
             if problems:
                 raise ResearchError("REFUSED: plan incomplete:\n  " + "\n  ".join(problems))
+            self._claim(f"doc:{did}")
             self.db.execute("UPDATE rl_docs SET plan = ?, plan_turn = ? WHERE ledger = ? AND id = ?",
                             (json.dumps(items, ensure_ascii=False), lg["turn"], ledger, did))
+            self.db.execute("DELETE FROM rl_turnmarks WHERE ledger = ? AND kind = 'planned' AND ref = ?", (ledger, did))
+            self._mark(ledger, lg["turn"], "planned", did)
             self._log(ledger, lg["turn"], f"plan {did}: {len(items)} item(s)")
             return (f"plan committed for {did}: {len(items)} item(s). Rewrite each planned section whole from the current "
                     "ledger (never append corrections), then research_doc(action='sync').")
-        return self._write(ledger, token, fn)
+        return self._write(ledger, session, fn)
 
-    def doc_sync(self, ledger: str, token: str | None, did: str, text: str) -> str:
+    def doc_sync(self, ledger: str, session: str | None, did: str, text: str) -> str:
         def fn(lg):
             d = self._doc(ledger, did)
+            self._claim(f"doc:{did}")
             if d["role"] != "deliverable":
                 raise ResearchError(f"{did} is {d['role']}; only deliverables are synced")
             self._need_text(d, text)
@@ -1376,13 +1484,14 @@ class Research:
             if problems:
                 raise ResearchError("REFUSED: document does not match its plan:\n  " + "\n  ".join(problems))
             new = {k: {"hash": _h(v["text"]), "basis": v["basis"]} for k, v in secs.items()}
+            self.db.execute("DELETE FROM rl_turnmarks WHERE ledger = ? AND kind = 'planned' AND ref = ?", (ledger, did))
             self.db.execute("UPDATE rl_docs SET sections = ?, sync_turn = ?, sync_clock = ?, plan = NULL, plan_turn = NULL, "
                             "sha = ? WHERE ledger = ? AND id = ?",
                             (json.dumps(new), lg["turn"], self._ledger(ledger)["clock"],
                              hashlib.sha256(text.encode()).hexdigest(), ledger, did))
             self._log(ledger, lg["turn"], f"sync {did}: {len(new)} section(s)")
-            return f"{did} synced at turn {lg['turn']}: {len([k for k in new if k != '_pre'])} section(s), reader lint clean"
-        return self._write(ledger, token, fn)
+            return f"{did} synced in session {lg['turn']}: {len([k for k in new if k != '_pre'])} section(s), reader lint clean"
+        return self._write(ledger, session, fn)
 
     # ── export / import ──────────────────────────────────────────────────
 
@@ -1440,7 +1549,7 @@ class Research:
             raise ResearchError(f"import failed, nothing stored: {e}") from e
         summary = ", ".join(f"{t[3:]} {n}" for t, n in counts.items())
         head = (f"DRY RUN (nothing stored): ledger {lid!r}" if dry_run else f"imported ledger {lid!r}") + \
-               f" at turn {lg['turn']} (last closed {lg['last_closed']}) · {summary}"
+               f" after {lg['turn']} sessions (last closed {lg['last_closed']}) · {summary}"
         return "\n".join([head, f"check: {len(errors)} errors, {len(warnings)} warnings"]
                          + [f"  ERROR {e}" for e in errors[:20]] + [f"  WARN  {w}" for w in warnings[:10]]
                          + ([f"  … {len(errors) + len(warnings) - 30} more"] if len(errors) + len(warnings) > 30 else []))
@@ -1463,10 +1572,14 @@ class Research:
                 self.db.execute(f"UPDATE {t} SET ledger = ? WHERE ledger = ?", (new, ledger))
             self.db.execute("DELETE FROM rl_ledgers WHERE id = ?", (ledger,))
             self._log(new, lg["turn"], f"renamed from {ledger!r}")
+            if self.k is not None:
+                sessions.rescope(self.k.g, ledger, new)
+                self.k.set_meta(f"prompt:{new}", self.k.meta(f"prompt:{ledger}"))
+                self.k.set_meta(f"prompt:{ledger}", None)
             self._seal(new)
             self._sealed(ledger)  # gone: its image is dropped, in the same transaction
         return (f"renamed ledger {ledger!r} → {new!r}"
-                + (f"; turn {lg['turn']} is open: re-read with research_begin(ledger={new!r}, turn={lg['turn']})"
+                + ("; open sessions keep their tokens: research_begin(ledger=" + repr(new) + ", session=…)"
                    if lg["open"] else ""))
 
     def delete(self, ledger: str, confirm: str) -> str:
@@ -1479,8 +1592,11 @@ class Research:
             for t in self.CHILD_TABLES:
                 self.db.execute(f"DELETE FROM {t} WHERE ledger = ?", (ledger,))
             self.db.execute("DELETE FROM rl_ledgers WHERE id = ?", (ledger,))
+            if self.k is not None:
+                sessions.forget_scope(self.k.g, ledger)
+                self.k.set_meta(f"prompt:{ledger}", None)
             self._sealed(ledger)
-        return f"deleted ledger {ledger!r} ({n} rows, last closed turn {lg['last_closed']})"
+        return f"deleted ledger {ledger!r} ({n} rows, last closed session {lg['last_closed']})"
 
 
 def _h(text: str) -> str:
@@ -1495,8 +1611,8 @@ def _h(text: str) -> str:
 # edited as a page by a person.
 
 FOOTER_WHEN = "the chosen exit's objects are pushed"
-FOOTER_TEXT = ("research_done(K, exit). CONTINUE: N1 step 4 (next K) · CLOSE: N1 steps 5–8, "
-               "the reply ends with NEXT · NEXT TURN: N1 step 1")
+FOOTER_TEXT = ("research_done(K, exit). CONTINUE: N1 step 4 (next K) · CLOSE: N1 steps 5–8 "
+               "(research_end, then the reply with the RECEIPT last) · NEXT MESSAGE: N1 step 1")
 PAGE_HEAD = re.compile(r"^# PAGE (\S+) — (.+)$")
 EXIT_RE = re.compile(r"^- \*\*(\w+)\*\*: (.+?) → (.+)$")
 STEP_RE = re.compile(r"^(\d+)\.\s+(.*)$")
