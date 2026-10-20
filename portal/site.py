@@ -1,7 +1,7 @@
 """The site's services: the [[app]] entries of the site file (deploy/site.toml), and what they render.
 
-A service ("app") is a backend the site sign-in fronts: the account portal, refhandbook, WebDAV, and
-whatever comes next. Its entry says where it lives (routes), whom tokens are minted for (audience),
+A service ("app") is a backend the site sign-in fronts: the account portal, refhandbook, and whatever
+comes next. Its entry says where it lives (routes), whom tokens are minted for (audience),
 and how it is shown (title, description, links, menu). portal/deploy.py renders the nginx snippets
 and the landing page from it; the SSO mints tokens for its audiences; the portal's menu shows its apps.
 
@@ -10,8 +10,8 @@ Rules the renderer enforces, so a new entry cannot weaken the site by omission:
     a token minted for that audience alone; a `public` route clears X-Auth-Token, so no backend ever
     receives a token it did not ask nginx for
   - every route path is unique, every limit names a declared zone, ids and audiences are plain names
-  - raw nginx directives (`nginx = "..."`) are allowed for what the schema does not cover (WebDAV),
-    and are copied verbatim: review them like the config they are
+  - raw nginx directives (`nginx = "..."`) are allowed for what the schema does not cover, and are
+    copied verbatim: review them like the config they are
 """
 
 from __future__ import annotations
@@ -49,7 +49,7 @@ class Route:
     body: str = ""
     stream: bool = False
     signin: bool = True  # on 401, send a browser to the sign-in page; False passes the 401 and its
-    #                      WWW-Authenticate through (WebDAV clients answer it with Basic)
+    #                      WWW-Authenticate through (for clients that answer it themselves)
     nginx: str = ""
     note: str = ""
 

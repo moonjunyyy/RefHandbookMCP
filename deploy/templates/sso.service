@@ -17,7 +17,7 @@ LogsDirectoryMode=0700
 Environment=PORTAL_SITE=@@site_file@@
 EnvironmentFile=-/etc/@@unit:sso@@/sso.env
 WorkingDirectory=@@code@@
-# one worker: the sign-in throttle and the WebDAV Basic cache are in memory
+# one worker: the sign-in throttle is in memory
 ExecStart=@@code@@/.venv/bin/uvicorn portal.sso:create_app --factory \
           --host 127.0.0.1 --port @@port:sso@@ --workers 1 --proxy-headers --forwarded-allow-ips 127.0.0.1
 Restart=on-failure

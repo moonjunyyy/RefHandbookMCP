@@ -8,7 +8,13 @@
 #   base_dn = "dc=m00nny,dc=kr"      users_ou = "ou=Users,<base_dn>"   groups_ou = "ou=Groups,<base_dn>"
 #   ldap_uri = "ldaps://ldap.m00nny.kr"   aliases = ["m00nny.kr"]   code = "/opt/m00nny-portal"
 #   ports = { portal = 8080, sso = 8090 }
-# Services are named <name>-<role> (m00nny-portal, m00nny-sso, m00nny-dav-homes): the unit, its
+# TLS: nginx holds the certificate (/etc/letsencrypt/live/<domain>) unless `router` names the
+# TLS-terminating proxy in front (an IP or CIDR, or a list): then nginx serves plain HTTP on
+# `listen` (80) to it alone, takes the client from its X-Forwarded-For, and the installer renders
+# the router's side into /etc/<name>/router/<domain>.conf.
+# Keys only this host should know (`router`, say) go in [site] of site.local.toml beside this file:
+# it is not in the repository, its keys win over these, and it is installed beside this one.
+# Services are named <name>-<role> (m00nny-portal, m00nny-sso): the unit, its
 # user, /etc/<unit>, /var/lib/<unit>, /var/log/<unit>.
 #
 # Strings may use @@placeholders@@: a fact (@@domain@@), a role's unit or upstream
@@ -18,16 +24,13 @@
 # priority = ^~), auth (site: through the sign-in, with a token if the app has an audience | public:
 # no sign-in, any token cleared), upstream (else the app's), limit (login | oauth) and burst, body
 # (client_max_body_size), stream (unbuffered, long timeouts), signin (false: pass a 401 through, for
-# clients that answer it, like WebDAV's Basic), nginx (raw directives), note. App fields: id, title,
+# clients that answer it), nginx (raw directives), note. App fields: id, title,
 # description, audience, upstream, groups (who sees it in the menu; the backend enforces its own
 # access), menu, menu_href, code (an address on the card), card, [[app.link]], [[app.route]].
 
 [site]
 aliases = ["m00nny.kr"]
 portal_root = "/account"
-dav_root = "/data"
-dav_owner = "www-data"
-dav_group = "user"
 
 [[app]]
 id = "account"
@@ -62,27 +65,6 @@ id = "signup"
 title = "계정이 없거나 임시 비밀번호를 받았다면"
 description = "사용 신청은 관리자가 확인한 뒤 계정을 만들고 임시 비밀번호를 전달합니다. 처음 쓸 때 새 비밀번호로 바꿔야 합니다."
 link = [{ label = "사용 신청", href = "@@portal_root@@/request" }, { label = "임시·만료 비밀번호 변경", href = "/auth/expired" }]
-
-[[app]]
-id = "dav"
-title = "파일 (WebDAV)"
-description = "탐색기, Finder, rclone, davfs2 등에서 아래 주소에 사용자명과 Kerberos 비밀번호로 연결합니다."
-code = "https://@@domain@@/dav/<사용자명>/"
-  [[app.route]]
-  path = "/dav/"
-  signin = false
-  note = "the SSO admits only the signed-in user's own /dav/<uid>/"
-  nginx = """
-alias @@dav_root@@/;
-dav_methods PUT DELETE MKCOL COPY MOVE;
-dav_ext_methods PROPFIND OPTIONS LOCK UNLOCK;
-dav_ext_lock zone=@@name@@_dav;
-dav_access user:rw;
-create_full_put_path on;
-client_max_body_size 0;
-client_body_temp_path @@dav_root@@/.upload;
-autoindex off;
-"""
 
 [[app]]
 id = "agents"

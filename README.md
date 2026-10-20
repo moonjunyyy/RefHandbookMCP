@@ -81,7 +81,8 @@ sudo deploy/install.sh             # install or update
 | site name | `example` | `name` |
 | domain | `www.example.org` | `domain` |
 | LDAP | `ldaps://ldap.example.org`, `dc=example,dc=org`, `ou=Users,…`, `ou=Groups,…` | `ldap_uri`, `base_dn`, `users_ou`, `groups_ou` |
-| services | `example-portal` (:8080), `example-sso` (:8090), `example-dav-homes` (timer) | `ports` |
+| services | `example-portal` (:8080), `example-sso` (:8090) | `ports` |
+| TLS | nginx, with `/etc/letsencrypt/live/<domain>` | `router` (and `listen`), below |
 | each service's | system user, `/etc/<unit>`, `/var/lib/<unit>`, `/var/log/<unit>` | |
 | code | `/opt/example-portal` (with its `.venv`) | `code` |
 
@@ -90,8 +91,27 @@ installs `deploy/site.toml` as `/etc/<name>/site.toml`; renders the systemd unit
 snippets, the landing page, and the directory's side (below) from `deploy/templates/`; makes each
 service's env file once with a fresh secret (`/etc/<unit>/{portal,sso}.env`: secrets and local
 overrides only, never overwritten) and the SSO's token key pair; then `nginx -t`, enables and
-restarts the units. A host on the old layout (units `ldap-portal`, `dav-homes`) is moved: the old
-units are removed and their `/etc`, `/var/lib`, `/var/log` carried over to the derived names.
+restarts the units. A host on the old layout (unit `ldap-portal`) is moved: the old unit is removed
+and its `/etc`, `/var/lib`, `/var/log` carried over to the derived names. The WebDAV directory timer
+(`dav-homes`, `<site>-dav-homes`) of earlier versions is stopped and removed; `/data` is left as it is.
+
+### TLS at a router
+
+With a TLS-terminating proxy in front (a router holding a DNS-challenged certificate, say), name it
+in `[site]`: `router = "192.168.0.1"` (an address or CIDR, or a list: the router's address as
+this host sees it, so its inside interface). Keep it out of the repository by putting it in
+`deploy/site.local.toml` (git-ignored; its `[site]` keys win over `site.toml`'s, and it is installed
+beside it). nginx then serves plain HTTP
+on `listen` (80) and:
+- answers only the router (and localhost); anyone else reaching the port directly gets 403;
+- takes the client from the router's `X-Forwarded-For` (`set_real_ip_from`), so the sign-in rate
+  limits and the audit log see clients, not the router;
+- still redirects the aliases to `https://<domain>`, and still sends HSTS.
+
+The apps need nothing else: cookies stay `Secure` (the browser sees https) and the backends are
+told `X-Forwarded-Proto: https`. The installer renders the router's side into
+`/etc/<name>/router/<domain>.conf`: `Host` and `X-Forwarded-For` passed on, the site's 4m body
+limit, and no buffering with long timeouts for `/mcp`'s streamed answers.
 
 It ends with what only an admin can do, as exact commands for this site: the keytabs it could not
 find, and where the rendered directory files are.
@@ -182,7 +202,6 @@ The site runs behind one nginx server with one Kerberos sign-in:
 | `/` | landing page (generated from the site file) | public |
 | `/auth/` | site sign-in, `portal/sso.py` on :8090 | public (rate-limited) |
 | `/account/` | this portal on :8080 with `PORTAL_AUTH=sso`; `/account/request` stays public | `auth_request` + token |
-| `/dav/<uid>/` | WebDAV on `/data/<uid>` (nginx `dav` + `dav_ext`, LOCK included) | `auth_request` |
 | `/agents` | refhandbook's approval page | `auth_request` + token |
 | `/mcp`, `/authorize`, `/token`, `/register`, `/revoke`, `/login`, `/.well-known/oauth-*` | refhandbook with `RHB_AUTH=sso` | its own OAuth; `/login` via `auth_request` + token |
 
@@ -205,24 +224,14 @@ How it fits together:
   that backend only, valid one minute (`portal/tokens.py`). Backends hold the public key alone, so a
   local user who reaches :8080 or :8765 directly cannot forge one, and a token for one backend is
   refused by the other.
-- WebDAV clients cannot do cookie sign-ins, so `/dav/` takes Basic with the Kerberos password over
-  TLS; a verified pair is cached (salted hash, 5 minutes) so the KDC is not asked on every request.
-  The SSO admits only the user's own `/dav/<uid>/`, for the path and for a MOVE/COPY
-  `Destination`; `..` and encoded tricks are refused.
 - refhandbook keeps its OAuth (Claude needs the metadata, registration, PKCE and `/token`); only
   its sign-in step is replaced: signed in to the site, `/login` just asks "allow Claude as <uid>?".
 - The SSO runs as its own user with only the `HTTP/<domain>` keytab and the signing key; the
   portal's kadmin keytab never meets the most exposed process.
 
-**Files on `/dav`.** nginx writes as `www-data`, so every file under `/data/<uid>` belongs to
-`www-data` (0700 directories, 0600 files) and the separation between users is the SSO's path check,
-not Unix ownership. If the same files must also be the user's own over SSH or NFS, nginx cannot do
-that; a per-user WebDAV server would be needed instead.
-
 It is all installed by `sudo deploy/install.sh` (Setup, above).
 
-Check: `/account/` while signed out redirects to `/auth/login`; `curl -u <uid> -X PROPFIND -H 'Depth: 1'
-https://<domain>/dav/<uid>/` answers 207, and the same for someone else's directory 403.
+Check: `/account/` while signed out redirects to `/auth/login`.
 
 ## Not included (on purpose)
 
@@ -230,7 +239,6 @@ https://<domain>/dav/<uid>/` answers 207, and the same for someone else's direct
   and inherit the old user's files. Delete by hand: `kadmin delprinc`, then `ldapdelete`.
 - **Self-registration.** Anyone on the network could create accounts. Requests wait for an admin instead.
 - **Sending email.** The portal never mails one-time passwords; the admin passes them on.
-- **SPNEGO (Negotiate) for WebDAV.** It would spare clients the password, but nginx needs an extra
-  module and few WebDAV clients speak it; Basic over TLS with a short cache is used instead.
+- **File sharing.** WebDAV was here once; files are shared over SMB instead, outside this site.
 - **2FA for admin actions.** Recommended: put the portal behind an SSO with MFA, or require
   Kerberos OTP/PKINIT for members of `admin`.

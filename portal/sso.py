@@ -3,24 +3,16 @@
 One Kerberos sign-in page (/auth/login) sets a site cookie; /auth/check answers nginx for every
 protected location:
 
-- a browser with the cookie                      -> 200
-- a WebDAV client with Basic <uid>:<Kerberos pw> -> 200 (the check is cached briefly)
+- a browser with the cookie -> 200
 - a 200 carries X-Remote-User (for logs) and, when nginx names the backend in X-Auth-Audience,
   X-Auth-Token: a one-minute EdDSA token for that backend (portal/tokens.py). Backends trust only
   the token, never a bare user header.
-- under /dav/, the path (and a MOVE/COPY Destination) must be the user's own /dav/<uid>/, else 403
-- nothing valid -> 401; under /dav/ with `WWW-Authenticate: Basic`, elsewhere nginx redirects to
-  /auth/login?next=...
+- nothing valid -> 401; nginx redirects to /auth/login?next=...
 
 This process holds only the HTTP service keytab (to prove the KDC is genuine), never the portal's
 kadmin keytab: it is the most exposed piece, so it gets the least. Run it as its own user.
 """
-import hashlib
-import posixpath
-import secrets
-import threading
 import time
-from base64 import b64decode
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
@@ -33,7 +25,6 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from . import audit, tokens, validators
 from .config import Settings
-from .facts import facts
 from .kerberos import Kerberos, KerberosError, LoginResult
 from .security import SecurityHeadersMiddleware, Throttle, csrf_ok, csrf_token
 from .validators import ValidationError
@@ -59,61 +50,14 @@ def next_from_query(query: str) -> str:
     return safe_next(unquote(query[i + 6:])) if i >= 0 else "/"
 
 
-def dav_owner(path: str, prefix: str) -> str | None:
-    """The uid a /dav/<uid>/... path belongs to; None for /dav itself, traversal, or bad names."""
-    path = unquote(path)
-    if "\x00" in path:
-        return None
-    norm = posixpath.normpath(path)
-    if norm != path.rstrip("/") and norm + "/" != path:
-        return None  # "..", "//", "/./" and the like: refuse rather than guess what nginx maps
-    rest = norm[len(prefix):] if norm == prefix or norm.startswith(prefix + "/") else None
-    if not rest:
-        return None
-    uid = rest.lstrip("/").split("/", 1)[0]
-    try:
-        return validators.uid(uid)
-    except ValidationError:
-        return None
-
-
-class BasicCache:
-    """Recently verified (uid, password) pairs, so WebDAV's Basic-on-every-request does not ask the
-    KDC each time. Holds salted hashes only; a disabled account keeps working for at most `ttl`."""
-
-    def __init__(self, ttl: int):
-        self.ttl = ttl
-        self._salt = secrets.token_bytes(16)
-        self._ok: dict[str, float] = {}
-        self._lock = threading.Lock()
-
-    def _key(self, uid: str, password: str) -> str:
-        return hashlib.sha256(self._salt + uid.encode() + b"\0" + password.encode()).hexdigest()
-
-    def hit(self, uid: str, password: str) -> bool:
-        now = time.monotonic()
-        with self._lock:
-            exp = self._ok.get(self._key(uid, password))
-            return exp is not None and exp > now
-
-    def add(self, uid: str, password: str) -> None:
-        now = time.monotonic()
-        with self._lock:
-            if len(self._ok) > 10000:
-                self._ok = {k: v for k, v in self._ok.items() if v > now}
-            self._ok[self._key(uid, password)] = now + self.ttl
-
-
 def create_app(settings: Settings | None = None, kerberos=None, signing_key=None) -> FastAPI:
     s = settings or Settings()
     audiences = s.audiences()  # apps.toml is read at start: a bad file stops the SSO, not a request
-    basic_realm = facts().name
     if len(s.sso_secret) < 32:
         raise RuntimeError("PORTAL_SSO_SECRET must be set to at least 32 random characters.")
     kerberos = kerberos or Kerberos(s)
     signing_key = signing_key or tokens.load_private_key(s.sso_signing_key_file)
     throttle = Throttle()
-    cache = BasicCache(s.basic_cache_seconds)
     audit.setup(s.audit_log)
 
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
@@ -166,44 +110,11 @@ def create_app(settings: Settings | None = None, kerberos=None, signing_key=None
 
     # ---- nginx auth_request ------------------------------------------------------------------
 
-    def basic_credentials(request: Request) -> tuple[str, str] | None:
-        h = request.headers.get("authorization", "")
-        if not h.lower().startswith("basic "):
-            return None
-        try:
-            raw = b64decode(h[6:].strip(), validate=True).decode("utf-8")
-        except (ValueError, UnicodeDecodeError):
-            return None
-        user, sep, password = raw.partition(":")
-        return (user.strip().lower(), password) if sep else None
-
     @app.get("/auth/check")
     async def check(request: Request):
-        uri = request.headers.get("x-original-uri", "").split("?", 1)[0]  # nginx sends $request_uri
-        is_dav = uri == s.dav_prefix or uri.startswith(s.dav_prefix + "/")
         uid = session_user(request)
         if uid is None:
-            creds = basic_credentials(request)
-            if creds is not None:
-                user, password = creds
-                if cache.hit(user, password):
-                    uid = user
-                else:
-                    uid, result = await run_in_threadpool(verify, user, password, ip(request))
-                    if uid:
-                        cache.add(uid, password)
-                        audit.record(uid, "basic_login", None, True, ip(request))
-                    else:
-                        audit.record(user, "basic_login", None, False, ip(request), result.value)
-        if uid is None:
-            headers = {"WWW-Authenticate": f'Basic realm="{basic_realm}", charset="UTF-8"'} if is_dav else {}
-            return Response(status_code=401, headers=headers)
-        if is_dav:
-            if dav_owner(uri, s.dav_prefix) != uid:
-                return Response(status_code=403)
-            dest = request.headers.get("x-original-destination", "")
-            if dest and dav_owner(urlsplit(dest).path, s.dav_prefix) != uid:
-                return Response(status_code=403)
+            return Response(status_code=401)
         headers = {"X-Remote-User": uid}
         aud = request.headers.get("x-auth-audience", "")
         if aud:

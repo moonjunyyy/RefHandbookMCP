@@ -4,10 +4,10 @@ from pathlib import Path
 
 import pytest
 
+from conftest import SITE
 from portal import site
 from portal.facts import facts
 
-SITE = Path(__file__).parent.parent / "deploy" / "site.toml"
 
 
 def load():
@@ -17,7 +17,7 @@ def load():
 def test_the_shipped_file_declares_the_site():
     s = load()
     assert s.audiences == ("account", "refhandbook")
-    assert {a.id for a in s.apps} >= {"account", "dav", "agents", "refhandbook"}
+    assert {a.id for a in s.apps} >= {"account", "agents", "refhandbook"}
 
 
 def test_only_the_routes_minted_for_receive_a_token():
@@ -33,9 +33,6 @@ def test_only_the_routes_minted_for_receive_a_token():
     for public in ("location = /account/request", "location /mcp", "location ^~ /.well-known/oauth-",
                    "location ~ ^/(register|authorize|token|revoke)$"):
         assert 'proxy_set_header X-Auth-Token "";' in block(public) and "auth_request" not in block(public)
-    dav = block("location /dav/")
-    assert "auth_request /_auth;" in dav and "@signin" not in dav and "X-Auth-Token" not in dav
-    assert "dav_ext_lock zone=m00nny_dav;" in dav and "alias /data/;" in dav
     assert "proxy_buffering off;" in block("location /mcp")
     m = site.render_map(load(), "m00nny")
     assert "~^/agents(/|\\?|$)" in m and "~^/login(\\?|$)" in m and "zone=m00nny_login" in m
@@ -43,9 +40,9 @@ def test_only_the_routes_minted_for_receive_a_token():
 
 def test_the_landing_page_has_a_card_per_app():
     page = site.render_index(load(), "m00nny")
-    for title in ("계정", "파일 (WebDAV)", "에이전트 · 샌드박스", "핸드북 (Claude MCP)"):
+    for title in ("계정", "에이전트 · 샌드박스", "핸드북 (Claude MCP)"):
         assert f"<h2>{title}</h2>" in page
-    assert "https://www.m00nny.kr/dav/&lt;사용자명&gt;/" in page  # derived domain, escaped
+    assert "<code>https://www.m00nny.kr/mcp</code>" in page  # the derived domain
 
 
 @pytest.mark.parametrize("bad, message", [

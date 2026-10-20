@@ -10,7 +10,7 @@ from portal import tokens
 from portal.config import Settings
 from portal.main import create_app as create_portal
 from portal.requests import RequestStore
-from portal.sso import create_app, dav_owner, next_from_query, safe_next
+from portal.sso import create_app, next_from_query, safe_next
 from test_app import FakeDirectory, FakeKAdmin, FakeKerberos
 
 ISS = "https://www.m00nny.kr"
@@ -74,7 +74,7 @@ def test_cookie_sign_in_and_token(sso, key):
     with pytest.raises(tokens.TokenError):  # minted for the portal, refused by the handbook
         tokens.verify(pub, r.headers["x-auth-token"], ISS, "refhandbook")
     assert check(c, "/x", **{"X-Auth-Audience": "nope"}).status_code == 500  # unknown audience: fail closed
-    assert "x-auth-token" not in check(c, "/dav/alice/").headers
+    assert "x-auth-token" not in check(c, "/x").headers  # no audience named, no token
 
 
 def test_wrong_password_expired_and_logout(sso):
@@ -93,47 +93,20 @@ def test_wrong_password_expired_and_logout(sso):
     assert check(c, "/account/").status_code == 401
 
 
-def test_dav_basic_ownership_and_cache(sso):
+def test_basic_is_not_a_sign_in(sso):
+    """Only the site cookie signs in: a password in a Basic header is never checked."""
     s, k, app = sso
-    c = TestClient(app)
-    r = check(c, "/dav/alice/notes.txt")
-    assert r.status_code == 401 and r.headers["www-authenticate"].startswith("Basic")
-    assert check(c, "/dav/alice/notes.txt", **basic("alice", "wrong")).status_code == 401
-    ok = basic("alice", "alice-password-1")
-    assert check(c, "/dav/alice/notes.txt", **ok).status_code == 200
-    calls = k.calls
-    for _ in range(5):
-        assert check(c, "/dav/alice/", **ok).status_code == 200
-    assert k.calls == calls  # cached: the KDC is asked once
-    assert check(c, "/dav/moon/notes.txt", **ok).status_code == 403  # someone else's directory
-    assert check(c, "/dav/", **ok).status_code == 403
-    assert check(c, "/dav/alice/x?y=/dav/moon", **ok).status_code == 200  # the query is not the path
-    assert check(c, "/dav/alice/../moon/x", **ok).status_code == 403
-    assert check(c, "/dav/alice/%2e%2e/moon/x", **ok).status_code == 403
-    # MOVE/COPY into another user's directory
-    assert check(c, "/dav/alice/a", **ok, **{"X-Original-Destination": "https://www.m00nny.kr/dav/moon/a"}).status_code == 403
-    assert check(c, "/dav/alice/a", **ok, **{"X-Original-Destination": "https://www.m00nny.kr/dav/alice/b"}).status_code == 200
+    r = check(TestClient(app), "/account/", **basic("alice", "alice-password-1"))
+    assert r.status_code == 401 and "www-authenticate" not in r.headers and k.calls == 0
 
 
-def test_basic_failures_are_throttled(sso):
-    s, k, app = sso
-    c = TestClient(app)
-    for _ in range(5):
-        check(c, "/dav/alice/", **basic("alice", "wrong"))
-    assert check(c, "/dav/alice/", **basic("alice", "alice-password-1")).status_code == 401
-
-
-def test_next_and_dav_owner_helpers():
+def test_next_helpers():
     for bad in ("//evil.example/", "https://evil.example/", "/\\evil", "javascript:alert(1)", "", "/a\nb"):
         assert safe_next(bad) == "/"
     assert safe_next("/account/users?q=a") == "/account/users?q=a"
     assert next_from_query("next=/login?req=abc&x=1") == "/login?req=abc&x=1"
     assert next_from_query("next=//evil.example") == "/"
     assert next_from_query("switch=1&next=/login?req=abc") == "/login?req=abc"
-    assert dav_owner("/dav/alice", "/dav") == "alice"
-    assert dav_owner("/dav/alice/a/b", "/dav") == "alice"
-    assert dav_owner("/dav", "/dav") is None and dav_owner("/davx/alice", "/dav") is None
-    assert dav_owner("/dav/Alice/", "/dav") is None and dav_owner("/dav//alice", "/dav") is None
 
 
 def test_portal_behind_sso(tmp_path, key):

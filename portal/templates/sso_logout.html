@@ -5,7 +5,7 @@
   <h1>로그아웃</h1>
   {% if current %}
   <p>사이트 전체(계정, 핸드북 연결 화면)에서 <code>{{ current }}</code> 로그인을 끝냅니다.
-     이미 연결된 Claude 커넥터와 WebDAV 클라이언트는 그대로 유지됩니다.</p>
+     이미 연결된 Claude 커넥터는 그대로 유지됩니다.</p>
   <form method="post" action="/auth/logout">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <button>로그아웃</button>

@@ -6,9 +6,12 @@ rendered from deploy/templates: nothing on the host is named by hand. Run it aga
 
     users      <name>-portal, <name>-sso (system users, no shell)
     code       the repository copied to <code> (default /opt/<name>-portal), its virtualenv in .venv
-    site file  /etc/<name>/site.toml (the one the services read: PORTAL_SITE)
-    units      <name>-portal, <name>-sso, <name>-dav-homes (.service, .timer) in /etc/systemd/system
-    nginx      sites-available/<domain>.conf (enabled), snippets/<name>-{proxy,apps,apps-map}.conf
+    site file  /etc/<name>/site.toml (the one the services read: PORTAL_SITE), and site.local.toml
+               beside it when the site file has one (the host's own keys, kept out of the repository)
+    units      <name>-portal, <name>-sso in /etc/systemd/system
+    nginx      sites-available/<domain>.conf (enabled), snippets/<name>-{proxy,apps,apps-map}.conf;
+               with a `router` in [site], plain HTTP for it, and /etc/<name>/router/<domain>.conf:
+               the router's side, for its admin to merge
     landing    <webroot>/index.html (/var/www/<name>)
     directory  /etc/<name>/directory/{kadm5.acl,slapd-acl.ldif}: the KDC's and slapd's side, rendered with
                this site's realm, DNs and current admins, for the directory's admin to merge
@@ -17,8 +20,9 @@ rendered from deploy/templates: nothing on the host is named by hand. Run it aga
     then       nginx -t, daemon-reload, enable, restart; and a list of what only an admin can do
                (the Kerberos keytabs), with the exact commands
 
-A host that ran an older layout (units named ldap-portal and dav-homes) is moved to the derived
-names: the old units are stopped and removed, and their /etc, /var/lib and /var/log are carried over.
+A host that ran an older layout (a unit named ldap-portal) is moved to the derived names: the old
+unit is stopped and removed, and its /etc, /var/lib and /var/log are carried over. Units of services
+the site no longer has (the WebDAV directory timer) are stopped and removed.
 
 Standard library only: it runs before the virtualenv exists.
 """
@@ -37,13 +41,15 @@ from collections.abc import Callable
 from pathlib import Path
 
 from . import site as site_mod
-from .facts import Facts, facts
+from .facts import Facts, facts, local_file
 
 REPO = Path(__file__).resolve().parents[1]
 TEMPLATES = REPO / "deploy" / "templates"
 SERVICES = ("portal", "sso")  # roles that run as their own user
 # What earlier versions installed, by role: the one list of old names, for the move to derived ones.
-LEGACY = {"portal": "ldap-portal", "dav-homes": "dav-homes"}
+LEGACY = {"portal": "ldap-portal"}
+# Units of services the site no longer runs ({unit} = a derived name): stopped and removed.
+RETIRED = ("dav-homes.service", "dav-homes.timer", "{name}-dav-homes.service", "{name}-dav-homes.timer")
 SKIP = {".git", ".venv", "__pycache__", ".pytest_cache", "ldap_portal.egg-info"}
 
 Run = Callable[[list[str]], int]
@@ -62,8 +68,7 @@ def rendered(f: Facts, site_file: Path) -> dict[str, tuple[str, int]]:
     site = site_mod.load(site_file, f)
     extra = {"generated": f"Generated from {f.site_file} by portal/deploy.py: edit that and rerun the installer.",
              "aliases_sp": "".join(f" {a}" for a in f.aliases),
-             "portal_root": f.extra.get("portal_root", "/account"), "dav_root": f.extra.get("dav_root", "/data"),
-             "dav_owner": f.extra.get("dav_owner", "www-data"), "dav_group": f.extra.get("dav_group", "user")}
+             "portal_root": f.extra.get("portal_root", "/account"), "port": str(f.listen)} | _front(f)
     admin_group = os.environ.get("PORTAL_ADMIN_GROUP", "admin")
     admins = _admins(admin_group)
     extra |= {"admin_group": admin_group,
@@ -80,19 +85,44 @@ def rendered(f: Facts, site_file: Path) -> dict[str, tuple[str, int]]:
     out = {
         f"/etc/systemd/system/{f.unit('portal')}.service": (t("portal.service"), 0o644),
         f"/etc/systemd/system/{f.unit('sso')}.service": (t("sso.service"), 0o644),
-        f"/etc/systemd/system/{f.unit('dav-homes')}.service": (t("dav-homes.service"), 0o644),
-        f"/etc/systemd/system/{f.unit('dav-homes')}.timer": (t("dav-homes.timer"), 0o644),
         f"/etc/nginx/sites-available/{f.domain}.conf": (t("site.conf"), 0o644),
         f"/etc/nginx/snippets/{f.name}-proxy.conf": (t("proxy.conf"), 0o644),
         f"/etc/nginx/snippets/{f.name}-apps-map.conf": (site_mod.render_map(site, f.name), 0o644),
         f"/etc/nginx/snippets/{f.name}-apps.conf": (site_mod.render_locations(site, f.name), 0o644),
         f"{f.webroot}/index.html": (site_mod.render_index(site, f.name), 0o644),
         f.site_file: (site_file.read_text(), 0o644),
+        **({str(local_file(f.site_file)): (local_file(site_file).read_text(), 0o644)}
+           if local_file(site_file).exists() else {}),
         # the directory's side, applied by its admin on the KDC and the LDAP server (printed at the end)
         f"/etc/{f.name}/directory/kadm5.acl": (t("kadm5.acl"), 0o644),
         f"/etc/{f.name}/directory/slapd-acl.ldif": (t("slapd-acl.ldif"), 0o644),
     }
+    if f.router:
+        out[f"/etc/{f.name}/router/{f.domain}.conf"] = (t("router.conf"), 0o644)
     return out
+
+
+def _front(f: Facts) -> dict[str, str]:
+    """What differs between nginx holding the certificate and a router in front that does: the
+    http-level lines before the site's server block (`front`) and its listen lines (`listen`)."""
+    if not f.router:
+        return {"front": f"server {{\n    listen 80;\n    server_name {f.domain}{''.join(f' {a}' for a in f.aliases)};\n"
+                         f"    return 301 https://{f.domain}$request_uri;\n}}\n",
+                "listen": f"    listen 443 ssl;\n    http2 on;\n"
+                          f"    ssl_certificate     /etc/letsencrypt/live/{f.domain}/fullchain.pem;\n"
+                          f"    ssl_certificate_key /etc/letsencrypt/live/{f.domain}/privkey.pem;\n"
+                          f"    ssl_protocols TLSv1.2 TLSv1.3;"}
+    var = f"${f.name.replace('-', '_')}_via_router"
+    front = [f"# TLS ends at the router ({', '.join(f.router)}): it alone may connect, and the client is",
+             "# the address it puts in X-Forwarded-For (the limits and the audit log key on it).",
+             f"geo $realip_remote_addr {var} {{", "    default 0;", "    127.0.0.1 1;", "    ::1 1;",
+             *[f"    {net} 1;" for net in f.router], "}"]
+    if f.aliases:
+        front += ["server {", f"    listen {f.listen};", f"    server_name {' '.join(f.aliases)};",
+                  f"    return 301 https://{f.domain}$request_uri;", "}"]
+    listen = [f"    listen {f.listen};", *[f"    set_real_ip_from {net};" for net in f.router],
+              "    real_ip_header X-Forwarded-For;", f"    if ({var} = 0) {{ return 403; }}"]
+    return {"front": "\n".join(front) + "\n", "listen": "\n".join(listen)}
 
 
 def _admins(group: str) -> list[str]:
@@ -162,8 +192,14 @@ def _sync_code(src: Path, dst: Path) -> None:
 
 
 def _migrate(f: Facts, root: Path, sh: Run, notes: list[str]) -> None:
-    """Move a host from the old fixed names to the derived ones."""
+    """Move a host from the old fixed names to the derived ones, and retire what the site dropped."""
     units = root / "etc/systemd/system"
+    for name in RETIRED:
+        u = units / name.format(name=f.name)
+        if u.exists():
+            sh(["systemctl", "disable", "--now", u.name])
+            u.unlink()
+            notes.append(f"unit {u.name} removed (the site no longer serves WebDAV; its files stay where they are)")
     for role, old in LEGACY.items():
         new = f.unit(role)
         if old == new:
@@ -271,6 +307,8 @@ def install(site_file: Path, root: Path = Path("/"), sh: Run = _run, src: Path =
               "and a C compiler, then rerun", file=sys.stderr)
         return 1
     write_rendered(rendered(f, site_file), root)
+    if not local_file(site_file).exists():  # dropped from the source: the installed copy goes too
+        (root / str(local_file(f.site_file)).lstrip("/")).unlink(missing_ok=True)
     enabled = root / "etc/nginx/sites-enabled" / f"{f.domain}.conf"
     enabled.parent.mkdir(parents=True, exist_ok=True)
     if not enabled.is_symlink():
@@ -280,7 +318,7 @@ def install(site_file: Path, root: Path = Path("/"), sh: Run = _run, src: Path =
     if shutil.which("nginx") and sh(["nginx", "-t"]) != 0:
         print("nginx -t failed: nothing restarted", file=sys.stderr)
         return 1
-    units = [f"{f.unit('portal')}.service", f"{f.unit('sso')}.service", f"{f.unit('dav-homes')}.timer"]
+    units = [f"{f.unit('portal')}.service", f"{f.unit('sso')}.service"]
     sh(["systemctl", "daemon-reload"])
     sh(["systemctl", "enable", *units])
     sh(["systemctl", "restart", *units])
@@ -290,6 +328,9 @@ def install(site_file: Path, root: Path = Path("/"), sh: Run = _run, src: Path =
     print(f"\nThe directory's side, for its admin to merge (on the KDC, and the LDAP server):\n"
           f"  /etc/{f.name}/directory/kadm5.acl       into /etc/krb5kdc/kadm5.acl, then restart krb5-admin-server\n"
           f"  /etc/{f.name}/directory/slapd-acl.ldif  merge with the current olcAccess (instructions inside)")
+    if f.router:
+        print(f"\nThe router's side, for its admin to merge (TLS ends there; this host serves plain HTTP on "
+              f":{f.listen} to {', '.join(f.router)} only):\n  /etc/{f.name}/router/{f.domain}.conf")
     todo = _keytabs(f, root)
     if todo:
         print("\nOnly an admin can do these (then: systemctl restart "
@@ -309,7 +350,9 @@ def main(argv: list[str] | None = None) -> int:
         for k in ("realm", "name", "domain", "base_dn", "users_ou", "groups_ou", "ldap_uri", "issuer", "http_service",
                   "code"):
             print(f"{k:13} {getattr(f, k)}")
-        for role in ("portal", "sso", "dav-homes"):
+        print(f"{'tls':13} " + (f"at the router ({', '.join(f.router)}), plain HTTP on :{f.listen}" if f.router
+                                 else f"nginx (/etc/letsencrypt/live/{f.domain})"))
+        for role in ("portal", "sso"):
             print(f"{'unit':13} {f.unit(role)}")
         for app in site_mod.load(site_file, f).apps:
             print(f"{'app':13} {app.id} ({app.audience or '-'}, {len(app.routes)} routes)")

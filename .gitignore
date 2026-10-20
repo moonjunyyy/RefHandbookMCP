@@ -3,3 +3,5 @@ __pycache__/
 *.egg-info/
 .venv/
 .pytest_cache/
+# host-specific [site] keys (portal/facts.py: local_file)
+deploy/site.local.toml

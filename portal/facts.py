@@ -1,8 +1,9 @@
 """Every fact about the site, derived from as little as possible.
 
 One fact is the system's own: the Kerberos realm, from krb5.conf's `default_realm`. Everything else
-derives from it, unless the site file ([site] in site.toml) or the environment (PORTAL_*) says
-otherwise, in that order of precedence: environment, site file, derivation.
+derives from it, unless the site file ([site] in site.toml, then in site.local.toml beside it) or
+the environment (PORTAL_*) says otherwise, in that order of precedence: environment, site file,
+derivation.
 
     realm         M00NNY.KR               krb5.conf [libdefaults] default_realm
     name          m00nny                  the realm's first label, lowercased
@@ -14,17 +15,20 @@ otherwise, in that order of precedence: environment, site file, derivation.
     issuer        https://<domain>
     http_service  HTTP@<domain>
     code          /opt/<name>-portal      the installed code and its virtualenv
+    router        (none)                  a TLS-terminating proxy in front (IP or CIDR, or a list of
+                                          them): nginx then serves plain HTTP on `listen` (80) to it
 
 Each service is named after the site and its role, and that name is everything systemd keys on:
 the unit, its system user, /etc/<unit>, /var/lib/<unit> and /var/log/<unit>.
 
-    portal  <name>-portal   :8080        sso  <name>-sso   :8090        dav  <name>-dav-homes
+    portal  <name>-portal   :8080        sso  <name>-sso   :8090
 
 Standard library only: the installer reads these before any virtualenv exists.
 """
 
 from __future__ import annotations
 
+import ipaddress
 import os
 import re
 import tomllib
@@ -33,9 +37,9 @@ from functools import cache
 from pathlib import Path
 
 KRB5_CONF = os.environ.get("KRB5_CONFIG", "/etc/krb5.conf").split(":")[0]
-ROLES = {"portal": 8080, "sso": 8090, "dav-homes": 0}
+ROLES = {"portal": 8080, "sso": 8090}
 USED = {"realm", "name", "base_dn", "domain", "users_ou", "groups_ou", "ldap_uri", "sso_issuer", "http_service",
-        "code", "ports", "aliases"}
+        "code", "ports", "aliases", "router", "listen"}
 
 
 class FactError(ValueError):
@@ -73,7 +77,9 @@ class Facts:
     http_service: str
     code: str
     ports: dict
-    extra: dict  # the other string keys of [site] (portal_root, dav_root, …): placeholders and options
+    extra: dict  # the other string keys of [site] (portal_root, …): placeholders and options
+    router: tuple[str, ...] = ()  # TLS ends there; empty = nginx holds the certificate itself
+    listen: int = 80  # the plain-HTTP port the router connects to
 
     def unit(self, role: str) -> str:
         return f"{self.name}-{role}"
@@ -121,13 +127,23 @@ class Facts:
         return re.sub(r"@@([a-z_]+(?::[a-z-]+)?)@@", one, text)
 
 
+def local_file(site_file: str | Path) -> Path:
+    """The host's own [site] keys beside the site file (site.toml -> site.local.toml), kept out of
+    the repository: addresses and the like. Its keys win over the site file's."""
+    p = Path(site_file)
+    return p.with_name(f"{p.stem}.local{p.suffix}")
+
+
 def _site_section(site_file: str | None) -> dict:
     if not site_file:
         return {}
-    try:
-        return tomllib.loads(Path(site_file).read_text()).get("site", {})
-    except FileNotFoundError:
-        return {}
+    given = {}
+    for p in (Path(site_file), local_file(site_file)):
+        try:
+            given |= tomllib.loads(p.read_text()).get("site", {})
+        except FileNotFoundError:
+            pass
+    return given
 
 
 @cache
@@ -149,6 +165,13 @@ def facts(site_file: str | None = None) -> Facts:
         raise FactError(f"site name {name!r}: lowercase letters, digits and - (it names units and users)")
     base_dn = get("base_dn", ",".join(f"dc={x}" for x in labels))
     domain = get("domain", f"www.{lower}")
+    router = given.get("router") or ()
+    router = (router,) if isinstance(router, str) else tuple(router)
+    for net in router:
+        try:
+            ipaddress.ip_network(net, strict=False)
+        except ValueError:
+            raise FactError(f"router {net!r}: an IP address or a CIDR") from None
     ports = dict(ROLES)
     for role, port in (given.get("ports") or {}).items():
         ports[role] = int(port)
@@ -158,7 +181,8 @@ def facts(site_file: str | None = None) -> Facts:
         groups_ou=get("groups_ou", f"ou=Groups,{base_dn}"), ldap_uri=get("ldap_uri", f"ldaps://ldap.{lower}"),
         issuer=get("sso_issuer", f"https://{domain}"), http_service=get("http_service", f"HTTP@{domain}"),
         code=given.get("code") or f"/opt/{name}-portal", ports=ports,
-        extra={k: v for k, v in given.items() if isinstance(v, str) and k not in USED})
+        extra={k: v for k, v in given.items() if isinstance(v, str) and k not in USED},
+        router=router, listen=int(given.get("listen", 80)))
 
 
 def running_dir(kind: str, fallback: str) -> str:

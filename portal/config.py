@@ -104,7 +104,7 @@ class Settings:
     # with a menu label, and the SSO mints tokens for their audiences too. "" = no apps.
     site_file: str = field(default_factory=lambda: _env("SITE", ""))
 
-    # SSO service (portal/sso.py): one sign-in for the site, a cookie for browsers, Basic for WebDAV.
+    # SSO service (portal/sso.py): one sign-in for the site, a cookie for browsers.
     sso_secret: str = field(default_factory=lambda: _secret("SSO_SECRET"))  # signs the SSO cookie
     sso_signing_key_file: str = field(default_factory=lambda: _env("SSO_SIGNING_KEY_FILE", _conf("sso", "sso-signing.pem")))
     # Backends the SSO mints tokens for (nginx names one per location in X-Auth-Audience).
@@ -112,8 +112,6 @@ class Settings:
     token_ttl: int = field(default_factory=lambda: int(_env("TOKEN_TTL", "60")))
     sso_cookie: str = field(default_factory=lambda: _env("SSO_COOKIE", f"{_f().name}_sso"))
     sso_max_age: int = field(default_factory=lambda: int(_env("SSO_MAX_AGE", "28800")))  # absolute, from sign-in
-    dav_prefix: str = field(default_factory=lambda: _env("DAV_PREFIX", "/dav").rstrip("/"))
-    basic_cache_seconds: int = field(default_factory=lambda: int(_env("BASIC_CACHE_SECONDS", "300")))
 
     def __post_init__(self):
         if self.auth_mode not in ("local", "sso"):
