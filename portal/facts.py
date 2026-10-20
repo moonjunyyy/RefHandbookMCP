@@ -97,10 +97,6 @@ class Facts:
         return f"http://127.0.0.1:{self.ports[role]}"
 
     @property
-    def webroot(self) -> str:
-        return f"/var/www/{self.name}"
-
-    @property
     def site_file(self) -> str:
         return f"/etc/{self.name}/site.toml"
 

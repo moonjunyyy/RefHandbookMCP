@@ -38,11 +38,10 @@ def test_only_the_routes_minted_for_receive_a_token():
     assert "~^/agents(/|\\?|$)" in m and "~^/login(\\?|$)" in m and "zone=m00nny_login" in m
 
 
-def test_the_landing_page_has_a_card_per_app():
-    page = site.render_index(load(), "m00nny")
-    for title in ("계정", "에이전트 · 샌드박스", "핸드북 (Claude MCP)"):
-        assert f"<h2>{title}</h2>" in page
-    assert "<code>https://www.m00nny.kr/mcp</code>" in page  # the derived domain
+def test_the_invitation_sign_up_is_public_and_throttled():
+    out = site.render_locations(load(), "m00nny")
+    block = re.search(r"location /account/join/ \{.*?\n\}", out, re.S).group(0)
+    assert "auth_request" not in block and "zone=m00nny_login" in block and 'X-Auth-Token "";' in block
 
 
 @pytest.mark.parametrize("bad, message", [

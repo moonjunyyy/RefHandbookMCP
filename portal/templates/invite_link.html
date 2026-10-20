@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Invitation link{% endblock %}
+{% block content %}
+<section class="card narrow">
+  <h1>Invitation link</h1>
+  {% if invite.note %}<p>For: {{ invite.note }}</p>{% endif %}
+  <p class="secret"><code>{{ link }}</code></p>
+  <p class="muted">Shown only once, and it works once, until {{ invite.expires_text }}. Anyone holding it can make
+    an account, so send it only to the person it is for.</p>
+  <p><a href="{{ settings.root_path }}/admin/invites">Back to invitations</a></p>
+</section>
+{% endblock %}

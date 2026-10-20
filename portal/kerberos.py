@@ -119,10 +119,13 @@ class KAdmin:
             raise KerberosError(err.group(0).strip() if err else f"kadmin failed ({query.split()[0]}).")
         return out
 
-    def create_principal(self, principal: str, dn: str, password: str, alias: str | None) -> None:
+    def create_principal(self, principal: str, dn: str, password: str, alias: str | None,
+                         needchange: bool = True) -> None:
+        """needchange: the password is a one-time one (an admin's); False when the user chose it."""
         policy = f"-policy {self.s.kadmin_policy} " if self.s.kadmin_policy else ""
+        flag = "+needchange " if needchange else ""
         # -x dn= attaches the principal to the existing LDAP user entry (kldap backend).
-        self._run(f'addprinc {policy}+needchange -x "dn={dn}" {principal}', (password, password))
+        self._run(f'addprinc {policy}{flag}-x "dn={dn}" {principal}', (password, password))
         if alias:
             try:
                 self._run(f"add_alias {alias} {principal}")

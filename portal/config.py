@@ -1,6 +1,8 @@
 """Settings, read from PORTAL_* environment variables (see deploy/portal.env.example)."""
 import os
+import ssl
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from .facts import facts, running_dir
 
@@ -22,6 +24,17 @@ def _env_list(name: str, default: str) -> tuple[str, ...]:
     return tuple(x.strip() for x in _env(name, default).split(",") if x.strip())
 
 
+def _ldap_cacert(conf: str = "/etc/ldap/ldap.conf") -> str:
+    try:
+        for line in Path(conf).read_text().splitlines():
+            parts = line.split(None, 1)
+            if len(parts) == 2 and parts[0].upper() == "TLS_CACERT":
+                return parts[1].strip()
+    except OSError:
+        pass
+    return ssl.get_default_verify_paths().cafile or "/etc/ssl/certs/ca-certificates.crt"
+
+
 _SITES: dict = {}
 
 
@@ -40,7 +53,9 @@ class Settings:
     # Site facts derive from the Kerberos realm (portal/facts.py); PORTAL_<NAME> overrides any of them.
     realm: str = field(default_factory=lambda: _env("REALM", _f().realm))
     ldap_uri: str = field(default_factory=lambda: _env("LDAP_URI", _f().ldap_uri))
-    ldap_ca_file: str = field(default_factory=lambda: _env("LDAP_CA_FILE", "/etc/ldap/ca.crt"))
+    # The CAs LDAPS is checked against: ldap.conf's TLS_CACERT (as the OpenLDAP tools), else the
+    # system's (a public certificate, such as Let's Encrypt's, needs nothing more).
+    ldap_ca_file: str = field(default_factory=lambda: _env("LDAP_CA_FILE", _ldap_cacert()))
     base_dn: str = field(default_factory=lambda: _env("BASE_DN", _f().base_dn))
     users_ou: str = field(default_factory=lambda: _env("USERS_OU", _f().users_ou))
     groups_ou: str = field(default_factory=lambda: _env("GROUPS_OU", _f().groups_ou))
@@ -86,6 +101,14 @@ class Settings:
     # Unanswered requests (and the personal data in them) are deleted after this many days.
     request_ttl_days: int = field(default_factory=lambda: int(_env("REQUEST_TTL_DAYS", "30")))
     request_max_pending: int = field(default_factory=lambda: int(_env("REQUEST_MAX_PENDING", "100")))
+    # Invitation links (portal/invites.py): an admin makes one, its holder signs up with their own
+    # username and password. Unused links expire after INVITE_TTL_HOURS.
+    invites_enabled: bool = field(default_factory=lambda: _env("INVITES", "1") == "1")
+    invites_db: str = field(default_factory=lambda: _env(
+        "INVITES_DB", running_dir("STATE_DIRECTORY", _f().state_dir("portal")) + "/invites.db"))
+    invite_ttl_hours: int = field(default_factory=lambda: int(_env("INVITE_TTL_HOURS", "168")))
+    # Where links handed out (invitations) point: the site as browsers reach it.
+    public_url: str = field(default_factory=lambda: _env("PUBLIC_URL", f"https://{_f().domain}").rstrip("/"))
     # Who applicants contact about their personal data (shown in the consent notice).
     privacy_contact: str = field(default_factory=lambda: _env("PRIVACY_CONTACT", ""))
     # gecos is world-readable through NSS (getent passwd), so names are not copied into it by default.

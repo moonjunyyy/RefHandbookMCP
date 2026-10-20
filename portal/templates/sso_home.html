@@ -1,0 +1,36 @@
+{% extends "sso_base.html" %}
+{% block title %}{{ settings.site_name }}{% endblock %}
+{% block content %}
+<section class="hero">
+  {% if current %}
+  <h1>안녕하세요, <code>{{ current }}</code> 님</h1>
+  <p class="lead">계정 하나(Kerberos)로 아래 서비스를 모두 씁니다.</p>
+  <div class="actions">
+    <a class="button" href="{{ portal }}/">내 계정</a>
+    <a class="button secondary" href="{{ portal }}/#password">비밀번호 변경</a>
+  </div>
+  {% else %}
+  <h1>{{ settings.site_name }}</h1>
+  <p class="lead">계정 하나(Kerberos)로 이 사이트의 서비스를 모두 씁니다.</p>
+  <div class="actions">
+    <a class="button" href="/auth/login">로그인</a>
+    <a class="button secondary" href="{{ portal }}/request">계정 신청</a>
+  </div>
+  <p class="muted small">초대 링크를 받았다면 그 링크를 열어 바로 가입하세요. 임시 비밀번호를 받았거나 비밀번호가 만료되었다면
+    <a href="/auth/expired">여기서 바꾸세요</a>.</p>
+  {% endif %}
+</section>
+{% if apps %}
+<h2 class="section">서비스</h2>
+<div class="grid">
+  {% for a in apps %}
+  <section class="card service">
+    <h2>{{ a.title }}</h2>
+    {% if a.description %}<p class="muted">{{ a.description }}</p>{% endif %}
+    {% if a.code %}<p><code class="address">{{ a.code }}</code></p>{% endif %}
+    {% if a.links %}<div class="links">{% for ln in a.links %}<a href="{{ ln.href }}">{{ ln.label }}</a>{% endfor %}</div>{% endif %}
+  </section>
+  {% endfor %}
+</div>
+{% endif %}
+{% endblock %}

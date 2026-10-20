@@ -7,7 +7,10 @@
   <link rel="stylesheet" href="/auth/static/style.css">
 </head>
 <body>
-<header><a class="brand" href="/">{{ settings.site_name }} <span>{{ settings.realm }}</span></a></header>
+<header>
+  <a class="brand" href="/">{{ settings.site_name }} <span>{{ settings.realm }}</span></a>
+  <nav>{% if current %}<code>{{ current }}</code><a href="/auth/logout">로그아웃</a>{% else %}<a href="/auth/login">로그인</a>{% endif %}</nav>
+</header>
 <main>
   {% for kind, msg in flashes %}<div class="flash {{ kind }}">{{ msg }}</div>{% endfor %}
   {% block content %}{% endblock %}

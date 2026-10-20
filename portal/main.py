@@ -1,4 +1,5 @@
-"""FastAPI app: login, self-service profile/password, account requests, and the admin/helpdesk console."""
+"""FastAPI app: login, self-service profile/password, account requests, invitation sign-up, and the
+admin/helpdesk console."""
 import time
 from pathlib import Path
 
@@ -11,6 +12,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from . import audit, tokens, validators
 from .config import Settings
 from .directory import Directory, DirectoryError, User
+from .invites import InviteError, InviteStore
 from .kerberos import KAdmin, Kerberos, KerberosError, LoginResult
 from .rbac import Actor, can, roles_for
 from .requests import RequestError, RequestStore
@@ -49,7 +51,8 @@ class RootPath:
 
 
 def create_app(settings: Settings | None = None, directory=None, kerberos=None, kadmin=None,
-               requests: RequestStore | None = None, sso_public_key=None) -> FastAPI:
+               requests: RequestStore | None = None, sso_public_key=None,
+               invites: InviteStore | None = None) -> FastAPI:
     s = settings or Settings()
     s.site()  # apps.toml is read at start: a bad file stops the portal, not a page
     sso = s.auth_mode == "sso"
@@ -62,7 +65,10 @@ def create_app(settings: Settings | None = None, directory=None, kerberos=None, 
     kadmin = kadmin or KAdmin(s)
     if requests is None and s.requests_enabled:
         requests = RequestStore(s.requests_db, s.request_ttl_days, s.request_max_pending)
+    if invites is None and s.invites_enabled:
+        invites = InviteStore(s.invites_db, s.invite_ttl_hours)
     throttle = Throttle()
+    join_throttle = Throttle(limit=10, window=3600)  # failed invitation sign-ups per client address
     request_throttle = Throttle(limit=5, window=3600)  # account requests per client address
     audit.setup(s.audit_log)
 
@@ -90,6 +96,7 @@ def create_app(settings: Settings | None = None, directory=None, kerberos=None, 
         ctx.update(actor=actor, csrf=csrf_token(request.session), flashes=request.session.pop("flash", []),
                    can=(lambda action, target=None: actor is not None and can(actor, action, s, target)),
                    settings=s, url=url, sso=sso, requests_enabled=requests is not None,
+                   invites_enabled=invites is not None,
                    site_menu=s.site().menu(set(actor.user.groups) if actor else set()),
                    pending_requests=(lambda: requests.count() if requests is not None else 0))
         return templates.TemplateResponse(request, name, ctx)
@@ -285,20 +292,25 @@ def create_app(settings: Settings | None = None, directory=None, kerberos=None, 
         flash(request, "ok", "Password changed.")
         return redirect("/")
 
-    def provision(request: Request, actor: Actor, uid: str, name: str, mail: str, shell: str,
-                  detail: str = ""):
-        """LDAP entry, then the Kerberos principal with a one-time password; LDAP is rolled back if
-        Kerberos fails."""
+    def make_account(request: Request, by: str, uid: str, name: str, mail: str, shell: str, password: str,
+                     needchange: bool, detail: str = "") -> User:
+        """LDAP entry, then the Kerberos principal; LDAP is rolled back if Kerberos fails."""
         user = directory.create_user(uid, name, mail, shell)
-        password = validators.temp_password()
         try:
-            kadmin.create_principal(s.principal(uid), user.dn, password, s.principal_alias(uid))
+            kadmin.create_principal(s.principal(uid), user.dn, password, s.principal_alias(uid), needchange)
         except KerberosError as e:
             directory.rollback_user(uid)
-            audit.record(actor.uid, "create_user", uid, False, ip(request), str(e))
+            audit.record(by, "create_user", uid, False, ip(request), str(e))
             raise
-        audit.record(actor.uid, "create_user", uid, True, ip(request),
+        audit.record(by, "create_user", uid, True, ip(request),
                      f"uidNumber={user.uid_number}" + (f" {detail}" if detail else ""))
+        return user
+
+    def provision(request: Request, actor: Actor, uid: str, name: str, mail: str, shell: str,
+                  detail: str = ""):
+        """An account made by an admin, with a one-time password shown once."""
+        password = validators.temp_password()
+        user = make_account(request, actor.uid, uid, name, mail, shell, password, True, detail)
         return render(request, "temp_password.html", actor, target=user, password=password, created=True)
 
     # ---- account requests (public) -------------------------------------------------------------
@@ -342,7 +354,94 @@ def create_app(settings: Settings | None = None, directory=None, kerberos=None, 
         audit.record(None, "account_request", uid, added, ip(request), "" if added else "duplicate")
         return render(request, "request_done.html")
 
+    # ---- sign-up by invitation (public, with a link an admin made) -----------------------------
+
+    def invites_on() -> InviteStore:
+        if invites is None:
+            raise Forbidden("Invitations are not enabled here.")
+        return invites
+
+    def join_page(request: Request, token: str, status: int = 200, **values):
+        resp = render(request, "join.html", token=token, values=values)
+        resp.status_code = status
+        return resp
+
+    @app.get("/join/{token}")
+    async def join_form(request: Request, token: str):
+        if invites_on().find(token[:64]) is None:
+            resp = render(request, "join_invalid.html")
+            resp.status_code = 404
+            return resp
+        return join_page(request, token[:64])
+
+    @app.post("/join/{token}")
+    async def join(request: Request, token: str):
+        store, token = invites_on(), token[:64]
+        data = await form(request)
+        values = {k: str(data.get(k, "")) for k in ("uid", "name", "mail")}
+        key = f"join:{ip(request)}"
+        if join_throttle.blocked(key):
+            flash(request, "error", "실패가 너무 많습니다. 한 시간 뒤 다시 시도해 주세요.")
+            return join_page(request, token, 429, **values)
+        try:
+            if data.get("consent") != "1":
+                raise ValidationError("개인정보 수집·이용에 동의해야 가입할 수 있습니다.")
+            uid = validators.new_uid(values["uid"].strip().lower())
+            password = validators.new_password(str(data.get("password", "")), str(data.get("confirm", "")))
+            name = validators.optional_name(values["name"], "이름")
+            mail = validators.email(values["mail"])
+            if directory.get_user(uid) is not None:  # the holder of a link may know which names are taken
+                raise ValidationError(f"'{uid}'은(는) 이미 쓰이는 사용자명입니다. 다른 이름을 고르세요.")
+        except ValidationError as e:
+            join_throttle.fail(key)
+            flash(request, "error", str(e))
+            return join_page(request, token, 400, **values)
+        inv = store.claim(token)
+        if inv is None:
+            resp = render(request, "join_invalid.html")
+            resp.status_code = 404
+            return resp
+        try:
+            make_account(request, uid, uid, name, mail, s.allowed_shells[0], password, False,
+                         detail=f"invited by {inv.created_by}")
+        except (DirectoryError, KerberosError) as e:
+            store.restore(inv)  # the link still works: the person can try again
+            join_throttle.fail(key)
+            flash(request, "error", f"계정을 만들지 못했습니다: {e}")
+            return join_page(request, token, 400, **values)
+        return render(request, "join_done.html", uid=uid)
+
     # ---- admin / helpdesk --------------------------------------------------------------------
+
+    @app.get("/admin/invites")
+    async def invite_list(request: Request):
+        actor = current_actor(request)
+        require(actor, "manage_invites")
+        return render(request, "invites.html", actor, items=invites_on().list())
+
+    @app.post("/admin/invites")
+    async def invite_create(request: Request):
+        actor = current_actor(request)
+        require(actor, "manage_invites")
+        require(actor, "create_user")
+        data = await form(request)
+        note = " ".join(str(data.get("note", "")).split())[:120]
+        try:
+            inv, token = invites_on().create(actor.uid, note)
+        except InviteError as e:
+            raise Forbidden(str(e))
+        audit.record(actor.uid, "create_invite", None, True, ip(request), f"id={inv.id}" + (f" {note}" if note else ""))
+        return render(request, "invite_link.html", actor, invite=inv, link=f"{s.public_url}{url('/join/' + token)}")
+
+    @app.post("/admin/invites/{iid}/revoke")
+    async def invite_revoke(request: Request, iid: str):
+        actor = current_actor(request)
+        require(actor, "manage_invites")
+        await form(request)
+        if invites_on().revoke(iid[:32]):
+            audit.record(actor.uid, "revoke_invite", None, True, ip(request), f"id={iid[:32]}")
+            flash(request, "ok", "Invitation revoked.")
+        return redirect("/admin/invites")
 
     def pending_request(rid: str):
         r = requests_on().get(rid[:32])

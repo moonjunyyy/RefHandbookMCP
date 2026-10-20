@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}가입{% endblock %}
+{% block content %}
+<section class="card narrow">
+  <h1>계정 만들기</h1>
+  <p class="muted">초대 링크로 가입합니다. 사용자명과 비밀번호를 정하면 계정이 바로 만들어지고, 이 사이트와 SSH 등 같은 계정을 쓰는 곳에 그대로 로그인할 수 있습니다.</p>
+  <form method="post" action="{{ settings.root_path }}/join/{{ token }}">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>사용자명 <span class="muted small">(영문 소문자로 시작, 2–32자 · 나중에 바꿀 수 없습니다)</span>
+      <input name="uid" value="{{ values.uid }}" pattern="[a-z][a-z0-9_\-]{1,31}" autocapitalize="none" autocomplete="username" required autofocus></label>
+    <label>비밀번호 <span class="muted small">(12자 이상)</span>
+      <input name="password" type="password" minlength="12" autocomplete="new-password" required></label>
+    <label>비밀번호 확인 <input name="confirm" type="password" minlength="12" autocomplete="new-password" required></label>
+    <label>이름 <span class="muted small">(선택)</span> <input name="name" value="{{ values.name }}" maxlength="64" autocomplete="name"></label>
+    <label>이메일 <span class="muted small">(선택 · 비밀번호 분실 등 계정 관련 연락용)</span>
+      <input name="mail" type="email" value="{{ values.mail }}" autocomplete="email"></label>
+
+    <details class="consent">
+      <summary>개인정보 수집·이용 안내</summary>
+      <dl>
+        <dt>수집 항목</dt><dd>필수: 사용자명 · 선택: 이름, 이메일</dd>
+        <dt>목적</dt><dd>계정 발급과 계정 관련 연락</dd>
+        <dt>보유 기간</dt><dd>계정이 삭제될 때까지 디렉터리에 보관되며, 본인과 관리자만 볼 수 있습니다.
+          계정 화면에서 언제든 고치거나 지울 수 있습니다.</dd>
+        <dt>거부할 권리</dt><dd>동의를 거부할 수 있으며, 이 경우 가입할 수 없습니다. 선택 항목은 비워 두어도 됩니다.</dd>
+        {% if settings.privacy_contact %}<dt>문의</dt><dd>{{ settings.privacy_contact }}</dd>{% endif %}
+      </dl>
+    </details>
+    <label class="check"><input type="checkbox" name="consent" value="1" required> 위 내용을 확인했고, 개인정보 수집·이용에 동의합니다.</label>
+    <button>가입하기</button>
+  </form>
+</section>
+{% endblock %}

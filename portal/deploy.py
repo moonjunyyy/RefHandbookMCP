@@ -12,7 +12,6 @@ rendered from deploy/templates: nothing on the host is named by hand. Run it aga
     nginx      sites-available/<domain>.conf (enabled), snippets/<name>-{proxy,apps,apps-map}.conf;
                with a `router` in [site], plain HTTP for it, and /etc/<name>/router/<domain>.conf:
                the router's side, for its admin to merge
-    landing    <webroot>/index.html (/var/www/<name>)
     directory  /etc/<name>/directory/{kadm5.acl,slapd-acl.ldif}: the KDC's and slapd's side, rendered with
                this site's realm, DNs and current admins, for the directory's admin to merge
     secrets    /etc/<unit>/{portal,sso}.env with fresh random secrets, and the SSO's token key pair,
@@ -89,7 +88,6 @@ def rendered(f: Facts, site_file: Path) -> dict[str, tuple[str, int]]:
         f"/etc/nginx/snippets/{f.name}-proxy.conf": (t("proxy.conf"), 0o644),
         f"/etc/nginx/snippets/{f.name}-apps-map.conf": (site_mod.render_map(site, f.name), 0o644),
         f"/etc/nginx/snippets/{f.name}-apps.conf": (site_mod.render_locations(site, f.name), 0o644),
-        f"{f.webroot}/index.html": (site_mod.render_index(site, f.name), 0o644),
         f.site_file: (site_file.read_text(), 0o644),
         **({str(local_file(f.site_file)): (local_file(site_file).read_text(), 0o644)}
            if local_file(site_file).exists() else {}),
@@ -229,6 +227,27 @@ def _migrate(f: Facts, root: Path, sh: Run, notes: list[str]) -> None:
             notes.append(f"/{leftover} is no longer used: remove it when the new units run")
 
 
+SECRET_KEYS = {"portal": "PORTAL_SESSION_SECRET", "sso": "PORTAL_SSO_SECRET"}  # the services refuse < 32
+
+
+def _fill_secret(env: Path, key: str) -> bool:
+    """Give `key` a fresh value if the file has it empty or too short (the service would not start);
+    a good one, or one read from a file (<key>_FILE), is left alone."""
+    lines = env.read_text().splitlines()
+    if any(ln.startswith(f"{key}_FILE=") and ln.split("=", 1)[1].strip() for ln in lines):
+        return False
+    found = [i for i, ln in enumerate(lines) if ln.startswith(f"{key}=")]
+    if found and len(lines[found[-1]].split("=", 1)[1].strip()) >= 32:
+        return False
+    line = f"{key}={secrets.token_urlsafe(48)}"
+    if found:
+        lines[found[-1]] = line
+    else:
+        lines.append(line)
+    env.write_text("\n".join(lines) + "\n")
+    return True
+
+
 def _secrets(f: Facts, root: Path, sh: Run, real: bool, notes: list[str]) -> None:
     for role in ("portal", "sso"):
         d = root / "etc" / f.unit(role)
@@ -237,9 +256,11 @@ def _secrets(f: Facts, root: Path, sh: Run, real: bool, notes: list[str]) -> Non
         env = d / f"{role}.env"
         if not env.exists():
             env.write_text(f.substitute((TEMPLATES / f"{role}.env").read_text(), {"secret": secrets.token_urlsafe(48)}))
-            env.chmod(0o640)
-            _chown(env, f.unit(role), real)
             notes.append(f"made {env.relative_to(root)} with a fresh secret")
+        elif _fill_secret(env, SECRET_KEYS[role]):  # a hand-made file with the secret left empty
+            notes.append(f"{env.relative_to(root)}: {SECRET_KEYS[role]} was empty or short, now a fresh secret")
+        env.chmod(0o640)  # every time: a file made by hand may have been left world-readable
+        _chown(env, f.unit(role), real)
     sso = root / "etc" / f.unit("sso")
     if not (sso / "sso-signing.pem").exists():
         if sh([str(root / f.code.lstrip("/") / ".venv/bin/python"), "-m", "portal.tokens", "genkey", str(sso)]) == 0:
@@ -264,11 +285,12 @@ def _admin_principal(f: Facts) -> str:
 
 
 def _keytabs(f: Facts, root: Path) -> list[str]:
-    """What only an admin can do: the keytabs, with the exact commands."""
+    """What only an admin can do: the keytabs, with the exact commands. The HTTP key goes to the SSO
+    alone (the installed portal runs behind it and never checks a password): each ktadd makes a new
+    key, so extracting it a second time elsewhere would break the first copy."""
     todo, admin = [], _admin_principal(f)
     host = f.domain
     need = [(f.unit("portal"), "portal.keytab", f"portal/service@{f.realm}", "the portal's kadmin identity"),
-            (f.unit("portal"), "http.keytab", f"HTTP/{host}@{f.realm}", "proves the KDC on the portal's sign-ins"),
             (f.unit("sso"), "http.keytab", f"HTTP/{host}@{f.realm}", "proves the KDC on the site sign-in")]
     for unit, name, princ, why in need:
         p = root / "etc" / unit / name

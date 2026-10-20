@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Invitations{% endblock %}
+{% block content %}
+<h1>Invitations</h1>
+<p class="muted">An invitation is a one-time link: whoever opens it chooses a username and a password and has an
+  account at once (no one-time password to pass on). Send it over a channel you trust. Unused links expire after
+  {{ settings.invite_ttl_hours // 24 if settings.invite_ttl_hours % 24 == 0 else settings.invite_ttl_hours }}
+  {{ "days" if settings.invite_ttl_hours % 24 == 0 else "hours" }}.</p>
+<section class="card">
+  <form method="post" action="{{ settings.root_path }}/admin/invites" class="row">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input name="note" maxlength="120" placeholder="Who it is for (only you and other admins see this)">
+    <button>New invitation link</button>
+  </form>
+</section>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>For</th><th>Made by</th><th>Expires</th><th></th></tr></thead>
+  <tbody>
+  {% for i in items %}
+    <tr>
+      <td class="wrap">{{ i.note or "—" }}</td>
+      <td><code>{{ i.created_by }}</code></td>
+      <td>{{ i.expires_text }}</td>
+      <td>
+        <form method="post" action="{{ settings.root_path }}/admin/invites/{{ i.id }}/revoke" class="inline">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <button class="link danger-text">revoke</button>
+        </form>
+      </td>
+    </tr>
+  {% else %}
+    <tr><td colspan="4" class="muted">No open invitations.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endblock %}

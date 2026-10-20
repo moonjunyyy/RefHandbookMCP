@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from portal.config import Settings
 from portal.directory import DirectoryError, User
 from portal.kerberos import KerberosError, LoginResult
+from portal.invites import InviteStore
 from portal.main import create_app
 from portal.requests import RequestStore
 
@@ -76,13 +77,14 @@ class FakeKAdmin:
     def __init__(self, krb, directory):
         self.krb, self.dir, self.calls, self.fail = krb, directory, [], False
 
-    def create_principal(self, principal, dn, password, alias):
+    def create_principal(self, principal, dn, password, alias, needchange=True):
         self.calls.append(("create", principal, alias))
         if self.fail:
             raise KerberosError("add_principal: Policy does not exist while creating x.")
         uid = principal.split("/")[0]
         self.krb.passwords[uid] = password
-        self.krb.expired.add(uid)
+        if needchange:
+            self.krb.expired.add(uid)
 
     def reset_password(self, principal, password):
         uid = principal.split("/")[0]
@@ -104,7 +106,8 @@ def env(tmp_path):
                  kadmin_policy="")
     d, k = FakeDirectory(s), FakeKerberos()
     ka = FakeKAdmin(k, d)
-    app = create_app(s, d, k, ka, RequestStore(str(tmp_path / "requests.db")))
+    app = create_app(s, d, k, ka, RequestStore(str(tmp_path / "requests.db")),
+                     invites=InviteStore(str(tmp_path / "invites.db")))
     return s, d, k, ka, app, tmp_path
 
 
@@ -291,7 +294,8 @@ def test_root_path(tmp_path):
     s = Settings(session_secret="x" * 40, cookie_secure=False, audit_log=str(tmp_path / "audit.log"),
                  kadmin_policy="", root_path="/account")
     d, k = FakeDirectory(s), FakeKerberos()
-    app = create_app(s, d, k, FakeKAdmin(k, d), RequestStore(str(tmp_path / "requests.db")))
+    app = create_app(s, d, k, FakeKAdmin(k, d), RequestStore(str(tmp_path / "requests.db")),
+                     invites=InviteStore(":memory:"))
     c = TestClient(app)
     page = c.get("/account/login").text
     assert 'href="/account/static/style.css"' in page and 'action="/account/login"' in page
@@ -304,3 +308,72 @@ def test_root_path(tmp_path):
     assert "Alice" in c.get("/account/").text
     # nginx may also strip the prefix before passing the request on
     assert c.get("/login").status_code == 200
+
+
+def invite(c):
+    r = c.post("/admin/invites", data={"note": "for Bora", "csrf": csrf(c, "/admin/invites")})
+    assert r.status_code == 200
+    return re.search(r"<code>(https://\S+?/join/([\w-]+))</code>", r.text).groups()
+
+
+def join(c, token, **fields):
+    data = {"uid": "bora", "password": "bora-chose-this-1", "confirm": "bora-chose-this-1", "consent": "1", **fields}
+    return c.post(f"/join/{token}", data={**data, "csrf": csrf(c)})  # any page's: the link may be spent
+
+
+def test_an_invitation_link_makes_one_account_with_the_users_own_password(env):
+    s, d, k, ka, app, tmp = env
+    admin, _ = login(app, "moon", "moon-password-1")
+    assert "Invite</a>" in admin.get("/").text
+    link, token = invite(admin)
+    assert link == f"https://www.m00nny.kr/join/{token}"  # PORTAL_PUBLIC_URL, derived from the domain
+    assert token not in (tmp / "invites.db").read_bytes().decode(errors="ignore")  # only its hash is kept
+    assert "for Bora" in admin.get("/admin/invites").text and token not in admin.get("/admin/invites").text
+    anon = TestClient(app)
+    assert join(anon, token, uid="moon").status_code == 400  # taken: said so, and the link still works
+    assert join(anon, token, confirm="different-pass-1").status_code == 400
+    assert join(anon, token, consent="").status_code == 400
+    r = join(anon, token)
+    assert r.status_code == 200 and "가입했습니다" in r.text
+    assert k.passwords["bora"] == "bora-chose-this-1" and "bora" not in k.expired  # no change forced
+    assert "bora" in d.groups["user"]
+    c, _ = login(app, "bora", "bora-chose-this-1")
+    assert c.get("/").status_code == 200
+    assert anon.get(f"/join/{token}").status_code == 404  # once only
+    assert join(TestClient(app), token, uid="bora2").status_code == 404 and "bora2" not in d.users
+    log = (tmp / "audit.log").read_text()
+    assert '"action": "create_invite"' in log and "invited by moon" in log
+
+
+def test_a_failed_sign_up_leaves_the_link_usable(env):
+    s, d, k, ka, app, tmp = env
+    admin, _ = login(app, "moon", "moon-password-1")
+    _, token = invite(admin)
+    ka.fail = True
+    anon = TestClient(app)
+    assert join(anon, token).status_code == 400 and "bora" not in d.users  # LDAP rolled back
+    ka.fail = False
+    assert join(anon, token).status_code == 200 and "bora" in d.users
+
+
+def test_invitations_are_for_admins_and_can_be_revoked(env):
+    s, d, k, ka, app, tmp = env
+    helpdesk, _ = login(app, "helen", "helen-password-1")
+    assert "Invite</a>" not in helpdesk.get("/").text
+    assert helpdesk.get("/admin/invites").status_code == 403
+    assert helpdesk.post("/admin/invites", data={"csrf": csrf(helpdesk, "/")}).status_code == 403
+    assert TestClient(app).get("/join/made-up-token").status_code == 404
+    admin, _ = login(app, "moon", "moon-password-1")
+    _, token = invite(admin)
+    iid = re.search(r"/admin/invites/([\w-]+)/revoke", admin.get("/admin/invites").text).group(1)
+    admin.post(f"/admin/invites/{iid}/revoke", data={"csrf": csrf(admin, "/admin/invites")})
+    assert TestClient(app).get(f"/join/{token}").status_code == 404
+
+
+def test_ldaps_trusts_ldap_conf_else_the_system(tmp_path):
+    from portal.config import _ldap_cacert
+    conf = tmp_path / "ldap.conf"
+    conf.write_text("BASE dc=m00nny,dc=kr\n# TLS_CACERT /not/this\ntls_cacert  /etc/ldap/private-ca.pem\n")
+    assert _ldap_cacert(str(conf)) == "/etc/ldap/private-ca.pem"
+    conf.write_text("BASE dc=m00nny,dc=kr\n")
+    assert _ldap_cacert(str(conf)).endswith(".crt") or _ldap_cacert(str(conf)).endswith(".pem")  # the system's

@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}초대 링크{% endblock %}
+{% block content %}
+<section class="card narrow">
+  <h1>쓸 수 없는 초대 링크</h1>
+  <p>이미 사용했거나, 기한이 지났거나, 취소된 링크입니다. 링크를 준 관리자에게 새 링크를 요청하세요.</p>
+  <p class="muted small"><a href="/">처음으로</a>{% if requests_enabled %} · <a href="{{ settings.root_path }}/request">사용 신청</a>{% endif %}</p>
+</section>
+{% endblock %}

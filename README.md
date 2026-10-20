@@ -8,13 +8,15 @@ with MIT Kerberos 1.22 storing principals in LDAP (kldap).
 - **Helpdesk** (`cn=helpdesk` group): search users, reset passwords (one-time password that must be
   changed at next sign-in), unlock after failed logins. Never on admins or protected groups.
 - **Admin** (`cn=admin` group): all of the above, plus create users, disable/enable, manage groups,
-  and approve or reject account requests.
+  approve or reject account requests, and make invitation links.
 - **The site's other services**: the menu links every app of the site file
   (`deploy/site.toml`) that has a menu label and that the user's groups may see, such as
   refhandbook's approval page `/agents` (rule proposals, sandbox policies, jobs).
 - **Anyone** (no account yet): ask for one at `/request` ("사용 신청"): a username, what it is for,
   and optionally a name and email, with a consent notice for the personal data. The request waits
   for an admin; nothing is created until then.
+- **Anyone with an invitation link**: open it, choose a username and a password, and the account
+  exists at once (`/join/<token>`).
 
 Creating a user follows the existing layout: `uid=<u>,ou=Users` (inetOrgPerson, posixAccount,
 shadowAccount), a private group `cn=<u>,ou=Groups` with gid = uid number, membership in `cn=user`,
@@ -88,7 +90,7 @@ sudo deploy/install.sh             # install or update
 
 What the installer does: creates the two service users; copies the code and builds its virtualenv;
 installs `deploy/site.toml` as `/etc/<name>/site.toml`; renders the systemd units, the nginx site and
-snippets, the landing page, and the directory's side (below) from `deploy/templates/`; makes each
+snippets, and the directory's side (below) from `deploy/templates/`; makes each
 service's env file once with a fresh secret (`/etc/<unit>/{portal,sso}.env`: secrets and local
 overrides only, never overwritten) and the SSO's token key pair; then `nginx -t`, enables and
 restarts the units. A host on the old layout (unit `ldap-portal`) is moved: the old unit is removed
@@ -162,6 +164,19 @@ Abuse limits: 5 submissions per address per hour, at most `PORTAL_REQUEST_MAX_PE
 and the page answers the same whether or not a username is taken, so it cannot be used to list
 accounts. Set `PORTAL_REQUESTS=0` to turn it off.
 
+### Invitations (가입 링크)
+
+An admin makes a one-time link under **Invite** (with a note of whom it is for) and sends it. Whoever
+opens it chooses a username and a password and has an account at once: the normal create-user path,
+but with the password they chose and no forced change, so there is no one-time password to pass
+on. The link works once (it is claimed before the account is made, and put back if making it fails)
+and expires after `PORTAL_INVITE_TTL_HOURS` (168); admins can revoke open ones. Only the token's
+hash is stored (`PORTAL_INVITES_DB`, mode 0600 under `/var/lib/<site>-portal`), so the database alone
+cannot be used to sign up. The page tells the link's holder whether a username is taken (it has to);
+without a valid link it says nothing. Failed sign-ups are limited to 10 per address per hour, on top
+of nginx's `login` rate. The link points at `PORTAL_PUBLIC_URL` (`https://<domain>`). Set
+`PORTAL_INVITES=0` to turn it off.
+
 ### Personal data (개인정보)
 
 Name and email are personal data. What the portal does about it:
@@ -199,18 +214,18 @@ The site runs behind one nginx server with one Kerberos sign-in:
 
 | Path | What | Who checks |
 |---|---|---|
-| `/` | landing page (generated from the site file) | public |
+| `/` | main page, `portal/sso.py`: sign-in or a greeting, and a card per app of the site file | public |
 | `/auth/` | site sign-in, `portal/sso.py` on :8090 | public (rate-limited) |
-| `/account/` | this portal on :8080 with `PORTAL_AUTH=sso`; `/account/request` stays public | `auth_request` + token |
+| `/account/` | this portal on :8080 with `PORTAL_AUTH=sso`; `/account/request` and `/account/join/` stay public | `auth_request` + token |
 | `/agents` | refhandbook's approval page | `auth_request` + token |
 | `/mcp`, `/authorize`, `/token`, `/register`, `/revoke`, `/login`, `/.well-known/oauth-*` | refhandbook with `RHB_AUTH=sso` | its own OAuth; `/login` via `auth_request` + token |
 
 **Services are declared, not hand-wired.** `deploy/site.toml` lists every service once: its
-routes, the audience its tokens are minted for, its landing card and its menu entry
+routes, the audience its tokens are minted for, its card on the main page and its menu entry
 (`portal/site.py`). The installer renders from it the nginx snippets (the audience map and the
-locations, included by the site's nginx config, which keeps only TLS, the landing page and the
-sign-in) and the landing page; the SSO mints tokens for the audiences the file declares, and the
-portal's menu shows its apps. The renderer refuses duplicate routes, unknown fields and limits, and
+locations, included by the site's nginx config, which keeps only TLS, the main page and the
+sign-in); the SSO shows its cards on the main page and mints tokens for the audiences the file
+declares, and the portal's menu shows its apps. The renderer refuses duplicate routes, unknown fields and limits, and
 routes with nowhere to go; a `site` route goes through the sign-in and carries a token only for its
 own app, and a `public` route clears any token header. Adding a service: one `[[app]]` in
 `deploy/site.toml`, then `sudo deploy/install.sh`.
@@ -237,7 +252,8 @@ Check: `/account/` while signed out redirects to `/auth/login`.
 
 - **Deleting users.** Disable instead. Deleting frees the uidNumber, which could later be reused
   and inherit the old user's files. Delete by hand: `kadmin delprinc`, then `ldapdelete`.
-- **Self-registration.** Anyone on the network could create accounts. Requests wait for an admin instead.
+- **Open self-registration.** Anyone on the network could create accounts. Sign-up takes an admin's
+  invitation link, or a request an admin approves.
 - **Sending email.** The portal never mails one-time passwords; the admin passes them on.
 - **File sharing.** WebDAV was here once; files are shared over SMB instead, outside this site.
 - **2FA for admin actions.** Recommended: put the portal behind an SSO with MFA, or require

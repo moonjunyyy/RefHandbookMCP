@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}가입 완료{% endblock %}
+{% block content %}
+<section class="card narrow">
+  <h1>가입했습니다</h1>
+  <p><code>{{ uid }}</code> 계정이 만들어졌습니다. 방금 정한 비밀번호로 로그인하세요.</p>
+  <p><a class="button" href="{{ settings.login_url if sso else settings.root_path + '/login' }}">로그인</a></p>
+</section>
+{% endblock %}

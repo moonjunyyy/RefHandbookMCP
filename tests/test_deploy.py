@@ -52,7 +52,7 @@ def test_nothing_rendered_names_a_site_by_hand(fresh, tmp_path):
     files = deploy.rendered(facts(str(s)), s)
     assert set(files) >= {"/etc/systemd/system/example-portal.service", "/etc/systemd/system/example-sso.service",
                           "/etc/nginx/sites-available/www.example.org.conf",
-                          "/etc/nginx/snippets/example-apps.conf", "/var/www/example/index.html",
+                          "/etc/nginx/snippets/example-apps.conf",
                           "/etc/example/site.toml"}
     for path, (content, _) in files.items():
         if path.endswith("site.toml"):
@@ -84,6 +84,10 @@ def test_install_makes_secrets_once_and_moves_an_old_layout(fresh, tmp_path, cap
                                                      "\nPORTAL_SERVICE_KEYTAB=/etc/ldap-portal/portal.keytab\n")
     (root / "var/lib/ldap-portal").mkdir(parents=True)
     (root / "var/lib/ldap-portal/requests.db").write_bytes(b"db")
+    hand_made = root / "etc/m00nny-sso/sso.env"  # an old hand-made file: secret left empty, world-readable
+    hand_made.parent.mkdir(parents=True)
+    hand_made.write_text("PORTAL_REALM=M00NNY.KR\nPORTAL_SSO_SECRET=\n")
+    hand_made.chmod(0o644)
     retired = root / "etc/systemd/system/m00nny-dav-homes.timer"  # the site no longer serves WebDAV
     retired.write_text("[Timer]\n")
     sh = Recorder()
@@ -96,7 +100,8 @@ def test_install_makes_secrets_once_and_moves_an_old_layout(fresh, tmp_path, cap
     secret = re.search(r"PORTAL_SESSION_SECRET=(\S+)", env.read_text()).group(1)
     assert secret.startswith("keep-me-")  # the old secret, not a new one: sessions survive the move
     sso_env = root / "etc/m00nny-sso/sso.env"
-    assert len(re.search(r"PORTAL_SSO_SECRET=(\S+)", sso_env.read_text()).group(1)) > 40
+    sso_secret = re.search(r"PORTAL_SSO_SECRET=(\S+)", sso_env.read_text()).group(1)
+    assert len(sso_secret) > 40 and "PORTAL_REALM=M00NNY.KR" in sso_env.read_text()  # filled in, the rest kept
     assert (sso_env.stat().st_mode & 0o777) == 0o640
     assert (root / "etc/nginx/sites-enabled/www.m00nny.kr.conf").is_symlink()
     assert (root / "opt/m00nny-portal/portal/deploy.py").exists() and not (root / "opt/m00nny-portal/.git").exists()
@@ -105,8 +110,10 @@ def test_install_makes_secrets_once_and_moves_an_old_layout(fresh, tmp_path, cap
     out = capsys.readouterr().out
     assert "ktadd -k /etc/m00nny-sso/http.keytab HTTP/www.m00nny.kr@M00NNY.KR" in out  # only what is missing
     assert "/etc/m00nny-portal/portal.keytab" not in out.split("Only an admin")[1]
+    assert "/etc/m00nny-portal/http.keytab" not in out  # one copy of the HTTP key: the SSO's
     assert deploy.install(SITE, root=root, sh=Recorder()) == 0  # again: the secret stays
     assert re.search(r"PORTAL_SESSION_SECRET=(\S+)", env.read_text()).group(1) == secret
+    assert re.search(r"PORTAL_SSO_SECRET=(\S+)", sso_env.read_text()).group(1) == sso_secret
 
 
 def free_port():

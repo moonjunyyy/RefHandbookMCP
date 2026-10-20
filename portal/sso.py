@@ -1,7 +1,7 @@
 """The site-wide sign-in, consulted by nginx `auth_request`.
 
-One Kerberos sign-in page (/auth/login) sets a site cookie; /auth/check answers nginx for every
-protected location:
+One Kerberos sign-in page (/auth/login) sets a site cookie; / is the site's main page (who is
+signed in, and the site file's services); /auth/check answers nginx for every protected location:
 
 - a browser with the cookie -> 200
 - a 200 carries X-Remote-User (for logs) and, when nginx names the backend in X-Auth-Audience,
@@ -25,6 +25,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from . import audit, tokens, validators
 from .config import Settings
+from .facts import facts
 from .kerberos import Kerberos, KerberosError, LoginResult
 from .security import SecurityHeadersMiddleware, Throttle, csrf_ok, csrf_token
 from .validators import ValidationError
@@ -123,6 +124,13 @@ def create_app(settings: Settings | None = None, kerberos=None, signing_key=None
             headers["X-Auth-Token"] = tokens.issue(signing_key, s.sso_issuer, aud, uid, s.token_ttl)
         return Response(status_code=200, headers=headers)
 
+    # ---- the main page -----------------------------------------------------------------------
+
+    @app.get("/")
+    async def home(request: Request):
+        return render(request, "sso_home.html", current=session_user(request),
+                      apps=[a for a in s.site().apps if a.card], portal=facts().extra.get("portal_root", "/account"))
+
     # ---- sign-in -----------------------------------------------------------------------------
 
     @app.get("/auth/login")
@@ -141,7 +149,12 @@ def create_app(settings: Settings | None = None, kerberos=None, signing_key=None
                           error="Invalid or missing CSRF token. Reload the page and try again.")
         nxt = safe_next(str(data.get("next", "/")))
         raw_uid, password = str(data.get("uid", "")).strip().lower()[:64], str(data.get("password", ""))[:1024]
-        uid, result = await run_in_threadpool(verify, raw_uid, password, ip(request))
+        try:
+            uid, result = await run_in_threadpool(verify, raw_uid, password, ip(request))
+        except KerberosError as e:  # the host's side (keytab, KDC), not the user's password
+            audit.record(raw_uid, "sso_login", None, False, ip(request), f"error: {e}")
+            return render(request, "sso_login.html", 503, next=nxt, current=None, uid=raw_uid,
+                          error="지금은 로그인할 수 없습니다 (서버의 Kerberos 설정 문제). 관리자에게 알려 주세요.")
         audit.record(uid or raw_uid, "sso_login", None, uid is not None, ip(request), result.value)
         if result is LoginResult.EXPIRED:
             request.session["expired_uid"] = raw_uid

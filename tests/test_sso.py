@@ -7,10 +7,13 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi.testclient import TestClient
 
 from portal import tokens
+from portal.kerberos import KerberosError
 from portal.config import Settings
 from portal.main import create_app as create_portal
+from portal.invites import InviteStore
 from portal.requests import RequestStore
 from portal.sso import create_app, next_from_query, safe_next
+from conftest import SITE
 from test_app import FakeDirectory, FakeKAdmin, FakeKerberos
 
 ISS = "https://www.m00nny.kr"
@@ -113,7 +116,8 @@ def test_portal_behind_sso(tmp_path, key):
     s = Settings(session_secret="x" * 40, cookie_secure=False, audit_log=str(tmp_path / "audit.log"),
                  kadmin_policy="", root_path="/account", auth_mode="sso", sso_issuer=ISS)
     d, k = FakeDirectory(s), FakeKerberos()
-    app = create_portal(s, d, k, FakeKAdmin(k, d), RequestStore(str(tmp_path / "req.db")), key.public_key())
+    app = create_portal(s, d, k, FakeKAdmin(k, d), RequestStore(str(tmp_path / "req.db")), key.public_key(),
+                         InviteStore(":memory:"))
     c = TestClient(app)
     r = c.get("/account/admin/users", follow_redirects=False)
     assert r.status_code == 303 and r.headers["location"] == "/auth/login?next=/account/admin/users"
@@ -167,7 +171,8 @@ def test_the_menu_shows_the_apps_each_user_may_see(tmp_path, key):
     s = Settings(session_secret="x" * 40, cookie_secure=False, audit_log=str(tmp_path / "audit.log"),
                  kadmin_policy="", root_path="/account", auth_mode="sso", sso_issuer=ISS, site_file=str(apps))
     d, k = FakeDirectory(s), FakeKerberos()
-    c = TestClient(create_portal(s, d, k, FakeKAdmin(k, d), RequestStore(str(tmp_path / "req.db")), key.public_key()))
+    c = TestClient(create_portal(s, d, k, FakeKAdmin(k, d), RequestStore(str(tmp_path / "req.db")), key.public_key(),
+                         InviteStore(":memory:")))
     page = c.get("/account/", headers={"X-Auth-Token": tokens.issue(key, ISS, "account", "moon")}).text
     assert 'href="/agents">Agents</a>' in page and 'href="/lab/">Lab</a>' in page  # moon is an admin
     page = c.get("/account/", headers={"X-Auth-Token": tokens.issue(key, ISS, "account", "alice")}).text
@@ -183,3 +188,28 @@ def test_the_sso_mints_for_the_audiences_the_apps_declare(tmp_path, key):
     r = check(c, "/lab/", **{"X-Auth-Audience": "lab"})
     assert r.status_code == 200 and tokens.verify(key.public_key(), r.headers["x-auth-token"], ISS, "lab") == "alice"
     assert check(c, "/x", **{"X-Auth-Audience": "nope"}).status_code == 500
+
+
+def test_the_main_page_knows_who_is_signed_in(tmp_path, key):
+    s = Settings(session_secret="x" * 40, sso_secret="y" * 40, cookie_secure=False,
+                 audit_log=str(tmp_path / "a.log"), sso_issuer=ISS, site_file=str(SITE))
+    app = create_app(s, FakeKerberos(), key)
+    page = TestClient(app).get("/").text
+    assert 'href="/auth/login">로그인' in page and 'href="/account/request"' in page and "로그아웃" not in page
+    for title in ("계정", "에이전트 · 샌드박스", "핸드북 (Claude MCP)"):  # a card per app of the site file
+        assert f"<h2>{title}</h2>" in page
+    assert "https://www.m00nny.kr/mcp</code>" in page  # the derived domain
+    c, _ = sign_in(app)
+    page = c.get("/").text
+    assert "<code>alice</code> 님" in page and 'href="/auth/logout">로그아웃' in page and 'href="/account/"' in page
+
+
+def test_a_broken_keytab_is_a_message_not_a_crash(sso, tmp_path):
+    s, k, app = sso
+
+    def broken(principal, password):
+        raise KerberosError("KDC verification against HTTP@www.m00nny.kr failed: keytab is nonexistent")
+    k.verify_password = broken
+    _, r = sign_in(app)
+    assert r.status_code == 503 and "관리자에게 알려 주세요" in r.text and "keytab" not in r.text
+    assert "keytab is nonexistent" in (tmp_path / "audit.log").read_text()

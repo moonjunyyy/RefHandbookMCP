@@ -3,7 +3,8 @@
 A service ("app") is a backend the site sign-in fronts: the account portal, refhandbook, and whatever
 comes next. Its entry says where it lives (routes), whom tokens are minted for (audience),
 and how it is shown (title, description, links, menu). portal/deploy.py renders the nginx snippets
-and the landing page from it; the SSO mints tokens for its audiences; the portal's menu shows its apps.
+from it; the SSO shows its cards on the main page and mints tokens for its audiences; the portal's
+menu shows its apps.
 
 Rules the renderer enforces, so a new entry cannot weaken the site by omission:
   - a `site` route goes through the sign-in (auth_request) and, if its app has an audience, carries
@@ -16,7 +17,6 @@ Rules the renderer enforces, so a new entry cannot weaken the site by omission:
 
 from __future__ import annotations
 
-import html
 import re
 import tomllib
 from dataclasses import dataclass, field
@@ -65,7 +65,7 @@ class App:
     menu: str = ""  # the menu label; "" = not in the portal's menu
     menu_href: str = ""
     links: tuple[Link, ...] = ()
-    code: str = ""  # a line shown in a <code> on the landing card (an address to connect to)
+    code: str = ""  # a line shown in a <code> on its card on the main page (an address to connect to)
     card: bool = True
     routes: tuple[Route, ...] = ()
 
@@ -218,24 +218,3 @@ def render_locations(site: Site, name: str) -> str:
         for r in a.routes:
             out += _location(a, r, name)
     return "\n".join(out) + "\n"
-
-
-# ── the landing page ─────────────────────────────────────────────────────
-
-INDEX_HEAD = Path(__file__).parent / "templates" / "site_index_head.html"
-
-
-def render_index(site: Site, heading: str, lead: str = "계정 하나(Kerberos)로 아래 서비스를 모두 씁니다.") -> str:
-    cards = []
-    for a in site.apps:
-        if not a.card:
-            continue
-        e = html.escape
-        links = "".join(f'<a href="{e(ln.href)}">{e(ln.label)}</a>' for ln in a.links)
-        cards.append(f'    <section class="card">\n      <h2>{e(a.title)}</h2>\n'
-                     + (f"      <p>{e(a.description)}</p>\n" if a.description else "")
-                     + (f"      <p><code>{e(a.code)}</code></p>\n" if a.code else "")
-                     + (f'      <div class="row">{links}</div>\n' if links else "")
-                     + "    </section>")
-    return (INDEX_HEAD.read_text().replace("@@title@@", html.escape(heading)) + f'<main>\n  <h1>{html.escape(heading)}</h1>\n  <p class="lead">{html.escape(lead)}</p>\n'
-            '  <div class="grid">\n' + "\n".join(cards) + "\n  </div>\n</main>\n</body>\n</html>\n")

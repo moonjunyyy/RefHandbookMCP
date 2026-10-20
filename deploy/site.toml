@@ -1,6 +1,6 @@
 # The site, declared once. `sudo deploy/install.sh` installs it as /etc/<name>/site.toml and renders
-# everything else from it: the systemd units, the nginx site, the landing page, the SSO's audiences
-# and the portal's menu.
+# everything else from it: the systemd units and the nginx site; the SSO's main page, its audiences
+# and the portal's menu read it too.
 #
 # [site] is optional, every key of it: each value derives from the Kerberos realm (krb5.conf's
 # default_realm) unless set here (portal/facts.py lists the derivations):
@@ -35,11 +35,10 @@ portal_root = "/account"
 [[app]]
 id = "account"
 title = "계정"
-description = "프로필, 비밀번호 변경. 관리자는 사용자와 사용 신청을 관리합니다."
+description = "프로필과 비밀번호. 관리자는 여기서 사용자, 사용 신청, 초대 링크를 관리합니다."
 audience = "account"
 upstream = "@@upstream:portal@@"
-link = [{ label = "내 계정", href = "@@portal_root@@/" }, { label = "로그인", href = "/auth/login" },
-        { label = "로그아웃", href = "/auth/logout" }]
+link = [{ label = "내 계정", href = "@@portal_root@@/" }]
   [[app.route]]
   path = "@@portal_root@@"
   match = "exact"
@@ -57,14 +56,15 @@ link = [{ label = "내 계정", href = "@@portal_root@@/" }, { label = "로그�
   body = "16k"
   note = "사용 신청: no account yet, by definition"
   [[app.route]]
+  path = "@@portal_root@@/join/"
+  auth = "public"
+  limit = "login"
+  burst = 5
+  body = "16k"
+  note = "sign-up with an invitation link: no account yet, by definition"
+  [[app.route]]
   path = "@@portal_root@@/static/"
   auth = "public"
-
-[[app]]
-id = "signup"
-title = "계정이 없거나 임시 비밀번호를 받았다면"
-description = "사용 신청은 관리자가 확인한 뒤 계정을 만들고 임시 비밀번호를 전달합니다. 처음 쓸 때 새 비밀번호로 바꿔야 합니다."
-link = [{ label = "사용 신청", href = "@@portal_root@@/request" }, { label = "임시·만료 비밀번호 변경", href = "/auth/expired" }]
 
 [[app]]
 id = "agents"

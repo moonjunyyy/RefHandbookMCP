@@ -14,6 +14,7 @@ PERMISSIONS = {
     "set_enabled": {"admin"},
     "manage_groups": {"admin"},
     "review_requests": {"admin"},
+    "manage_invites": {"admin"},
 }
 # Actions that would let you lock yourself (or the last admin) out.
 NOT_ON_SELF = {"set_enabled", "manage_groups", "reset_password"}
