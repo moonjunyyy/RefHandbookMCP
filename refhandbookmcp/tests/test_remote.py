@@ -293,6 +293,19 @@ def test_ldap_anonymous_search_template_and_group(tmp_path, ldap_server):
 # ── configuration and packaging ──────────────────────────────────────────
 
 
+def test_a_note_after_a_url_setting_is_refused_at_start(monkeypatch):
+    """systemd keeps "https://x   (default: …)" as the whole value; the token check would then fail
+    on every request with only "Invalid issuer" to show for it."""
+    monkeypatch.setenv("RHB_PUBLIC_URL", "https://www.m00nny.kr")
+    monkeypatch.setenv("RHB_SSO_ISSUER", "https://www.m00nny.kr      (default: RHB_PUBLIC_URL)")
+    with pytest.raises(SystemExit, match="RHB_SSO_ISSUER"):
+        remote.Config.from_env()
+    monkeypatch.setenv("RHB_SSO_ISSUER", "https://www.m00nny.kr")
+    assert remote.Config.from_env().sso_issuer == "https://www.m00nny.kr"
+    monkeypatch.delenv("RHB_SSO_ISSUER")
+    assert remote.Config.from_env().sso_issuer == "https://www.m00nny.kr"  # the public URL
+
+
 def test_config_and_redirects(monkeypatch, tmp_path):
     monkeypatch.setenv("RHB_PUBLIC_URL", "http://hb.example.org")
     with pytest.raises(SystemExit):

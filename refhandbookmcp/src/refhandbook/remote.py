@@ -65,6 +65,16 @@ def _env(name: str, default: str | None = None) -> str | None:
     return v if v not in (None, "") else default
 
 
+def _url_env(name: str, default: str | None = None) -> str | None:
+    """A URL or path setting. One with whitespace in it is refused at start: systemd's EnvironmentFile
+    keeps a note after the value ("https://x   (default: …)") as part of it, and a token check against
+    such an issuer fails on every request with only "Invalid issuer" to show for it."""
+    v = _env(name, default)
+    if v is not None and any(c.isspace() for c in v):
+        raise SystemExit(f"{name}={v!r} has whitespace in it: put notes on a line of their own")
+    return v
+
+
 def _secret(name: str) -> str | None:
     """NAME_FILE (a file holding the secret) wins over NAME."""
     path = _env(name + "_FILE")
@@ -124,7 +134,7 @@ class Config:
 
     @classmethod
     def from_env(cls) -> Config:
-        public = _env("RHB_PUBLIC_URL")
+        public = _url_env("RHB_PUBLIC_URL")
         if not public:
             raise SystemExit("RHB_PUBLIC_URL is required, e.g. https://hb.example.org")
         public = public.rstrip("/")
@@ -170,9 +180,9 @@ class Config:
             extra_hosts=_list("RHB_ALLOWED_HOSTS", ()),
             account_url=_account_url(_env("RHB_ACCOUNT_URL")),
             sso_public_key_file=_env("RHB_SSO_PUBLIC_KEY_FILE", cls.sso_public_key_file),  # type: ignore[arg-type]
-            sso_issuer=_env("RHB_SSO_ISSUER", public),  # type: ignore[arg-type]
+            sso_issuer=_url_env("RHB_SSO_ISSUER", public),  # type: ignore[arg-type]
             sso_audience=_env("RHB_SSO_AUDIENCE", cls.sso_audience),  # type: ignore[arg-type]
-            login_url=_env("RHB_LOGIN_URL", cls.login_url),  # type: ignore[arg-type]
+            login_url=_url_env("RHB_LOGIN_URL", cls.login_url),  # type: ignore[arg-type]
         )
 
 
