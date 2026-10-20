@@ -29,7 +29,6 @@ Layout next to the store (<db> is the store's file, so local and remote stores a
 
 from __future__ import annotations
 
-import json
 import os
 import secrets
 import shutil
@@ -45,7 +44,7 @@ from pathlib import Path
 from typing import Any
 
 from ..kernel import capabilities, capkinds  # noqa: F401 — registers the kernel's kinds
-from ..kernel.graph import Conflict, Forbidden, Graph, KernelError
+from ..kernel.graph import Conflict, Graph, KernelError
 from ..store import Handbook, HandbookError
 from . import capkinds as _sandbox_kinds  # noqa: F401 — registers policy, script, layer
 from . import sandbox

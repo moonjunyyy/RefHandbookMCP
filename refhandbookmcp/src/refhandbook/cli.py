@@ -341,7 +341,6 @@ def _policy(args: argparse.Namespace, hb: Handbook) -> int:
 
 def _cap(args: argparse.Namespace, hb: Handbook) -> int:
     """Capability records from the server's terminal, as the user."""
-    import threading
 
     from . import cap_api
 
