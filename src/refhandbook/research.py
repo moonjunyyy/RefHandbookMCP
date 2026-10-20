@@ -370,16 +370,18 @@ class Research:
                 | {"sessions": lg["turn"], "pending": pend,
                    "open_sessions": [{"id": o["id"], "role": o["role"], "seq": o["seq"]} for o in live]})
 
-    def prompt(self, ledger: str) -> str:
-        """Hook support: count one user prompt and say how the reply starts."""
+    def prompt(self, ledger: str, label: str = "") -> str:
+        """Hook support: count one user prompt and say how the reply starts. `label` is the client's
+        id for this conversation: begin takes it, so this conversation's sessions are known as its."""
         import time
         with self.db:
             self.db.execute("UPDATE rl_ledgers SET prompts = prompts + 1 WHERE id = ?", (ledger,))
             # a hook is not a model write: keep the digest valid for the reader
             self.db.execute("UPDATE rl_ledgers SET token = ? WHERE id = ?", (self._digest(ledger), ledger))
-            if self.k is not None:
-                self.k.set_meta(f"prompt:{ledger}", repr(time.time()))
-        return (f"[research cycle active on {ledger!r}] First action: research_begin(ledger={ledger!r}); "
+            if self.k is not None and label:
+                self.k.set_meta(f"prompt:{ledger}:{label}", repr(time.time()))
+        lab = f", label={label!r}" if label else ""
+        return (f"[research cycle active on {ledger!r}] First action: research_begin(ledger={ledger!r}{lab}); "
                 "one session per message: research_end before the reply ends.")
 
     def _column(self, sql: str, *params: Any) -> list[Any]:
@@ -497,6 +499,11 @@ class Research:
         ids = set(self._column("SELECT id FROM rl_rows WHERE ledger = ? AND turn_updated >= ?", ledger, since))
         ids |= set(self._column("SELECT ref FROM rl_turnmarks WHERE ledger = ? AND turn >= ? AND kind = 'touched'",
                                 ledger, since))
+        if self.k is not None:  # and whatever a session still open has changed, however old it is
+            live = [o["seq"] for o in sessions.open_sessions(self.k.g, ledger)]
+            if live:
+                ids |= set(self._column(f"SELECT ref FROM rl_turnmarks WHERE ledger = ? AND kind = 'touched' AND turn IN "
+                                        f"({','.join('?' * len(live))})", ledger, *live))
         # what the obligations will name: live K, open directives, rows to re-judge
         for r in self._rows(ledger):
             k = key(r["status"])
@@ -510,8 +517,9 @@ class Research:
               label: str = "") -> str:
         """Open a session on the ledger (or re-read one): the token on the first line goes with every
         later call. A chat session is one exchange (a user message and the reply); an agent session is
-        one delegated run. Without `session`, an idle session of the same role (one left open: it
-        still answers for what it opened) is resumed; otherwise a new one opens beside any others."""
+        one delegated run. Without `session`, an open session of the same role and `label` (the
+        client's id for its conversation) is resumed; otherwise a new one opens beside any others.
+        What the view shows counts as read, and nothing else."""
         if view not in ("brief", "recent", "full"):
             raise ResearchError("view must be brief, recent or full")
         if self.k is None:
@@ -529,13 +537,12 @@ class Research:
                     adopted = True
                 else:
                     s, adopted = sessions.open(g, ledger, role, label=label, floor=lg["turn"])
-                sessions.ack(g, s["id"])
                 self.db.execute("UPDATE rl_ledgers SET open = 1, turn = max(turn, ?) WHERE id = ?", (s["seq"], ledger))
                 self._seal(ledger)
         except sessions.SessionError as e:
             raise ProtocolRefused(str(e)) from e
         if adopted and not session:
-            notes.append(f"resumed session {s['seq']} ({s['role']}), idle since its last call")
+            notes.append(f"resumed session {s['seq']} ({s['role']}, {s['label']})")
         others = [o for o in sessions.open_sessions(g, ledger) if o["id"] != s["id"]]
         if others:
             notes.append("also open: " + ", ".join(f"session {o['seq']} ({o['role']})" for o in others)
@@ -546,8 +553,10 @@ class Research:
         n = self.db.execute("SELECT count(*) FROM rl_rows WHERE ledger = ?", (ledger,)).fetchone()[0]
         if view == "full":
             out += [self.render(ledger)]
+            self.seen(ledger, s["id"])
         elif view == "recent":
             ids = self.recent_ids(ledger, recent)
+            self.seen(ledger, s["id"], ids | {"map"})
             out += [self.render(ledger, only=ids, title=f"VIEW recent: {len(ids)} of {n} rows (changed in the last "
                                                        f"{recent} sessions, or live); research_show for the rest"),
                     "", "## M — question map", self._ledger(ledger)["map"]]
@@ -635,25 +644,25 @@ class Research:
         out += [("check", e, "", f"CHECK {e}") for e in self.check(ledger)[0]]
         return out
 
-    def unfinished(self, ledger: str) -> list[str]:
+    def unfinished(self, ledger: str, label: str = "") -> list[str]:
         """For the stop hook: a chat session is one exchange (the user's message and the reply), so a
-        reply may not end with this conversation's session open, nor without a session for the
-        last message. Agent sessions and idle ones (another conversation's, abandoned) are not
-        this reply's."""
-        if self.k is None:
+        reply may not end with its session open, nor without a session for the last message. Whose
+        session is whose comes from the label the prompt hook gave (the client's conversation id):
+        another conversation's sessions, and agents', are not this reply's. Without a label the hook
+        cannot tell, and judges nothing."""
+        if self.k is None or not label:
             return []
-        import time
-        now = time.time()
         out = []
         for s in sessions.open_sessions(self.k.g, ledger):
-            if s["role"] != "chat" or now - s["active"] >= sessions.ADOPT_IDLE:
+            if s["role"] != "chat" or s["label"] != label:
                 continue
             left = [text for *_, text in self.blockers(ledger, s["seq"], "", "chat")]
             out.append(f"session {s['seq']} is still open: " + ("; ".join(left) + "; then " if left else "")
                        + "research_end")
-        last = float(self.k.meta(f"prompt:{ledger}") or 0)
+        last = float(self.k.meta(f"prompt:{ledger}:{label}") or 0)
         if last and not out and not self.db.execute(
-                "SELECT 1 FROM k_sessions WHERE scope = ? AND role = 'chat' AND active >= ?", (ledger, last)).fetchone():
+                "SELECT 1 FROM k_sessions WHERE scope = ? AND role = 'chat' AND label = ? AND active >= ?",
+                (ledger, label, last)).fetchone():
             out.append("no research session for the last message: research_begin, register it, research_end")
         return out
 
@@ -1587,8 +1596,8 @@ class Research:
             self._log(new, lg["turn"], f"renamed from {ledger!r}")
             if self.k is not None:
                 sessions.rescope(self.k.g, ledger, new)
-                self.k.set_meta(f"prompt:{new}", self.k.meta(f"prompt:{ledger}"))
-                self.k.set_meta(f"prompt:{ledger}", None)
+                self.k.g.db.execute("UPDATE k_meta SET key = ? || substr(key, ?) WHERE key LIKE ?",
+                                    (f"prompt:{new}:", len(f"prompt:{ledger}:") + 1, f"prompt:{ledger}:%"))
             self._seal(new)
             self._sealed(ledger)  # gone: its image is dropped, in the same transaction
         return (f"renamed ledger {ledger!r} → {new!r}"
@@ -1607,7 +1616,7 @@ class Research:
             self.db.execute("DELETE FROM rl_ledgers WHERE id = ?", (ledger,))
             if self.k is not None:
                 sessions.forget_scope(self.k.g, ledger)
-                self.k.set_meta(f"prompt:{ledger}", None)
+                self.k.g.db.execute("DELETE FROM k_meta WHERE key LIKE ?", (f"prompt:{ledger}:%",))
             self._sealed(ledger)
         return f"deleted ledger {ledger!r} ({n} rows, last closed session {lg['last_closed']})"
 

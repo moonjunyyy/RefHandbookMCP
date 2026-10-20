@@ -16,7 +16,7 @@ from typing import Any
 
 from . import proposals
 from .capabilities import DAY, CapError, Kind, Registry, register
-from .graph import NAME_RE as RULE_ID, PHASES, SEVERITIES
+from .graph import NAME_RE as RULE_ID, PHASES, SEVERITIES, Forbidden
 
 RULE_FIELDS = ("phase", "body", "message", "severity", "applies_to", "replaces", "description")
 
@@ -50,6 +50,12 @@ class RuleKind(Kind):
                              "message": s.get("message", "")}], actor=ver["author"])
         if s.get("replaces"):
             proposals.record(reg.g, rec["attrs"]["name"], s["replaces"])
+
+    def guard(self, reg: Registry, rec: dict[str, Any], actor: str) -> None:
+        r = reg.g.get_rule(rec["attrs"]["name"])
+        if actor == "model" and r is not None and r["state"] == "active" and r["authority"] != "proposed":
+            raise Forbidden(f"rule {r['id']} was approved by the user ({r['authority']}): only the user changes or "
+                            "retires it now")
 
     def unapply(self, reg: Registry, rec: dict[str, Any]) -> None:
         r = reg.g.get_rule(rec["attrs"]["name"])
@@ -143,18 +149,27 @@ class CardKind(Kind):
             raise CapError("rs-* cards are the research package's")
         if not str(spec.get("title", "")).strip():
             raise CapError("a card needs a title")
+        hb = reg.ctx.get("hb")
+        if hb is not None and reg.find("card", name) is None and hb.exists(name):
+            raise CapError(f"card {name!r} is a handbook entry already (not a record): pick another name")
         return spec
 
     def apply(self, reg: Registry, rec: dict[str, Any], ver: dict[str, Any]) -> None:
         hb = reg.ctx.get("hb")
         if hb is None:
             raise CapError("cards need the handbook")
-        hb.save_entry(id=rec["attrs"]["name"], **ver["spec"])
+        e = hb.save_entry(id=rec["attrs"]["name"], **ver["spec"])
+        reg.g.update_node(rec["id"], actor="kernel", attrs={"card_revision": e["revision"]})
 
     def unapply(self, reg: Registry, rec: dict[str, Any]) -> None:
+        """The card goes with its record, unless someone edited it outside the record since."""
         hb = reg.ctx.get("hb")
-        if hb is not None and hb.exists(rec["attrs"]["name"]):
-            hb.delete_entry(rec["attrs"]["name"])
+        name = rec["attrs"]["name"]
+        if hb is not None and hb.exists(name):
+            if hb.get_entry(name)["revision"] == reg.g.node(rec["id"])["attrs"].get("card_revision"):
+                hb.delete_entry(name)
+            else:
+                reg.g.log("kernel", f"card {name} kept: edited outside its record", rec["id"])
 
     def check(self, reg: Registry, rec: dict[str, Any], ver: dict[str, Any]) -> tuple[str, str]:
         hb = reg.ctx.get("hb")

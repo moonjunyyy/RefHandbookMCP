@@ -152,7 +152,7 @@ agree.
 
 | Mechanism | What it enforces |
 | :- | :- |
-| Session protocol: `research_begin` → its token on every call → `research_end` | Sessions (kernel `k_sessions`) run side by side: a write is refused with CONFLICT only when it changes an object another session changed after this one read it (`k_writes` / `k_seen`, per object). `research_end` refuses while what the session opened remains (a pending hit it raised, a K it runs, a plan it committed and has not synced) or a check error; a `chat` session also answers for the user's directives and the continuation, an `agent` session does not. A session left open is resumed by the next `research_begin` of its role once idle (30 min). |
+| Session protocol: `research_begin` → its token on every call → `research_end` | Sessions (kernel `k_sessions`) run side by side: a write is refused with CONFLICT only when it changes an object another session changed concurrently (still open, or after this one opened) and this one has not read since (`k_writes` / `k_seen`, per object); what a view shows counts as read, nothing else. `research_end` refuses while what the session opened remains (a pending hit it raised, a K it runs, a plan it committed and has not synced) or a check error; a `chat` session also answers for the user's directives and the continuation, an `agent` session does not. A session is resumed only by its token, or by its `label` (the client's conversation id, which the prompt hook passes), never by another participant. |
 | Plan objects (K) | Every card exit returns objects. `research_done` refuses an exit that pushed nothing. One K waits for the user across sessions: a push to page USER re-arms it, so a one-word message adds no K. |
 | Volume | `research_begin` shows the rows changed in the last 3 sessions and every live row (`view=recent`; `brief` and `full` too), and `research_end` prints only the rows the session changed. `research_show(ids=…)` reads the rest. |
 | Configurations | `main` is the set of premises that are on, and only the user switches it. Named configurations switch premises on or off, swap alternatives, or add model premises, and the boundary report shows which single change flips a verdict. Model origin taints: nothing on the main line may rest on it. |
@@ -209,9 +209,10 @@ hooks. They read a local store, so they only help with the local declaration. To
 these to `.claude/settings.json`:
 - `UserPromptSubmit`: `refhandbook research-hook prompt <ledger>`, which counts prompts and names
   the first action of the reply;
-- `Stop`: `refhandbook research-hook stop <ledger>`, which exits 2 while an active chat session is
-  still open, or while the latest prompt has no session (agent sessions and idle ones are not
-  the reply's).
+- `Stop`: `refhandbook research-hook stop <ledger>`, which exits 2 while this conversation's chat
+  session (by the label the prompt hook gave, from the hook payload's `session_id`) is still
+  open, or the latest prompt has no session; other conversations' sessions and agents' are not
+  the reply's.
 
 ### Remote server
 

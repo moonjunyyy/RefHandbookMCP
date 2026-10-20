@@ -144,6 +144,9 @@ RULES = [
         rs_owned(X) :- edge(T, runs, X), node(T, session, _).
         rs_owned(X) :- edge(T, planned, X), node(T, session, _).
     """),
+    # a directive another open session (another conversation) has in hand is that session's to answer
+    _r("rs_held_elsewhere", "derive",
+       "rs_held_elsewhere(S, X) :- rs_chat(S), edge(T, touched, X), node(T, session, open), T != S."),
     _r("rs_has_k", "derive", 'rs_has_k(L) :- rs_row(L, _, _, "K").'),
     _r("rs_has_cont", "derive", 'rs_has_cont(L) :- rs_row(L, X, _, "K"), class(X, continuation).'),
     _r("rs_touched_u", "derive", 'rs_touched_u(T) :- edge(T, touched, X), attr(X, rid, R), prefix(R, "U").'),
@@ -285,7 +288,7 @@ RULES = [
        "NO CONTINUATION: push the next K (a queued step, or @USER awaiting the user) before ending", "session"),
     _r("rs_b_directive", "close",
        'rs_b_directive(R) :- rs_session_ledger(Self, L), rs_chat(Self), rs_row(L, X, R, "U"), class(X, u_open),'
-       " not edge(Self, touched, X), not edge(Self, carry, X).",
+       " not edge(Self, touched, X), not edge(Self, carry, X), not rs_held_elsewhere(Self, X).",
        "DIRECTIVE {R} neither addressed (set) nor carried", "session"),
     _r("rs_b_no_directive", "close",
        "rs_b_no_directive(Self) :- rs_chat(Self), not rs_touched_u(Self), not rs_idle(Self).",

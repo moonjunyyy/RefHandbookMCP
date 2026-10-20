@@ -242,19 +242,17 @@ def _research(args, hb: Handbook) -> int:
                 print(research.abnormal_index())
             return 0
         if args.command == "research-hook":
+            payload = json.loads(sys.stdin.read() or "{}") if not sys.stdin.isatty() else {}
+            label = f"cc:{payload['session_id']}" if payload.get("session_id") else ""
             if args.event == "prompt":
-                print(research_api.R().prompt(args.ledger))
+                print(research_api.R().prompt(args.ledger, label))
                 return 0
-            payload = json.loads(sys.stdin.read() or "{}")
             if payload.get("stop_hook_active"):
                 return 0
-            # a reply may end with its session open (the next prompt resumes it), but not mid-work:
-            # a pending hit it raised, a K it runs, a plan it has not synced
-            r = research_api.R()
-            left = r.unfinished(args.ledger)
+            # this conversation's session (the label the prompt hook gave) must be closed by the reply's end
+            left = research_api.R().unfinished(args.ledger, label)
             if left:
-                print(f"Research on {args.ledger!r}: finish before ending the reply (or research_end):\n  "
-                      + "\n  ".join(left), file=sys.stderr)
+                print(f"Research on {args.ledger!r}:\n  " + "\n  ".join(left), file=sys.stderr)
                 return 2
             return 0
         if args.tool == "list":
@@ -317,7 +315,7 @@ def _policy(args: argparse.Namespace, hb: Handbook) -> int:
     if args.network:
         changes["network"] = args.network == "on"
     if args.ports:
-        changes["ports"] = None if args.ports.strip() == "any" else [int(x) for x in args.ports.split()]
+        changes["ports"] = "any" if args.ports.strip() == "any" else [int(x) for x in args.ports.split()]
     if args.layers is not None:
         changes["layers"] = args.layers.split()
     if args.mount:

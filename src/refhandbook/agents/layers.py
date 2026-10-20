@@ -155,7 +155,8 @@ class LayerStore:
 
     def build(self, name: str, script: str, *, base: str = "host", parents: list[str] | None = None,
               network: bool = False, description: str = "", timeout: float = 3600.0,
-              limits: sandbox.Limits | None = None) -> tuple[Layer, int, str]:
+              limits: sandbox.Limits | None = None, ports: list[int] | None = None,
+              commands: dict[str, str] | None = None) -> tuple[Layer, int, str]:
         """Run `script` (shell text) as root in a sandbox over base + parents and keep what it
         changed under the overlay points as layer `name`. Returns (layer, exit status, output);
         the layer is kept only if the script exits 0."""
@@ -179,6 +180,8 @@ class LayerStore:
                 argv=["/bin/sh", "-e", "/work/build.sh"], root=str(work / "root"), work=str(work / "work"),
                 base=self.base_path(base), layers=[str(self.tree(n)) for n in stack], upper=str(work / "upper"),
                 hostetc=str(self.ensure_hostetc()) if base == "host" else None, network=network, uid=0, gid=0,
+                ports=ports if network else None, commands=list(commands) if commands is not None else None,
+                command_paths=commands,
                 timeout=timeout, limits=limits or sandbox.Limits(memory_mb=8192, pids=4096, fsize_mb=16384,
                                                                   tmp_mb=4096, cpus=4.0),
                 env={"HOME": "/root", "DEBIAN_FRONTEND": "noninteractive"}, cwd="/work")

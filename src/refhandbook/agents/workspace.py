@@ -179,37 +179,53 @@ class Workspace:
                 "description": "the default: computation, no network"}
 
     def _adopt(self) -> None:
+        """Records for what came before the registry, once per store, by one rule: nothing stays in
+        force without a record. A legacy row is adopted as its author's record (a row the model wrote
+        is the model's, so a widening one waits for the user like any other); a row that cannot be
+        adopted is taken out of force and logged once. The default policy is seeded once: removed by
+        the user, it stays removed."""
         from .capkinds import POLICY_FIELDS
 
         caps = self.caps
+        if self.g.db.execute("SELECT 1 FROM k_meta WHERE key = 'cap:adopted:sandbox'").fetchone():
+            return
         legacy = {r[0]: self.g.node(r[0]) for r in self.g.db.execute(
-            "SELECT id FROM k_nodes WHERE type IN ('policy', 'script') ORDER BY type, id")}
-        if caps.find("policy", DEFAULT_POLICY) is None:
-            old = legacy.get(f"policy:{DEFAULT_POLICY}")
+            "SELECT id FROM k_nodes WHERE type IN ('policy', 'script') ORDER BY type DESC, id")}  # scripts after policies
+        with self.g.tx():
+            self.g.db.execute("INSERT INTO k_meta VALUES ('cap:adopted:sandbox', ?)", (repr(time.time()),))
+            old = legacy.pop(f"policy:{DEFAULT_POLICY}", None)
             spec = self.default_policy_spec()
             if old is not None:
                 spec.update({k: v for k, v in old["attrs"].items() if k in POLICY_FIELDS})
                 spec["description"] = old["content"] or spec["description"]
-            spec["commands"] = [c for c in spec["commands"] if shutil.which(c, path=sandbox.HOST_PATH)]
-            caps.add("policy", DEFAULT_POLICY, spec=spec, actor=old["author"] if old else "kernel",
-                     note="adopted" if old else "")
-        for nid, n in legacy.items():
-            type_, name = nid.split(":", 1)
-            if caps.find(type_, name) is not None:
-                continue
-            actor = n["author"] if n["author"] in ("user", "model") else "kernel"
-            try:
-                if type_ == "policy":
-                    spec = {k: v for k, v in n["attrs"].items() if k in POLICY_FIELDS}
-                    spec["description"] = n["content"] or name
-                    caps.add("policy", name, spec=spec, actor="user" if actor == "model" else actor, note="adopted")
-                elif n["state"] == "active":
-                    body = self.g.get_blob(n["attrs"]["blob"]).decode()
-                    caps.add("script", name, spec={"interpreter": n["attrs"]["interpreter"],
-                                                   "policy": n["attrs"]["policy"], "description": n["content"]},
-                             body=body, actor=actor, note="adopted")
-            except KernelError as e:
-                self.g.log("kernel", f"could not adopt {nid}: {e}", nid)
+                spec["commands"] = [c for c in spec["commands"] if shutil.which(c, path=sandbox.HOST_PATH)]
+                self.g.delete_node(old["id"], actor="kernel")  # the record's apply writes it again
+            caps.seed("policy", DEFAULT_POLICY, spec=spec,
+                      actor=old["author"] if old is not None and old["author"] == "user" else "kernel",
+                      note="adopted" if old is not None else "")
+            for nid in sorted(legacy, key=lambda x: (not x.startswith("policy:"), x)):
+                n = legacy[nid]
+                type_, name = nid.split(":", 1)
+                actor = n["author"] if n["author"] in ("user", "model") else "kernel"
+                try:
+                    with self.g.tx():
+                        if type_ == "policy":
+                            spec = {k: v for k, v in n["attrs"].items() if k in POLICY_FIELDS}
+                            spec["description"] = n["content"] or name
+                            self.g.delete_node(nid, actor="kernel")
+                            caps.add("policy", name, spec=spec, actor=actor, note="adopted")
+                        elif n["state"] == "active":
+                            body = self.g.get_blob(n["attrs"]["blob"]).decode()
+                            self.dematerialize("script", name)
+                            caps.add("script", name, spec={"interpreter": n["attrs"]["interpreter"],
+                                                           "policy": n["attrs"]["policy"], "description": n["content"]},
+                                     body=body, actor=actor, note="adopted")
+                except KernelError as e:
+                    if type_ == "policy" and self.g.get_node(nid) is not None:
+                        self.g.delete_node(nid, actor="kernel")
+                    elif type_ == "script":
+                        self.dematerialize("script", name)
+                    self.g.log("kernel", f"not adopted, taken out of force: {nid}: {e}", nid)
 
     # ── policies: the user's grant ───────────────────────────────────────
 
@@ -297,7 +313,8 @@ class Workspace:
         self.g.put_node(jid, "job", actor="kernel", state="queued", content=f"layer {name}",
                         attrs={"build": name, "version": ver["version"], "script": f"layer:{name}", "args": [],
                                "blob": self.g.put_blob(ver["body"]), "policy": None,
-                               "timeout": float(ver["spec"]["timeout"]), "submitted": time.time()})
+                               "timeout": float(self.policy(ver["spec"]["policy"])["attrs"]["timeout"]),
+                               "submitted": time.time()})
         (self.base / "queue" / jid[4:]).touch()
         return jid
 
@@ -529,6 +546,10 @@ class Runner:
             pol = self.ws.policy(j["attrs"]["policy"])["attrs"]
             trees = layer_trees(self.ws.caps, pol.get("layers") or []) if pol.get("layers") else []
             mounts = [(mount_source(self.ws, m["source"]), m["target"], m["rw"]) for m in pol.get("mounts") or []]
+        ids = {}
+        for src, dst, _ in mounts:
+            st = os.stat(src)
+            ids[dst] = [st.st_dev, st.st_ino]
         (jobdir / "root").mkdir(parents=True, exist_ok=True)
         script = jobdir / "script"
         with self.lock:
@@ -549,14 +570,15 @@ class Runner:
             binds_ro=[(str(script), "/job/script")] + [(src, dst) for src, dst, rw in mounts if not rw],
             binds_rw=[(src, dst) for src, dst, rw in mounts if rw],
             layers=trees, network=bool(pol["network"]),
-            ports=(list(pol["ports"]) if pol.get("ports") is not None else None) if pol["network"] else None,
+            ports=(None if pol.get("ports") in ("any", None) else list(pol["ports"])) if pol["network"] else None,
             timeout=float(j["attrs"]["timeout"]), commands=None if every else list(paths or {}),
-            command_paths=paths, limits=limits, cgroup=leaf)
+            command_paths=paths, bind_ids=ids, limits=limits, cgroup=leaf)
 
     def _build(self, j: dict[str, Any]) -> None:
-        """A layer build: the layer store builds it in a sandbox over the base and its parents; the
+        """A layer build: a sandbox of the layer's policy (its commands, network, ports, limits and
+        timeout), root inside it, over the pinned parents; its changes become the layer's tree. The
         layer's record learns the result (built, or the build's error)."""
-        from .capkinds import built_layers, layer_dir
+        from .capkinds import PIN_RE, layer_dir, layer_trees, prune_layers, resolve_command
 
         name, v = j["attrs"]["build"], j["attrs"]["version"]
         result: dict[str, Any] = {}
@@ -564,14 +586,23 @@ class Runner:
         try:
             with self.lock:
                 ver = self.ws.caps.version(self.ws.caps.get("layer", name), v)
-                parents = built_layers(self.ws.caps, ver["spec"]["parents"])
+                pol = self.ws.policy(ver["spec"]["policy"])["attrs"]
+                layer_trees(self.ws.caps, ver["spec"]["parents"])  # each pinned build is still there
+                parents = [layer_dir(m.group(1), int(m.group(2))) for p in ver["spec"]["parents"]
+                           for m in [PIN_RE.match(p)]]
                 body = self.ws.g.get_blob(j["attrs"]["blob"]).decode()
             store = self.ws.layer_store()
-            d = layer_dir(None, name, v)
+            d = layer_dir(name, v)
             if (store.root / "layers" / d).exists():
                 store.remove(d)
-            _, code, out = store.build(d, body, parents=parents, network=bool(ver["spec"]["network"]),
-                                       description=ver["spec"]["description"], timeout=float(ver["spec"]["timeout"]))
+            every = pol["commands"] == ["*"]
+            limits = sandbox.Limits(memory_mb=int(pol["memory_mb"]), cpus=float(pol["cpus"]), tmp_mb=int(pol["tmp_mb"]),
+                                    address_space=self.cg is None)
+            _, code, out = store.build(
+                d, body, parents=parents, network=bool(pol["network"]),
+                ports=None if pol.get("ports") in ("any", None) else list(pol["ports"]),
+                description=ver["spec"]["description"], timeout=float(pol["timeout"]), limits=limits,
+                commands=None if every else {c: p for c in pol["commands"] if (p := resolve_command(c, []))})
             result["exit"] = code
             state = "done" if code == 0 else "failed"
         except Exception as e:  # noqa: BLE001 — a runner never dies of one job
@@ -585,11 +616,7 @@ class Runner:
                 if state == "done":
                     self.ws.g.update_node(rec["id"], actor="kernel", attrs={"built": v, "building": None,
                                                                             "build_error": None})
-                    store = self.ws.layer_store()
-                    for lay in store.list():  # earlier builds, unless another layer stands on one
-                        if lay.name.startswith(f"{name}.v") and lay.name != layer_dir(None, name, v) and \
-                                not any(lay.name in o.parents for o in store.list()):
-                            store.remove(lay.name)
+                    prune_layers(self.ws.caps, name)
                 else:
                     err = result.get("error") or f"exit {result.get('exit')}: {out[-400:].strip()}"
                     self.ws.g.update_node(rec["id"], actor="kernel", attrs={"building": None, "build_error": err})
