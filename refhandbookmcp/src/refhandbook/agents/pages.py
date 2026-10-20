@@ -136,7 +136,7 @@ def install(m: Any, *, stores: Callable[[str], Handbook], uid_of: Callable[[str]
             ports = f.get("ports", "").strip()
             if ports:
                 try:
-                    changes["ports"] = None if ports == "any" else [int(x) for x in ports.split()]
+                    changes["ports"] = "any" if ports == "any" else [int(x) for x in ports.split()]
                 except ValueError as e:
                     raise HandbookError("포트: 숫자 또는 any") from e
             for k, cast in (("timeout", int), ("memory_mb", int), ("disk_mb", int), ("tmp_mb", int),
@@ -252,7 +252,7 @@ def _overview(ws: Workspace, uid: str, token: str, q: Any) -> str:
             f"<label>마운트 (한 줄에 하나: 원본 대상 [rw]; 원본은 서버가 허용한 디렉터리 아래, {{user}} 사용 가능) "
             f"<textarea name=mounts rows=2>{_e(chr(10).join(m['source'] + ' ' + m['target'] + (' rw' if m['rw'] else '') for m in a.get('mounts') or []))}</textarea></label>"
             f"<label><input type=checkbox name=network {'checked' if a['network'] else ''} style='width:auto'> 네트워크</label> "
-            f"<label>포트 <input class=small name=ports value='{_e('any' if a.get('ports') is None else ' '.join(map(str, a.get('ports') or [])))}'></label> "
+            f"<label>포트 <input class=small name=ports value='{_e('any' if a.get('ports') in (None, 'any') else ' '.join(map(str, a.get('ports') or [])))}'></label> "
             + " ".join(f"<label>{lab} <input class=small name={k} value='{_e(a.get(k, ''))}'></label>"
                        for k, lab in (("timeout", "시간(초)"), ("memory_mb", "메모리MB"), ("cpus", "CPU"),
                                       ("disk_mb", "디스크MB"), ("tmp_mb", "tmpMB"), ("concurrent", "동시")))

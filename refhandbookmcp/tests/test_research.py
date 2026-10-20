@@ -117,22 +117,48 @@ def test_sessions_write_side_by_side_and_conflict_per_object(rs):
     assert {s["seq"] for s in rs.k.g.db.execute("SELECT seq FROM k_sessions WHERE closed IS NULL")} == {1, 2}
 
 
-def test_an_idle_session_is_resumed_and_a_closed_token_is_refused(rs):
+def test_only_its_own_participant_resumes_a_session_and_a_closed_token_is_refused(rs):
     t = Turn(rs)
-    t.begin(1)
-    first = t.T
-    t.add("U", "q", "user", "active")
-    _idle(rs, first)
-    t.T = None  # a new conversation turn without the token
-    out = t.begin(1)
-    assert t.T == first and "resumed session 1" in out
+    out = rs.begin("geo", label="cc:one")
+    first = tok(out)
+    rs.add("geo", first, "U", "q", "user", "active")
+    other = tok(rs.begin("geo", label="cc:two"))  # another conversation: its own session
+    agent = tok(rs.begin("geo", role="agent"))  # no label: never resumes anyone's
+    assert len({first, other, agent}) == 3
+    out = rs.begin("geo", label="cc:one")
+    assert tok(out) == first and "resumed session 1 (chat, cc:one)" in out
+    t.T = first
     t.push("await", "USER", "U1")
     t.set("U1", "status", "answered")
-    closed = t.T
     t.end()
     with pytest.raises(ResearchError, match="no open session"):
-        rs.begin("geo", closed)
-    assert rs.begin("geo").startswith("SESSION S2-")
+        rs.begin("geo", first)
+
+
+def test_a_change_by_an_open_session_must_be_read_before_it_is_overwritten(rs):
+    a = Turn(rs, role="agent")
+    a.begin(1)
+    a.add("C", "criterion", "user", "mandatory")
+    for n in range(2, 7):  # sessions come and go while the agent's stays open
+        t = Turn(rs)
+        t.begin(n)
+        close_turn_min(t)
+    a.set("C1", "content", "criterion, revised by the agent")
+    b = Turn(rs)
+    out = b.begin(7, view="brief")  # shows no rows, so it acks none
+    with pytest.raises(ResearchError, match="CONFLICT: .*C1"):
+        b.set("C1", "content", "overwritten unseen")
+    out = b.begin(7)  # the recent view shows what open sessions changed, however old
+    assert "revised by the agent" in out
+    b.set("C1", "content", "edited after reading")
+
+
+def close_turn_min(t):
+    t.add("U", "ok", "user", "active")
+    uid = t.r._rows(t.L, "U")[-1]["id"]
+    t.push("await the user", "USER", uid)
+    t.set(uid, "status", "answered")
+    t.end()
 
 
 def test_an_agent_answers_only_for_what_it_opened(rs):
@@ -557,21 +583,22 @@ def test_cli_show_loads_cards_on_a_fresh_database(tmp_path):
     assert p.returncode == 0 and "Research N1" in p.stdout
 
 
-def test_stop_hook_wants_this_messages_session_closed_and_ignores_agents(rs):
-    assert rs.unfinished("geo") == []
-    assert "research_begin(ledger='geo')" in rs.prompt("geo")
-    assert rs.unfinished("geo") == ["no research session for the last message: research_begin, register it, research_end"]
-    agent = Turn(rs, role="agent")
-    agent.begin(1)
-    assert rs.unfinished("geo")[0].startswith("no research session")  # an agent is not this reply's session
-    chat = Turn(rs)
-    chat.begin(2)
-    left = rs.unfinished("geo")
-    assert len(left) == 1 and left[0].startswith("session 2 is still open: NO DIRECTIVE")
-    chat.add("U", "q", "user", "active")
-    chat.push("await", "USER", "U1")
-    chat.set("U1", "status", "answered")
-    chat.end()
-    assert rs.unfinished("geo") == []
+def test_stop_hook_judges_only_this_conversations_session(rs):
+    assert rs.unfinished("geo", "cc:me") == []
+    assert "label='cc:me'" in rs.prompt("geo", "cc:me")
+    assert rs.unfinished("geo", "cc:me") == ["no research session for the last message: research_begin, register it, research_end"]
+    assert rs.unfinished("geo", "") == []  # without the conversation's id the hook cannot tell whose is whose
+    tok(rs.begin("geo", role="agent"))
+    other = tok(rs.begin("geo", label="cc:other"))  # another conversation, mid-work: not this reply's
+    rs.add("geo", other, "U", "theirs", "user", "active")
+    assert rs.unfinished("geo", "cc:me")[0].startswith("no research session")
+    mine = tok(rs.begin("geo", label="cc:me"))
+    left = rs.unfinished("geo", "cc:me")
+    assert len(left) == 1 and left[0].startswith("session 3 is still open: NO DIRECTIVE")
+    rs.add("geo", mine, "U", "q", "user", "active")
+    rs.push("geo", mine, "await", "USER", "U2")
+    rs.set("geo", mine, "U2", "status", "answered")
+    rs.end("geo", mine)
+    assert rs.unfinished("geo", "cc:me") == []
     st = rs.status("geo")
-    assert [s["role"] for s in st["open_sessions"]] == ["agent"] and st["sessions"] == 2
+    assert sorted(s["role"] for s in st["open_sessions"]) == ["agent", "chat"] and st["sessions"] == 3

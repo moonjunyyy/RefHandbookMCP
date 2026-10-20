@@ -4,13 +4,15 @@ A session is one participant's span of work on a scope: a chat conversation's ex
 research ledger, an agent's run on it, or anything else that writes to a scope. It replaces the
 turn: there is no ledger-wide "open turn" that one caller holds and every other caller collides with.
 
-    open(scope, role)   a token, stable for the whole session (not one per write). An idle session of
-                        the same role (no use for ADOPT_IDLE seconds) is adopted instead of opening a
-                        second one: a conversation that comes back picks up where it was left.
+    open(scope, role)   a token, stable for the whole session (not one per write). With a label (the
+                        client's own id for its conversation), an open session of the same label and
+                        role is resumed: only the participant that opened a session picks it up again.
     claim(keys)         before a write: refuse it if another session changed one of these objects
-                        after this session last read it (optimistic, per object), else record it.
-                        Two sessions working on different objects never block each other.
-    ack(keys)           reading an object (or the whole scope) moves what this session has seen.
+                        concurrently and this session has not read it since (optimistic, per
+                        object), else record it. Two sessions on different objects never block each
+                        other; what closed sessions wrote before this one opened is history.
+    ack(keys)           reading an object (or the whole scope) moves what this session has seen:
+                        what was shown to it, nothing more.
     close()             the scope's close rules for this session (its role decides which apply).
 
 Each session gets the scope's next number (`seq`): logs, recency ("the last 3 sessions") and
@@ -25,7 +27,6 @@ from typing import Any
 
 from .graph import Graph, KernelError
 
-ADOPT_IDLE = 1800.0
 ROLES = ("chat", "agent")
 
 
@@ -58,16 +59,16 @@ def open_sessions(g: Graph, scope: str) -> list[dict[str, Any]]:
 
 
 def open(g: Graph, scope: str, role: str = "chat", *, label: str = "", floor: int = 0,  # noqa: A001
-         adopt_idle: float = ADOPT_IDLE, now: float | None = None) -> tuple[dict[str, Any], bool]:
-    """(session, adopted). `floor` is the scope's own count of sessions before this table existed."""
+         now: float | None = None) -> tuple[dict[str, Any], bool]:
+    """(session, resumed). `floor` is the scope's own count of sessions before this table existed."""
     if role not in ROLES:
         raise SessionError(f"role is one of {ROLES}")
     now = time.time() if now is None else now
     with g.tx():
-        for s in open_sessions(g, scope):
-            if s["role"] == role and now - s["active"] >= adopt_idle:
-                g.db.execute("UPDATE k_sessions SET active = ?, seen = ? WHERE id = ?", (now, g.clock(), s["id"]))
-                g.log("kernel", f"session {s['seq']} adopted ({role})", scope)
+        for s in open_sessions(g, scope) if label else []:
+            if s["role"] == role and s["label"] == label:
+                g.db.execute("UPDATE k_sessions SET active = ? WHERE id = ?", (now, s["id"]))
+                g.log("kernel", f"session {s['seq']} resumed ({role}, {label})", scope)
                 return _row(g, s["id"]), True
         last = g.db.execute("SELECT max(seq) FROM k_sessions WHERE scope = ?", (scope,)).fetchone()[0] or 0
         seq = max(last, floor) + 1
@@ -82,9 +83,10 @@ def ack(g: Graph, sid: str, keys: list[str] | None = None) -> None:
     """The session has read these objects (None: the whole scope) as they are now."""
     with g.tx():
         now = g.clock()
-        if keys is None:
-            g.db.execute("UPDATE k_sessions SET seen = ?, active = ? WHERE id = ?", (now, time.time(), sid))
+        if keys is None:  # a read of the whole scope: the key '*'
+            g.db.execute("UPDATE k_sessions SET active = ? WHERE id = ?", (time.time(), sid))
             g.db.execute("DELETE FROM k_seen WHERE session = ?", (sid,))
+            g.db.execute("INSERT INTO k_seen VALUES (?, '*', ?)", (sid, now))
         else:
             g.db.executemany("INSERT OR REPLACE INTO k_seen VALUES (?, ?, ?)", [(sid, k, now) for k in keys])
 
@@ -99,8 +101,12 @@ def claim(g: Graph, s: dict[str, Any], keys: list[str] | tuple[str, ...]) -> Non
         w = g.db.execute("SELECT clock, session FROM k_writes WHERE scope = ? AND key = ?", (s["scope"], k)).fetchone()
         if w is None or w["session"] == s["id"]:
             continue
-        seen = g.db.execute("SELECT clock FROM k_seen WHERE session = ? AND key = ?", (s["id"], k)).fetchone()
-        if w["clock"] > max(s["seen"], seen[0] if seen else 0):
+        seen = g.db.execute("SELECT max(clock) FROM k_seen WHERE session = ? AND key IN (?, '*')",
+                            (s["id"], k)).fetchone()[0] or 0
+        writer_open = g.db.execute("SELECT 1 FROM k_sessions WHERE id = ? AND closed IS NULL",
+                                   (w["session"],)).fetchone() is not None
+        concurrent = writer_open or w["clock"] > s["seen"]  # s["seen"]: the clock when this session opened
+        if concurrent and w["clock"] > seen:
             other = g.db.execute("SELECT seq, role FROM k_sessions WHERE id = ?", (w["session"],)).fetchone()
             stale.append(f"{k} (session {other['seq'] if other else '?'}, {other['role'] if other else '?'})")
     if stale:

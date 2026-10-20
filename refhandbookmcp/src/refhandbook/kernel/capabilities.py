@@ -30,12 +30,14 @@ policy and script nodes its runner reads, the rule kind defines the kernel rule,
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
+import sqlite3
 import time
 from typing import Any
 
-from .graph import Forbidden, Graph, KernelError
+from .graph import Conflict, Forbidden, Graph, KernelError
 
 DAY = 86400.0
 RETENTION = 90 * DAY
@@ -73,6 +75,9 @@ class Kind:
     def check(self, reg: Registry, rec: dict[str, Any], ver: dict[str, Any]) -> tuple[str, str]:
         """("pass" | "fail" | "pending", detail) for the version in force."""
         return "pass", ""
+
+    def guard(self, reg: Registry, rec: dict[str, Any], actor: str) -> None:
+        """Refuse a change by `actor` that it could not make to what the record governs."""
 
     def repair(self, reg: Registry, rec: dict[str, Any], ver: dict[str, Any], detail: str) -> dict[str, Any] | None:
         """A spec that fixes a failed check, for the kernel's own records (they update themselves);
@@ -183,16 +188,32 @@ class Registry:
 
     # ── writing ──────────────────────────────────────────────────────────
 
-    @staticmethod
-    def _may(rec: dict[str, Any], actor: str) -> None:
+    def _may(self, rec: dict[str, Any], actor: str) -> None:
+        """The owner changes a record; the model only its own, and never in a way it could not change
+        what the record governs (the kind's guard: a rule the user approved stays the user's)."""
         if actor == "model" and rec["author"] != "model":
             raise Forbidden(f"{rec['id']} is the {rec['author']}'s: the model changes only its own records "
                             "(add yours under another name)")
+        if rec["attrs"].get("kind") in KINDS:
+            self.kind(rec["attrs"]["kind"]).guard(self, rec, actor)
 
-    def _store(self, cid: str, v: int, spec: dict[str, Any], body: str | None, actor: str, note: str) -> dict[str, Any]:
-        self.g.db.execute("INSERT INTO k_cap_versions VALUES (?, ?, ?, ?, ?, ?, ?)",
-                          (cid, v, json.dumps(spec, ensure_ascii=False, sort_keys=True), body, actor, time.time(), note))
+    def _next(self, cid: str) -> int:
+        return (self.g.db.execute("SELECT max(version) FROM k_cap_versions WHERE cap = ?", (cid,)).fetchone()[0] or 0) + 1
+
+    def _store(self, cid: str, spec: dict[str, Any], body: str | None, actor: str, note: str) -> dict[str, Any]:
+        """A new version, numbered inside the caller's transaction (two writers never share a number)."""
+        v = self._next(cid)
+        try:
+            self.g.db.execute("INSERT INTO k_cap_versions VALUES (?, ?, ?, ?, ?, ?, ?)",
+                              (cid, v, json.dumps(spec, ensure_ascii=False, sort_keys=True), body, actor, time.time(),
+                               note))
+        except sqlite3.IntegrityError as e:
+            raise Conflict(f"{cid} changed while it was being written: read it again, then write") from e
         return self.version(self.g.node(cid), v)
+
+    @staticmethod
+    def _digest(spec: dict[str, Any], body: str | None) -> str:
+        return hashlib.sha256(json.dumps([spec, body], sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:16]
 
     def _put(self, rec: dict[str, Any], ver: dict[str, Any], actor: str) -> dict[str, Any]:
         """Bring `ver` into force: the kind applies it, the record names it, the TTL starts over."""
@@ -202,8 +223,36 @@ class Registry:
         ttl = rec["attrs"].get("ttl", k.ttl)
         # a new version in force is active: for a deprecated record it is the owner's answer
         return self.g.update_node(rec["id"], actor="kernel", state="active", attrs={
-            "version": ver["version"], "pending": None, "applied": now, "review_after": now + ttl if ttl else None,
-            "reason": None, "replaced_by": None, "retire_at": None, "retired_at": None, "checking": None})
+            "version": ver["version"], "pending": None, "pending_until": None, "applied": now,
+            "review_after": now + ttl if ttl else None, "reason": None, "replaced_by": None, "retire_at": None,
+            "retired_at": None, "checking": None})
+
+    def _write(self, rec: dict[str, Any], current: dict[str, Any] | None, spec: dict[str, Any], body: str | None,
+               actor: str, note: str) -> tuple[dict[str, Any], str]:
+        """Store a version and bring it into force, unless the model wrote it and it widens what is in
+        force: then it waits for the user (and expires after the kind's grace)."""
+        k = self.kind(rec["attrs"]["kind"])
+        kind, name = rec["attrs"]["kind"], rec["attrs"]["name"]
+        wide = k.widens(self, current["spec"] if current else None, spec) if actor == "model" else []
+        if wide and self._digest(spec, body) in (rec["attrs"].get("rejected") or []):
+            raise Forbidden(f"{kind} {name}: the user rejected this version already; propose a different one")
+        ver = self._store(rec["id"], spec, body, actor, note)
+        self.g.update_node(rec["id"], actor="kernel", content=k.summary(spec))
+        rec = self.g.node(rec["id"])
+        if wide:
+            rec = self.g.update_node(rec["id"], actor="kernel", attrs={
+                "pending": ver["version"], "pending_until": time.time() + k.grace})
+            self.g.log(actor, f"{kind} {name} v{ver['version']} proposed: {'; '.join(wide)}", rec["id"])
+            keep = f"v{current['version']} stays in force meanwhile" if current else "nothing is in force meanwhile"
+            return rec, (f"{kind} {name} v{ver['version']} PROPOSED (waits for the user's approval: "
+                         f"{'; '.join(wide)}); {keep}")
+        if rec["attrs"].get("pending"):
+            self.g.log(actor, f"{kind} {name} v{rec['attrs']['pending']} superseded by v{ver['version']} (unapproved)",
+                       rec["id"])
+        rec = self._put(rec, ver, actor)
+        self.g.log(actor, f"{kind} {name} v{ver['version']}" + (f": {note}" if note else ""), rec["id"])
+        extra = k.report(self, rec, ver)
+        return rec, f"{kind} {name} v{ver['version']} in force" + (f"\n{extra}" if extra else "")
 
     def add(self, kind: str, name: str, *, spec: dict[str, Any] | None = None, body: str | None = None,
             actor: str, note: str = "", ttl: float | None = None) -> tuple[dict[str, Any], str]:
@@ -218,17 +267,11 @@ class Registry:
             self.g.put_node(cid, "cap", actor=actor, state="proposed", content=k.summary(spec),
                             attrs={"kind": kind, "name": name, "version": 0, "ttl": k.ttl if ttl is None else ttl,
                                    "created": time.time()})
-            ver = self._store(cid, 1, spec, body, actor, note)
-            rec = self.g.node(cid)
-            wide = k.widens(self, None, spec) if actor == "model" else []
-            if wide:
-                rec = self.g.update_node(cid, actor="kernel", attrs={"pending": 1, "retire_at": time.time() + k.grace})
-                self.g.log(actor, f"{kind} {name} v1 proposed: {'; '.join(wide)}", cid)
-                return rec, f"{kind} {name} v1 PROPOSED (waits for the user's approval: {'; '.join(wide)})"
-            rec = self._put(rec, ver, actor)
-            self.g.log(actor, f"{kind} {name} v1 added", cid)
-            extra = k.report(self, rec, ver)
-            return rec, f"{kind} {name} v1 added" + (f"\n{extra}" if extra else "")
+            rec, msg = self._write(self.g.node(cid), None, spec, body, actor, note)
+            if rec["attrs"].get("pending"):  # nothing in force: the record waits as a whole
+                rec = self.g.update_node(cid, actor="kernel", attrs={"retire_at": rec["attrs"]["pending_until"],
+                                                                     "reason": "not approved in time"})
+            return rec, msg.replace(" in force", " added", 1)
 
     @staticmethod
     def _body(k: Kind, body: str | None) -> str | None:
@@ -240,36 +283,27 @@ class Registry:
 
     def update(self, kind: str, name: str, *, spec: dict[str, Any] | None = None, body: str | None = None,
                actor: str, note: str = "", replace: bool = False) -> tuple[dict[str, Any], str]:
-        """A new version: `spec` merges into the latest version's (a key set to None is removed;
-        replace=True takes it whole), `body` replaces the body (None keeps it)."""
+        """A new version, as a change of what is in force: `spec` merges into the version in force
+        (into the waiting one when nothing is in force yet; replace=True takes it whole), `body`
+        replaces the body (None keeps it). A version waiting for approval is superseded by it.
+        A retired record is not updated: restore it."""
         k = self.kind(kind)
         rec = self.get(kind, name)
         self._may(rec, actor)
-        last = self.g.db.execute("SELECT max(version) FROM k_cap_versions WHERE cap = ?", (rec["id"],)).fetchone()[0]
-        base = self.version(rec, last)
+        if rec["state"] == "retired":
+            raise CapError(f"{kind} {name} is retired: restore it (cap action=restore) to bring it back")
+        current = self.version(rec) if rec["attrs"].get("version") else None
+        base = current or self.version(rec, rec["attrs"].get("pending") or self._next(rec["id"]) - 1)
         new = dict(spec or {}) if replace else {**base["spec"], **(spec or {})}
-        new = {a: b for a, b in new.items() if b is not None}
         body = base["body"] if body is None else body
         new = k.validate(self, name, new, self._body(k, body))
-        if new == base["spec"] and body == base["body"] and last == rec["attrs"].get("version") \
-                and rec["state"] == "active":
-            return rec, f"{kind} {name} v{last}: unchanged"
-        current = self.version(rec) if rec["attrs"].get("version") else None
+        if current and new == current["spec"] and body == current["body"] and rec["state"] == "active":
+            if rec["attrs"].get("pending"):
+                self.g.update_node(rec["id"], actor="kernel", attrs={"pending": None, "pending_until": None})
+                return self.g.node(rec["id"]), f"{kind} {name}: v{current['version']} stays; the waiting version is withdrawn"
+            return rec, f"{kind} {name} v{current['version']}: unchanged"
         with self.g.tx():
-            ver = self._store(rec["id"], last + 1, new, body, actor, note)
-            self.g.update_node(rec["id"], actor="kernel", content=k.summary(new))
-            rec = self.g.node(rec["id"])
-            wide = k.widens(self, current["spec"] if current else None, new) if actor == "model" else []
-            if wide:
-                rec = self.g.update_node(rec["id"], actor="kernel", attrs={"pending": ver["version"]})
-                self.g.log(actor, f"{kind} {name} v{ver['version']} proposed: {'; '.join(wide)}", rec["id"])
-                keep = f"v{current['version']} stays in force meanwhile" if current else "nothing is in force meanwhile"
-                return rec, (f"{kind} {name} v{ver['version']} PROPOSED (waits for the user's approval: "
-                             f"{'; '.join(wide)}); {keep}")
-            rec = self._put(rec, ver, actor)
-            self.g.log(actor, f"{kind} {name} v{ver['version']}" + (f": {note}" if note else ""), rec["id"])
-            extra = k.report(self, rec, ver)
-            return rec, f"{kind} {name} v{ver['version']} in force" + (f"\n{extra}" if extra else "")
+            return self._write(rec, current, new, body, actor, note)
 
     def approve(self, kind: str, name: str, version: int, *, actor: str) -> str:
         if actor != "user":
@@ -284,17 +318,22 @@ class Registry:
         return f"{kind} {name} v{version} approved"
 
     def reject(self, kind: str, name: str, version: int, *, actor: str) -> str:
+        """Refuse the waiting version; the model cannot propose that same version again."""
         if actor != "user":
             raise Forbidden("only the user rejects a grant")
         rec = self.get(kind, name)
         if rec["attrs"].get("pending") != version:
             raise CapError(f"{kind} {name}: v{version} is not the version waiting")
+        ver = self.version(rec, version)
+        rejected = list(rec["attrs"].get("rejected") or []) + [self._digest(ver["spec"], ver["body"])]
         with self.g.tx():
             if rec["attrs"].get("version"):
-                self.g.update_node(rec["id"], actor="kernel", attrs={"pending": None})
+                self.g.update_node(rec["id"], actor="kernel", attrs={"pending": None, "pending_until": None,
+                                                                     "rejected": rejected})
             else:
-                self.g.update_node(rec["id"], actor="kernel", state="retired",
-                                   attrs={"pending": None, "reason": "rejected by the user", "retired_at": time.time()})
+                self.g.update_node(rec["id"], actor="kernel", state="retired", attrs={
+                    "pending": None, "pending_until": None, "retire_at": None, "rejected": rejected,
+                    "reason": "rejected by the user", "retired_at": time.time()})
             self.g.log(actor, f"{kind} {name} v{version} rejected", rec["id"])
         return f"{kind} {name} v{version} rejected"
 
@@ -328,23 +367,44 @@ class Registry:
         with self.g.tx():
             if rec["attrs"].get("version"):
                 self.kind(rec["attrs"]["kind"]).unapply(self, rec)
-            self.g.update_node(rec["id"], actor="kernel", state="retired",
-                               attrs={"reason": why, "retired_at": time.time(), "pending": None})
+            self.g.update_node(rec["id"], actor="kernel", state="retired", attrs={
+                "reason": why, "retired_at": time.time(), "pending": None, "pending_until": None, "retire_at": None,
+                "version": 0, "last_in_force": rec["attrs"].get("version") or rec["attrs"].get("last_in_force")})
             self.g.log(actor, f"{rec['attrs']['kind']} {rec['attrs']['name']} retired: {why}", rec["id"])
 
     def restore(self, kind: str, name: str, *, actor: str, version: int | None = None) -> tuple[dict[str, Any], str]:
-        """Bring a retired or deprecated record back, at its last version or at `version` (as a new
-        version with that content: history is never rewritten)."""
+        """Bring a retired or deprecated record back, at its last version in force or at `version`, as
+        a new version with that content (history is never rewritten). For a retired record nothing is
+        in force, so the model's restore of a grant waits for the user like any new grant."""
         rec = self.get(kind, name)
         self._may(rec, actor)
-        last = self.g.db.execute("SELECT max(version) FROM k_cap_versions WHERE cap = ?", (rec["id"],)).fetchone()[0]
-        old = self.version(rec, version or rec["attrs"].get("version") or last)
-        if rec["state"] == "retired":
-            with self.g.tx():
-                self.g.update_node(rec["id"], actor="kernel", state="proposed", attrs={"version": 0})
-                rec = self.g.node(rec["id"])
-        return self.update(kind, name, spec=old["spec"], body=old["body"], actor=actor, replace=True,
-                           note=f"restored from v{old['version']}")
+        if version is None:
+            last = self.g.db.execute("SELECT version FROM k_cap_versions WHERE cap = ? ORDER BY version DESC",
+                                     (rec["id"],)).fetchall()
+            version = rec["attrs"].get("version") or rec["attrs"].get("last_in_force") or last[0][0]
+        old = self.version(rec, version)
+        k = self.kind(kind)
+        spec = k.validate(self, name, dict(old["spec"]), self._body(k, old["body"]))
+        current = self.version(rec) if rec["attrs"].get("version") else None
+        with self.g.tx():
+            out = self._write(rec, current, spec, old["body"], actor, f"restored from v{old['version']}")
+            if rec["state"] == "retired" and out[0]["attrs"].get("pending"):
+                self.g.update_node(rec["id"], actor="kernel", state="proposed", attrs={
+                    "retire_at": out[0]["attrs"]["pending_until"], "reason": "not approved in time"})
+            return self.g.node(rec["id"]), out[1]
+
+    def seed(self, kind: str, name: str, *, spec: dict[str, Any], body: str | None = None, actor: str = "kernel",
+             note: str = "") -> bool:
+        """A record the kernel installs once per store. Once its owner removes it (and it is purged),
+        it stays gone: the mark outlives the record."""
+        mark = f"cap:seeded:{kind}:{name}"
+        if self.g.db.execute("SELECT 1 FROM k_meta WHERE key = ?", (mark,)).fetchone():
+            return False
+        with self.g.tx():
+            self.g.db.execute("INSERT INTO k_meta VALUES (?, ?)", (mark, repr(time.time())))
+            if self.find(kind, name) is None:
+                self.add(kind, name, spec=spec, body=body, actor=actor, note=note)
+        return True
 
     # ── the TTL sweep ────────────────────────────────────────────────────
 
@@ -353,14 +413,22 @@ class Registry:
         last = self.g.db.execute("SELECT value FROM k_meta WHERE key = 'cap:swept'").fetchone()
         return last is None or now - float(last[0]) >= SWEEP_EVERY
 
+    def _claim_sweep(self, now: float) -> bool:
+        """One sweeper at a time across processes: the claim is a compare-and-swap on the mark."""
+        with self.g.tx():
+            self.g.db.execute("INSERT OR IGNORE INTO k_meta VALUES ('cap:swept', '0')")
+            return self.g.db.execute("UPDATE k_meta SET value = ? WHERE key = 'cap:swept' AND CAST(value AS REAL) <= ?",
+                                     (repr(now), now - SWEEP_EVERY)).rowcount == 1
+
     def sweep(self, now: float | None = None, force: bool = False) -> list[str]:
         """Review what is due: renew, deprecate, retire, expire, purge. Returns what happened."""
         now = time.time() if now is None else now
-        if not force and not self.due(now):
+        if force:
+            with self.g.tx():
+                self.g.db.execute("INSERT OR REPLACE INTO k_meta VALUES ('cap:swept', ?)", (repr(now),))
+        elif not self._claim_sweep(now):
             return []
         events: list[str] = []
-        with self.g.tx():
-            self.g.db.execute("INSERT OR REPLACE INTO k_meta VALUES ('cap:swept', ?)", (repr(now),))
         for rec in self.list(states=("proposed", "active", "deprecated", "retired")):
             a, kind = rec["attrs"], rec["attrs"]["kind"]
             if kind not in KINDS:
@@ -379,10 +447,14 @@ class Registry:
                     self._retire(rec, a.get("reason") or "not approved in time", "kernel")
                     events.append(f"{label}: retired ({a.get('reason') or 'not approved in time'})")
                     continue
+                if a.get("pending") and a.get("version") and a.get("pending_until") and now >= a["pending_until"]:
+                    self.g.update_node(rec["id"], actor="kernel", attrs={"pending": None, "pending_until": None})
+                    self.g.log("kernel", f"{label} v{a['pending']} expired unapproved", rec["id"])
+                    events.append(f"{label}: v{a['pending']} expired unapproved")
                 if rec["state"] == "active" and a.get("version") and a.get("review_after") and now >= a["review_after"]:
-                    events += self._review(rec, now)
-            except KernelError as e:  # one record's trouble never stops the sweep
-                events.append(f"{label}: sweep error: {e}")
+                    events += self._review(self.g.node(rec["id"]), now)
+            except Exception as e:  # noqa: BLE001 — one record's trouble never stops the sweep
+                events.append(f"{label}: sweep error: {type(e).__name__}: {e}")
         return events
 
     def _review(self, rec: dict[str, Any], now: float) -> list[str]:
@@ -393,8 +465,8 @@ class Registry:
             return []
         if verdict == "pass":
             ttl = rec["attrs"].get("ttl", k.ttl)
-            self.g.update_node(rec["id"], actor="kernel", attrs={"review_after": now + ttl, "reviewed": now,
-                                                                 "checking": None})
+            self.g.update_node(rec["id"], actor="kernel", attrs={"review_after": now + ttl if ttl else None,
+                                                                 "reviewed": now, "checking": None})
             self.g.log("kernel", f"{label} reviewed: renewed" + (f" ({detail})" if detail else ""), rec["id"])
             return [f"{label}: renewed"]
         if rec["author"] == "kernel":
@@ -412,9 +484,10 @@ class Registry:
             self.g.db.execute("INSERT OR REPLACE INTO k_meta VALUES ('cap:signals', ?)", (str(n + 1),))
         return [f"{label}: deprecated (failed its review: {detail})"]
 
-    def review_now(self, kind: str, name: str) -> str:
-        """Run the record's check at once (the TTL starts over on a pass)."""
+    def review_now(self, kind: str, name: str, *, actor: str) -> str:
+        """Run the record's check at once (the TTL starts over on a pass). The model reviews its own."""
         rec = self.get(kind, name)
+        self._may(rec, actor)
         if rec["state"] != "active" or not rec["attrs"].get("version"):
             raise CapError(f"{kind} {name} is {rec['state']}: only an active record is reviewed")
         out = self._review(rec, time.time())

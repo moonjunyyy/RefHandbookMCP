@@ -150,6 +150,24 @@ class Handbook:
     def on_change(self, fn: "Callable[[], None]") -> None:
         self._hooks.append(fn)
 
+    @contextmanager
+    def _tx(self) -> Iterator[None]:
+        """A write unit: its own transaction, or a savepoint inside a caller's (a capability record
+        writing a card commits or rolls back with the record)."""
+        if not self.db.in_transaction:
+            with self.db:
+                yield
+            return
+        name = f"hb_{id(self) & 0xffff:x}_{os.getpid()}"
+        self.db.execute(f"SAVEPOINT {name}")
+        try:
+            yield
+        except BaseException:
+            self.db.execute(f"ROLLBACK TO {name}")
+            self.db.execute(f"RELEASE {name}")
+            raise
+        self.db.execute(f"RELEASE {name}")
+
     def changed(self) -> None:
         if not self._quiet:
             for fn in self._hooks:
@@ -197,7 +215,7 @@ class Handbook:
             id = slugify(id)
         clean_items = None if items is None else [_clean_item(i, n) for n, i in enumerate(items, 1)]
 
-        with self.db:
+        with self._tx():
             row = self.db.execute("SELECT * FROM entries WHERE id = ?", (id,)).fetchone()
             if row is None:
                 if not title:
@@ -284,7 +302,7 @@ class Handbook:
 
     def delete_entry(self, entry_id: str) -> None:
         self._require(entry_id)
-        with self.db:
+        with self._tx():
             self.db.execute("DELETE FROM entries WHERE id = ?", (entry_id,))
             self.db.execute("DELETE FROM search WHERE entry_id = ?", (entry_id,))
         self.changed()
@@ -341,7 +359,7 @@ class Handbook:
                 raise HandbookError(f"{name!r}/{inverse!r} collides with existing type {row['name']!r}/{row['inverse']!r}")
         if name == STEP_LINK:
             raise HandbookError(f"{STEP_LINK!r} is built in")
-        with self.db:
+        with self._tx():
             self.db.execute(
                 "INSERT INTO relation_types VALUES (?, ?, ?)"
                 " ON CONFLICT(name) DO UPDATE SET inverse = excluded.inverse, description = excluded.description",
@@ -368,7 +386,7 @@ class Handbook:
         if src == dst:
             raise HandbookError("an entry cannot be related to itself")
         edge = self._orient(src, type, dst)
-        with self.db:
+        with self._tx():
             self.db.execute(
                 "INSERT INTO relations VALUES (?, ?, ?, ?)"
                 " ON CONFLICT(src, type, dst) DO UPDATE SET note = excluded.note",
@@ -379,7 +397,7 @@ class Handbook:
 
     def unrelate(self, src: str, type: str, dst: str) -> bool:
         s, t, d = self._orient(src, type, dst)
-        with self.db:
+        with self._tx():
             cur = self.db.execute(
                 "DELETE FROM relations WHERE type = ? AND ((src = ? AND dst = ?)"
                 " OR (src = ? AND dst = ? AND type IN (SELECT name FROM relation_types WHERE name = inverse)))",

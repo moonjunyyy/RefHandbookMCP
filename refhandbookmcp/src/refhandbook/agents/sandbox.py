@@ -172,6 +172,9 @@ class Spec:
     # Where each command of the view comes from, when the caller resolved them (a layer's file, or
     # the host's); None: each is found on the host's PATH.
     command_paths: dict[str, str] | None = None
+    # (st_dev, st_ino) each bind's source had when the caller checked it, by its path inside: a
+    # source swapped (for a symlink, or another directory) between the check and the bind is refused.
+    bind_ids: dict[str, list[int]] = field(default_factory=dict)
     # The uid/gid outside the sandbox (a per-user subordinate id). None maps the runner's own uid.
     # Another id needs a runner with CAP_SETUID/CAP_SETGID (the parent writes the child's map).
     outside_uid: int | None = None
@@ -604,9 +607,12 @@ def _point_key(point: str) -> str:
     return point.replace("/", "_")
 
 
-def _command_view(root: str, commands: dict[str, str]) -> None:
-    """Empty every command directory of the root, then bind the allowed commands at /usr/bin."""
+def _command_view(root: str, commands: dict[str, str], keep: tuple[str, ...] = ()) -> None:
+    """Empty every command directory of the root (but those under `keep`: a layer build's own
+    writable overlay points), then bind the allowed commands at /usr/bin."""
     for d in COMMAND_DIRS:
+        if any(d == k or d.startswith(k + "/") for k in keep):
+            continue
         target = f"{root}/{d}"
         if os.path.isdir(target) and not os.path.islink(target):
             mount("tmpfs", target, "tmpfs", MS_NOSUID | MS_NODEV | MS_RDONLY, "mode=0755,size=64k")
@@ -664,7 +670,7 @@ def build_root(spec: Spec, commands: dict[str, str] | None = None) -> None:
             _overlay(target, lowers, None, None)
 
     if commands is not None and host:
-        _command_view(root, commands)
+        _command_view(root, commands, spec.overlay_points() if upper is not None else ())
 
     for d in ("work", "tmp", "run", "proc", "dev", "root"):
         _mkdir(f"{root}/{d}")
@@ -680,6 +686,11 @@ def build_root(spec: Spec, commands: dict[str, str] | None = None) -> None:
             _mkdir(os.path.dirname(target))
             _touch(target)
         mount(src, target, None, MS_BIND | MS_REC)
+        want = spec.bind_ids.get(dst)
+        if want is not None:
+            st = os.stat(target)
+            if [st.st_dev, st.st_ino] != list(want):
+                raise SandboxError(f"bind source for {dst} changed after it was checked; refused")
         mount_setattr(target, MOUNT_ATTR_NOSUID | MOUNT_ATTR_NODEV | (MOUNT_ATTR_NOEXEC if rw else MOUNT_ATTR_RDONLY))
 
     # /dev: a tmpfs with the harmless host nodes bound in

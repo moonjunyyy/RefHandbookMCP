@@ -112,8 +112,8 @@ def research_begin(ledger: str, session: str = "", view: Literal["recent", "brie
     """Open a session on the ledger: one per user message (role chat) or per delegated run (role
     agent). The first line is the SESSION token: pass it as `session` to every later call until
     research_end; pass it here again to re-read the ledger in the same session. Without `session`,
-    an idle session of the same role (left open; it still answers for what it opened) is resumed,
-    else a new one opens. Other sessions may be open beside it (an agent, another chat): a write is
+    an open session of the same role and `label` (your conversation's id, when the hook names one)
+    is resumed, else a new one opens. Other sessions may be open beside it (an agent, another chat): a write is
     refused (CONFLICT) only if it changes an object another session changed since this one read it.
     A chat session answers at research_end for the user's directives and the continuation; an
     agent session only for what it opened. view: recent (rows changed in the last `recent` sessions plus every live row the

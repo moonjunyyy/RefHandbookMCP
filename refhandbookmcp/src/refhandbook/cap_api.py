@@ -265,7 +265,7 @@ def cap(action: Literal["kinds", "list", "show", "add", "update", "deprecate", "
     if action == "review":
         if not name:
             return "\n".join([f"SWEEP {e}" for e in caps.sweep(force=True)] or ["nothing was due"])
-        return "\n".join(head + [caps.review_now(kind, name)])
+        return "\n".join(head + [caps.review_now(kind, name, actor="model")])
     if not name:
         raise CapError(f"{action} needs name")
     if action == "show":
@@ -281,6 +281,8 @@ def cap(action: Literal["kinds", "list", "show", "add", "update", "deprecate", "
         if body:
             raise CapError("pass body or ref, not both")
         body = ws.g.get_blob(ref).decode()
+    if ttl_days is not None and ttl_days < 1:
+        raise CapError("ttl_days is at least 1: every record is reviewed")
     if action == "add":
         _, msg = caps.add(kind, name, spec=spec, body=body or None, actor="model", note=note,
                           ttl=ttl_days * DAY if ttl_days is not None else None)
@@ -424,6 +426,10 @@ def sandbox_policy(name: str = "") -> str:
     return f"{warn}\n" + (cap("show", kind="policy", name=name) if name else cap("list", kind="policy"))
 
 
+def _ports(p: Any) -> str:
+    return "any" if p in (None, "any") else " ".join(map(str, p))
+
+
 def policy_text(ws: Workspace, name: str = "") -> str:
     """The policies in force, for the server's terminal."""
     out = []
@@ -433,7 +439,7 @@ def policy_text(ws: Workspace, name: str = "") -> str:
         rec = ws.caps.find("policy", n)
         out.append(f"{n} (v{rec['attrs'].get('version') if rec else '?'}, by {rec['author'] if rec else p['author']}): "
                    f"{p['content']}\n  network {'yes' if a['network'] else 'no'}"
-                   f"{' ports ' + ' '.join(map(str, a['ports'])) if a['network'] and a.get('ports') else ''} · "
+                   f"{' ports ' + _ports(a.get('ports')) if a['network'] else ''} · "
                    f"timeout {a['timeout']:g} s · memory {a['memory_mb']} MB · cpus {a['cpus']} · disk {a['disk_mb']} MB · "
                    f"{a.get('concurrent', 2)} at once\n  commands: {' '.join(a['commands'])}"
                    + (f"\n  layers: {' '.join(a['layers'])}" if a.get("layers") else "")

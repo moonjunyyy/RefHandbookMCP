@@ -57,11 +57,12 @@ The rules are data, so they are reviewed like data (card `rs-rv`):
 A session (`kernel/sessions.py`, table `k_sessions`) is one participant's span of work on a scope:
 a chat session per user message, an agent session per delegated run. Its token is stable for the
 whole session. Sessions run side by side: a write names the objects it changes and is refused
-(CONFLICT) only if another session changed one of them after this one read it (`k_writes`, and
-`k_seen` for what a session read since its begin). A session closes over what it opened (the
+(CONFLICT) only if another session changed one of them concurrently (that session is still open,
+or wrote after this one opened) and this one has not read it since (`k_writes`; `k_seen` holds
+what each session was shown, and only that: a view acks the rows it prints). A session closes over what it opened (the
 pending hits it raised, the K it runs, the document plans it committed); a chat session also answers
-for the user's directives and the continuation. One left open is resumed by the next
-`research_begin` of its role once idle (30 min).
+for the user's directives and the continuation. A session is resumed by its token, or by its
+label (the client's conversation id, passed by the prompt hook), never by another participant.
 
 ## Capabilities
 
@@ -72,10 +73,17 @@ script, a sandbox policy, a layer, a rule, a card, an alias. One tool family, `c
   force, and a TTL; `k_cap_versions` holds every version, immutable (spec as JSON, a body for scripts
   and layers, author, note). `update` writes a new version; `restore` brings back an old one as a
   new version; history is never rewritten.
+- **Widening** is measured against what is in force: the record's own version, or for a new policy
+  the user's default as it stands (none: everything widens). The kernel seeds its own records (the
+  default policy, the old-tool aliases) once per store; one the user removed stays removed.
 - **States.** proposed → active → deprecated (still works, warns, names what replaces it) → retired
   (out of force, history kept) → purged after 90 days. A proposal nobody approves expires after the
   kind's grace.
-- **Who.** The owner changes a record; the model changes only its own. A version the model writes
+- **Who.** The owner changes a record; the model changes only its own, and never in a way it could
+  not change what the record governs (a rule the user approved is the user's to change or retire,
+  whoever's record it is). Edits are deltas on what is in force: the user's edit supersedes a
+  waiting version, never carries it. A retired record comes back only through `restore`, checked
+  like a new grant; a version the user rejected cannot be proposed again. A version the model writes
   that widens a grant (each kind says what widens: a policy's commands, network, ports, limits,
   layers, mounts; a layer built with the network) waits for the user's approval on `/agents` (or
   `refhandbook cap approve <kind> <name> --version N`), with the version in force kept meanwhile.
@@ -105,11 +113,17 @@ One sandbox per user, shared by Chat sessions (the `cap`, `run`, `job`, `files` 
 - **Mounts** — `{source, target, rw}`. The administrator names the directories users may mount with
   `RHB_SANDBOX_MOUNT_ROOTS` (colon-separated; `{user}` and `{uid}` name the store's owner, e.g.
   `/data/{user}`); a source outside them, or a target over the sandbox's own directories, is
-  refused. Read-only unless `rw`; a read-write mount is noexec like every writable mount.
-- **Layer** — what a policy can stack on the base: a build script run as root inside a sandbox (the
-  build's own, with the network only if granted), whose changes under `/usr/local`, `/opt` and
-  `/etc` become a read-only tree (`<db>.sandbox/layerstore/`). Built as a job; a policy that lists a
-  layer resolves its commands from the layer first, and may execute beneath `/usr/local` and `/opt`.
+  refused. Read-only unless `rw`; a read-write mount is noexec like every writable mount. The
+  source's identity (device, inode) is checked again after the bind, so a source swapped in between
+  is refused.
+- **Layer** — what a policy can stack on the base: a build script run as root inside a sandbox of a
+  policy the model already holds (that policy's commands, network, ports, limits and timeout: a
+  build is never a wider sandbox), whose changes under `/usr/local`, `/opt` and `/etc` become a
+  read-only tree (`<db>.sandbox/layerstore/`). Built as a job. A policy pins each layer to a build
+  (`name@N`): what the user approved is that build, and a newer one reaches the policy only through
+  a new policy version (a widening). A policy resolves its commands from its layers first: a file
+  the layer itself holds, every symlink resolved inside the layer (a link out of it resolves to
+  nothing); it may execute beneath `/usr/local` and `/opt`.
 - **Script** — the model's to add, revise, deprecate and remove with no approval, because it can
   call only what its policy shows; `requires` names the commands it needs, checked at every write
   and review. A user's script cannot be overwritten by the model.

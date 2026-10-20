@@ -93,54 +93,121 @@ def _mounts(ws: Any, mounts: Any) -> list[dict[str, Any]]:
 
 
 # ── layers ───────────────────────────────────────────────────────────────
+#
+# A policy pins each layer it stacks to a built version ("name@N"): what the user approved is that
+# build. A new version of the layer does not reach the policy until a new version of the policy
+# moves the pin, which is a widening like any other. Pinned trees are kept.
 
-def layer_dir(ws: Any, name: str, version: int) -> str:
+PIN_RE = re.compile(r"^([a-z0-9][a-z0-9._-]{0,63})(?:@(\d+))?$")
+
+
+def layer_dir(name: str, version: int) -> str:
     return f"{name}.v{version}"
 
 
-def built_layers(reg: Registry, names: list[str]) -> list[str]:
-    """The built trees' names for a policy's layers, top first; refused while one is not built."""
-    out = []
-    for n in names:
-        rec, ver, _ = reg.in_force("layer", n)
-        if rec["attrs"].get("built") != ver["version"]:
-            state = (f"its build failed: {rec['attrs']['build_error']}" if rec["attrs"].get("build_error")
-                     else f"it is still building ({rec['attrs'].get('building', 'no job')})")
-            raise CapError(f"layer {n} v{ver['version']} is not built: {state}")
-        out.append(layer_dir(None, n, ver["version"]))
+def _store(reg: Registry) -> Any:
+    return _ws(reg).layer_store()
+
+
+def pin(reg: Registry, entry: str, keep: dict[str, int] | None = None) -> str:
+    """"name" or "name@N" → "name@N": the given build, else the one already pinned, else the latest
+    built version of the layer."""
+    m = PIN_RE.match(entry or "")
+    if not m:
+        raise CapError(f"layer {entry!r}: a name, or name@version")
+    name, v = m.group(1), m.group(2)
+    rec = reg.get("layer", name)
+    if rec["state"] == "retired":
+        raise CapError(f"layer {name} is retired")
+    n = int(v) if v else (keep or {}).get(name) or rec["attrs"].get("built")
+    if not n:
+        a = rec["attrs"]
+        state = (f"its build failed: {a['build_error']}" if a.get("build_error")
+                 else f"it is still building ({a.get('building') or 'no job'})")
+        raise CapError(f"layer {name} is not built: {state}")
+    if not Path(_store(reg).tree(layer_dir(name, n))).is_dir():
+        raise CapError(f"layer {name}@{n} is not built (or was removed)")
+    return f"{name}@{n}"
+
+
+def layer_trees(reg: Registry, pins: list[str]) -> list[str]:
+    """The trees for pinned layers and their pinned parents, top first."""
+    store = _store(reg)
+    try:
+        dirs = []
+        for p in pins:
+            m = PIN_RE.match(p)
+            dirs.append(layer_dir(m.group(1), int(m.group(2))))
+        return [str(store.tree(d)) for d in store.resolve(dirs)[1]]
+    except (ValueError, TypeError, AttributeError) as e:  # LayerError is a ValueError
+        raise CapError(f"layers {' '.join(pins)}: {e}") from e
+
+
+def pinned_dirs(reg: Registry) -> set[str]:
+    """Every layer build some policy or layer version still in force (or waiting) names."""
+    out = set()
+    for rec in reg.list(kind=None):
+        a = rec["attrs"]
+        if a["kind"] not in ("policy", "layer"):
+            continue
+        for v in {a.get("version"), a.get("pending")} - {None, 0}:
+            spec = reg.version(rec, v)["spec"]
+            for p in (spec.get("layers") or []) + (spec.get("parents") or []):
+                m = PIN_RE.match(p)
+                if m and m.group(2):
+                    out.add(layer_dir(m.group(1), int(m.group(2))))
+        if a["kind"] == "layer" and a.get("built"):
+            out.add(layer_dir(a["name"], a["built"]))
     return out
 
 
-def layer_trees(reg: Registry, names: list[str]) -> list[str]:
-    ws = _ws(reg)
-    store = ws.layer_store()
-    trees = []
-    for d in store.resolve(built_layers(reg, names))[1]:
-        trees.append(str(store.tree(d)))
-    return trees
+def prune_layers(reg: Registry, name: str | None = None) -> list[str]:
+    """Remove builds nothing pins (of one layer, or all)."""
+    store, keep, gone = _store(reg), pinned_dirs(reg), []
+    pat = re.compile(rf"^{re.escape(name)}\.v\d+$" if name else r"^.+\.v\d+$")
+    for lay in store.list():
+        if pat.match(lay.name) and lay.name not in keep and not any(lay.name in o.parents for o in store.list()):
+            try:
+                store.remove(lay.name)
+                gone.append(lay.name)
+            except (ValueError, OSError) as e:  # LayerError is a ValueError
+                reg.g.log("kernel", f"layer build {lay.name} not removed: {e}", lay.name)
+    return gone
 
 
 def _follow(tree: str, rel: str) -> str | None:
-    """Where `rel` (a path inside the sandbox) lands when `tree` is a layer over the host base: a
-    symlink is followed with the sandbox's root as its root; a path the layer does not hold is the
-    base's (the host's)."""
-    for _ in range(40):
-        if rel.startswith(".."):
-            return None
-        p = os.path.join(tree, rel)
-        if os.path.islink(p):
-            t = os.readlink(p)
-            rel = os.path.normpath(t if t.startswith("/") else os.path.join(os.path.dirname(rel), t)).lstrip("/")
+    """The file `rel` names inside the layer `tree`, every component resolved with the tree as the
+    root (a symlink, absolute or relative, at any depth, never leaves it). None: the layer does not
+    hold such a file."""
+    parts = [p for p in rel.split("/") if p not in ("", ".")]
+    done: list[str] = []
+    hops = 0
+    while parts:
+        part = parts.pop(0)
+        if part == "..":
+            if done:
+                done.pop()
             continue
-        if os.path.lexists(p):
-            return p
-        host = "/" + rel
-        return host if os.path.exists(host) else None
-    return None
+        p = os.path.join(tree, *done, part)
+        if os.path.islink(p):
+            hops += 1
+            if hops > 40:
+                return None
+            t = os.readlink(p)
+            parts = [x for x in t.split("/") if x not in ("", ".")] + parts
+            if t.startswith("/"):
+                done = []
+            continue
+        if not os.path.lexists(p):
+            return None
+        done.append(part)
+    p = os.path.join(tree, *done)
+    return p if done else None
 
 
 def resolve_command(name: str, trees: list[str]) -> str | None:
-    """The host file a command name runs: from a layer (top first) or from the host."""
+    """The host file a command name runs: a file a layer holds (top first), else the host's own
+    command of that name. A layer's link to anything outside itself resolves to nothing."""
     if not CMD_RE.match(name):
         raise CapError(f"command {name!r}: a bare name (letters, digits, . _ + -)")
     for tree in trees:
@@ -148,8 +215,8 @@ def resolve_command(name: str, trees: list[str]) -> str | None:
             if not os.path.lexists(os.path.join(tree, d, name)):
                 continue
             p = _follow(tree, f"{d}/{name}")
-            if p and os.path.isfile(p) and os.access(p, os.X_OK):
-                return os.path.realpath(p)
+            if p and os.path.isfile(p) and not os.path.islink(p) and os.access(p, os.X_OK):
+                return p
     host = shutil.which(name, path=sandbox.HOST_PATH)
     return os.path.realpath(host) if host else None
 
@@ -162,13 +229,14 @@ class PolicyKind(Kind):
                    "(timeout, memory_mb, cpus, tmp_mb, disk_mb, concurrent), layers, mounts [{source, target, rw}]")
     ttl = 30 * DAY
 
-    def defaults(self, reg: Registry) -> dict[str, Any]:
+    def in_force_default(self, reg: Registry) -> dict[str, Any] | None:
         ws = _ws(reg)
-        base = ws.default_policy_spec()
         rec = reg.find("policy", ws.DEFAULT)
-        if rec is not None and rec["attrs"].get("version"):
-            base = {**base, **reg.version(rec)["spec"]}
-        return base
+        return reg.version(rec)["spec"] if rec is not None and rec["attrs"].get("version") else None
+
+    def defaults(self, reg: Registry) -> dict[str, Any]:
+        """What a new policy starts from: the user's default as it is in force."""
+        return {**_ws(reg).default_policy_spec(), **(self.in_force_default(reg) or {})}
 
     def validate(self, reg: Registry, name: str, spec: dict[str, Any], body: str | None) -> dict[str, Any]:
         ws = _ws(reg)
@@ -181,7 +249,15 @@ class PolicyKind(Kind):
             spec["description"] = name
         layers = spec.get("layers") or []
         if not isinstance(layers, list) or not all(isinstance(x, str) for x in layers):
-            raise CapError("layers is a list of layer names")
+            raise CapError("layers is a list of layer names (name, or name@version)")
+        keep = {}
+        rec = reg.find("policy", name)
+        if rec is not None and rec["attrs"].get("version"):
+            for p in reg.version(rec)["spec"].get("layers") or []:
+                m = PIN_RE.match(p)
+                if m and m.group(2):
+                    keep[m.group(1)] = int(m.group(2))
+        layers = [pin(reg, x, keep) for x in layers]
         trees = layer_trees(reg, layers) if layers else []
         cmds = list(dict.fromkeys(spec.get("commands") or []))
         if cmds == ["*"]:
@@ -195,7 +271,9 @@ class PolicyKind(Kind):
         spec["commands"] = cmds
         spec["network"] = bool(spec.get("network"))
         ports = spec.get("ports")
-        if ports is not None:
+        if ports in (None, "any", ["any"]):
+            ports = "any"
+        else:
             try:
                 ports = sorted({int(p) for p in ports})
             except (TypeError, ValueError) as e:
@@ -216,7 +294,11 @@ class PolicyKind(Kind):
         return spec
 
     def widens(self, reg: Registry, old: dict[str, Any] | None, new: dict[str, Any]) -> list[str]:
-        old = old or _ws(reg).default_policy_spec()
+        """Against what is in force: the policy's own version, or for a new policy the user's default
+        as it is in force (none: everything widens)."""
+        if old is None:
+            old = self.in_force_default(reg) or {"commands": [], "network": False, "mounts": [], "layers": [],
+                                                 **{k: 0 for k in NUMBERS}}
         why = []
         oc, nc = set(old.get("commands") or []), set(new["commands"])
         if "*" in nc and "*" not in oc:
@@ -227,8 +309,8 @@ class PolicyKind(Kind):
             why.append("the network")
         if new["network"] and old.get("network"):
             op, np_ = old.get("ports"), new.get("ports")
-            if (op is not None and np_ is None) or (op is not None and np_ is not None and set(np_) - set(op)):
-                why.append(f"ports {'any' if np_ is None else ' '.join(map(str, sorted(set(np_) - set(op))))}")
+            if op != "any" and (np_ == "any" or set(np_) - set(op or [])):
+                why.append(f"ports {'any' if np_ == 'any' else ' '.join(map(str, sorted(set(np_) - set(op or []))))}")
         for k in NUMBERS:
             if float(new[k]) > float(old.get(k, 0)):
                 why.append(f"{k} {old.get(k)} → {new[k]}")
@@ -237,7 +319,7 @@ class PolicyKind(Kind):
             if (m["source"], m["target"], m["rw"]) not in om and (m["source"], m["target"], True) not in om:
                 why.append(f"mount {m['source']} at {m['target']}{' read-write' if m['rw'] else ''}")
         added = set(new["layers"]) - set(old.get("layers") or [])
-        if added:
+        if added:  # a layer, or another build of one: what the user approved is a build
             why.append("layers " + " ".join(sorted(added)))
         return why
 
@@ -258,11 +340,10 @@ class PolicyKind(Kind):
         spec = dict(ver["spec"])
         if spec.get("commands") == ["*"]:
             return None
-        trees = []
         try:
             trees = layer_trees(reg, spec.get("layers") or [])
         except CapError:
-            spec["layers"] = []
+            return None  # a layer the user approved is gone: that is for the user to answer
         spec["commands"] = [c for c in spec["commands"] if resolve_command(c, trees) is not None]
         try:
             return self.validate(reg, rec["attrs"]["name"], spec, None)
@@ -356,29 +437,26 @@ class ScriptKind(Kind):
 
 class LayerKind(Kind):
     name = "layer"
-    description = ("binaries and data for the sandbox: a build script (body) run as root over the base and "
-                   "parents; spec {parents, network, timeout, description}. A policy lists the layers it stacks.")
+    description = ("binaries and data for the sandbox: a build script (body) run as root inside a sandbox of a "
+                   "policy you already hold (its commands, network, limits and timeout), over its parents; spec "
+                   "{policy, parents, description}. A policy stacks a layer at a build it pins (name@version).")
     ttl = 90 * DAY
     has_body = True
 
     def validate(self, reg: Registry, name: str, spec: dict[str, Any], body: str | None) -> dict[str, Any]:
-        bad = set(spec) - {"parents", "network", "timeout", "description"}
+        bad = set(spec) - {"policy", "parents", "description"}
         if bad:
-            raise CapError(f"unknown layer fields {sorted(bad)}")
+            raise CapError(f"unknown layer fields {sorted(bad)} (a build runs under its policy: its network, "
+                           "limits and timeout)")
+        ws = _ws(reg)
+        spec.setdefault("policy", ws.DEFAULT)
+        ws.policy(spec["policy"])  # in force: the build is a sandbox of that grant, never a wider one
         parents = spec.get("parents") or []
-        if name in parents:
+        if any(PIN_RE.match(p) and PIN_RE.match(p).group(1) == name for p in parents):
             raise CapError("a layer is not its own parent")
-        built_layers(reg, parents)
-        spec["parents"] = list(parents)
-        spec["network"] = bool(spec.get("network"))
-        spec["timeout"] = float(spec.get("timeout") or 1800)
-        if not 0 < spec["timeout"] <= 4 * 3600:
-            raise CapError("a layer build's timeout is at most 4 hours")
+        spec["parents"] = [pin(reg, p) for p in parents]
         spec["description"] = str(spec.get("description", ""))
         return spec
-
-    def widens(self, reg: Registry, old: dict[str, Any] | None, new: dict[str, Any]) -> list[str]:
-        return ["a build with the network"] if new["network"] else []
 
     def apply(self, reg: Registry, rec: dict[str, Any], ver: dict[str, Any]) -> None:
         ws = _ws(reg)
@@ -387,17 +465,13 @@ class LayerKind(Kind):
         ws.kick()
 
     def unapply(self, reg: Registry, rec: dict[str, Any]) -> None:
-        ws = _ws(reg)
-        store = ws.layer_store()
-        prefix = f"{rec['attrs']['name']}.v"
-        for lay in store.list():
-            if lay.name.startswith(prefix) and not any(lay.name in o.parents for o in store.list()):
-                store.remove(lay.name)
+        reg.g.update_node(rec["id"], actor="kernel", attrs={"built": None})
+        prune_layers(reg, rec["attrs"]["name"])  # what a policy still pins is kept
 
     def check(self, reg: Registry, rec: dict[str, Any], ver: dict[str, Any]) -> tuple[str, str]:
         a = rec["attrs"]
         if a.get("built") == ver["version"]:
-            tree = _ws(reg).layer_store().tree(layer_dir(None, a["name"], ver["version"]))
+            tree = _store(reg).tree(layer_dir(a["name"], ver["version"]))
             return ("pass", "") if Path(tree).is_dir() else ("fail", "its built tree is gone")
         if a.get("build_error"):
             return "fail", f"its build failed: {a['build_error']}"
