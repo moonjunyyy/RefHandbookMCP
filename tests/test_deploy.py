@@ -203,3 +203,12 @@ def test_the_directory_side_names_this_sites_admins(fresh, tmp_path, monkeypatch
     assert "portal/service@EXAMPLE.ORG  ADMCILSP  ann/user@EXAMPLE.ORG" in acl and "  bo@EXAMPLE.ORG" in acl
     ldif = files["/etc/example/directory/slapd-acl.ldif"][0]
     assert 'dn.one="ou=Users,dc=example,dc=org"' in ldif and "@@" not in ldif + acl
+
+
+def test_the_installer_takes_paths_from_where_it_is_run(tmp_path):
+    """`install.sh --app wordgen dist` means ./dist, not the repository's dist."""
+    (tmp_path / "dist").mkdir()
+    out = subprocess.run([str(REPO / "deploy/install.sh"), "--app", "wordgen", "dist"], cwd=tmp_path,
+                         capture_output=True, text=True, env={"PATH": "/usr/bin:/bin", "PORTAL_REALM": "M00NNY.KR"})
+    assert out.returncode != 0
+    assert "run as root" in out.stderr  # it got as far as the root check, from tmp_path, with the code found
