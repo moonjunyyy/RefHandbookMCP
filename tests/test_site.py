@@ -16,7 +16,7 @@ def load():
 
 def test_the_shipped_file_declares_the_site():
     s = load()
-    assert s.audiences == ("account", "refhandbook")
+    assert s.audiences == ("account", "refhandbook", "wordgen")
     assert {a.id for a in s.apps} >= {"account", "agents", "refhandbook"}
 
 

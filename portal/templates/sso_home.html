@@ -3,7 +3,7 @@
 {% block content %}
 <section class="hero">
   {% if current %}
-  <h1>안녕하세요, <code>{{ current }}</code> 님</h1>
+  <h1>안녕하세요, {{ current }} 님</h1>
   <p class="lead">계정 하나(Kerberos)로 아래 서비스를 모두 씁니다.</p>
   <div class="actions">
     <a class="button" href="{{ portal }}/">내 계정</a>

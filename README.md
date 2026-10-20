@@ -230,6 +230,14 @@ routes with nowhere to go; a `site` route goes through the sign-in and carries a
 own app, and a `public` route clears any token header. Adding a service: one `[[app]]` in
 `deploy/site.toml`, then `sudo deploy/install.sh`.
 
+**Apps the site hosts.** A browser app (a built `dist/`, such as 글타래) needs no server of its
+own: an `[[app]]` with `static = true` is served at `/apps/<id>/` behind the sign-in, and with
+`storage = true` each user gets a JSON store next to it, `/apps/<id>/api/store/<key>`
+(`portal/apps.py`, the `<site>-apps` unit), so what they save follows their account. Tokens for it
+are minted for the app's id alone, and the store checks the app in the path against them: one app's
+token does not open another's data. Publish a build with `sudo deploy/install.sh --app <id> <dist>`.
+An app built with relative paths (Vite `base: './'`) finds its store at `api/` next to its page.
+
 How it fits together:
 - nginx asks the SSO (`/auth/check`) before every protected request. A browser is known by the
   site cookie (`<site>_sso`, `Path=/`, `SameSite=Lax`, 8 h from sign-in); without one, nginx sends

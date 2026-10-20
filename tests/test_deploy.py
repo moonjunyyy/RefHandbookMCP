@@ -106,7 +106,7 @@ def test_install_makes_secrets_once_and_moves_an_old_layout(fresh, tmp_path, cap
     assert (root / "etc/nginx/sites-enabled/www.m00nny.kr.conf").is_symlink()
     assert (root / "opt/m00nny-portal/portal/deploy.py").exists() and not (root / "opt/m00nny-portal/.git").exists()
     assert not retired.exists() and ["systemctl", "disable", "--now", "m00nny-dav-homes.timer"] in sh.calls
-    assert ["systemctl", "restart", "m00nny-portal.service", "m00nny-sso.service"] in sh.calls
+    assert ["systemctl", "restart", "m00nny-portal.service", "m00nny-sso.service", "m00nny-apps.service"] in sh.calls
     out = capsys.readouterr().out
     assert "ktadd -k /etc/m00nny-sso/http.keytab HTTP/www.m00nny.kr@M00NNY.KR" in out  # only what is missing
     assert "/etc/m00nny-portal/portal.keytab" not in out.split("Only an admin")[1]

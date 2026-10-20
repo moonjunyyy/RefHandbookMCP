@@ -13,6 +13,8 @@ Rules the renderer enforces, so a new entry cannot weaken the site by omission:
   - every route path is unique, every limit names a declared zone, ids and audiences are plain names
   - raw nginx directives (`nginx = "..."`) are allowed for what the schema does not cover, and are
     copied verbatim: review them like the config they are
+  - an app the site hosts (`static`, `storage`) gets its routes generated, and its tokens are minted
+    for its id alone, which the storage service checks against the app in the path
 """
 
 from __future__ import annotations
@@ -67,6 +69,11 @@ class App:
     links: tuple[Link, ...] = ()
     code: str = ""  # a line shown in a <code> on its card on the main page (an address to connect to)
     card: bool = True
+    # An app hosted by the site itself (portal/apps.py): `static` serves its built files at /apps/<id>/
+    # (true: from <apps_root>/<id>, or a directory), `storage` gives each user a JSON store at
+    # /apps/<id>/api/. Their routes are generated; the app's audience is its id.
+    static: bool | str = False
+    storage: bool = False
     routes: tuple[Route, ...] = ()
 
 
@@ -136,12 +143,14 @@ def load(path: str | Path, f=None) -> Site:  # noqa: ANN001 — f: portal.facts.
         a = App(**d, routes=routes, links=links)
         if not NAME.match(a.id):
             raise SiteError(f"app id {a.id!r}: lowercase letters, digits and -")
+        if a.static or a.storage:
+            a = _hosted(a, f)
         if a.audience and not NAME.match(a.audience):
             raise SiteError(f"app {a.id}: audience {a.audience!r}: lowercase letters, digits and -")
         if a.id in seen_ids:
             raise SiteError(f"app {a.id} is declared twice")
         seen_ids.add(a.id)
-        for r in routes:
+        for r in a.routes:
             key = (r.match, r.path)
             if key in seen_paths:
                 raise SiteError(f"route {r.match} {r.path} is declared twice")
@@ -150,6 +159,29 @@ def load(path: str | Path, f=None) -> Site:  # noqa: ANN001 — f: portal.facts.
                 raise SiteError(f"app {a.id}: route {r.path} has no upstream (and no alias/return of its own)")
         apps.append(a)
     return Site(tuple(apps))
+
+
+def _hosted(a: App, f) -> App:  # noqa: ANN001 — f: portal.facts.Facts
+    """The routes of an app the site hosts, before any of its own."""
+    from dataclasses import replace
+
+    if a.audience and a.audience != a.id:
+        raise SiteError(f"app {a.id}: a hosted app's audience is its id ({a.id}), not {a.audience!r}")
+    base = f"/apps/{a.id}"
+    routes = []
+    if a.storage:
+        routes.append(Route(path=f"{base}/api/", upstream=f.upstream("apps"), body="1m",
+                            signin=False, note="each user's storage (portal/apps.py)"))
+    if a.static:
+        root = a.static if isinstance(a.static, str) else f"{f.apps_root}/{a.id}"
+        if not root.startswith("/") or any(c in root for c in "{};\n "):
+            raise SiteError(f"app {a.id}: static is true or an absolute directory, not {root!r}")
+        routes += [Route(path=base, match="exact", auth="public", nginx=f"return 301 {base}/;"),
+                   Route(path=f"{base}/", nginx=f"alias {root.rstrip('/')}/;\nindex index.html;\n"
+                                                f"try_files $uri {base}/index.html;",
+                         note="its built files")]
+    links = a.links or ((Link("열기", f"{base}/"),) if a.static else ())
+    return replace(a, audience=a.id, links=links, routes=(*routes, *a.routes))
 
 
 # ── nginx ────────────────────────────────────────────────────────────────

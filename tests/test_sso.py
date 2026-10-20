@@ -201,7 +201,7 @@ def test_the_main_page_knows_who_is_signed_in(tmp_path, key):
     assert "https://www.m00nny.kr/mcp</code>" in page  # the derived domain
     c, _ = sign_in(app)
     page = c.get("/").text
-    assert "<code>alice</code> 님" in page and 'href="/auth/logout">로그아웃' in page and 'href="/account/"' in page
+    assert "안녕하세요, alice 님" in page and 'href="/auth/logout">로그아웃' in page and 'href="/account/"' in page
 
 
 def test_a_broken_keytab_is_a_message_not_a_crash(sso, tmp_path):

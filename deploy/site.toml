@@ -27,6 +27,10 @@
 # clients that answer it), nginx (raw directives), note. App fields: id, title,
 # description, audience, upstream, groups (who sees it in the menu; the backend enforces its own
 # access), menu, menu_href, code (an address on the card), card, [[app.link]], [[app.route]].
+#
+# An app the site hosts needs no routes: `static = true` serves its built files at /apps/<id>/
+# (publish them with `sudo deploy/install.sh --app <id> <dist>`), and `storage = true` gives each
+# user a JSON store at /apps/<id>/api/ (portal/apps.py). Both go through the sign-in.
 
 [site]
 aliases = ["m00nny.kr"]
@@ -65,6 +69,13 @@ link = [{ label = "내 계정", href = "@@portal_root@@/" }]
   [[app.route]]
   path = "@@portal_root@@/static/"
   auth = "public"
+
+[[app]]
+id = "wordgen"
+title = "글타래"
+description = "소설 창작용 무작위 키워드 생성기와 집필 메모. 저장한 키워드 세트와 메모는 계정에 남습니다."
+static = true
+storage = true
 
 [[app]]
 id = "agents"

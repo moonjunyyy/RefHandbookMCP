@@ -21,7 +21,7 @@ derivation.
 Each service is named after the site and its role, and that name is everything systemd keys on:
 the unit, its system user, /etc/<unit>, /var/lib/<unit> and /var/log/<unit>.
 
-    portal  <name>-portal   :8080        sso  <name>-sso   :8090
+    portal  <name>-portal   :8080        sso  <name>-sso   :8090        apps  <name>-apps  :8100
 
 Standard library only: the installer reads these before any virtualenv exists.
 """
@@ -37,7 +37,7 @@ from functools import cache
 from pathlib import Path
 
 KRB5_CONF = os.environ.get("KRB5_CONFIG", "/etc/krb5.conf").split(":")[0]
-ROLES = {"portal": 8080, "sso": 8090}
+ROLES = {"portal": 8080, "sso": 8090, "apps": 8100}
 USED = {"realm", "name", "base_dn", "domain", "users_ou", "groups_ou", "ldap_uri", "sso_issuer", "http_service",
         "code", "ports", "aliases", "router", "listen"}
 
@@ -95,6 +95,11 @@ class Facts:
 
     def upstream(self, role: str) -> str:
         return f"http://127.0.0.1:{self.ports[role]}"
+
+    @property
+    def apps_root(self) -> str:
+        """Where the built files of the apps the site hosts live (/apps/<id>/ is <apps_root>/<id>)."""
+        return f"/var/www/{self.name}/apps"
 
     @property
     def site_file(self) -> str:

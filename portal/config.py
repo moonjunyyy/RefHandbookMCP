@@ -109,6 +109,11 @@ class Settings:
     invite_ttl_hours: int = field(default_factory=lambda: int(_env("INVITE_TTL_HOURS", "168")))
     # Where links handed out (invitations) point: the site as browsers reach it.
     public_url: str = field(default_factory=lambda: _env("PUBLIC_URL", f"https://{_f().domain}").rstrip("/"))
+    # The apps' storage (portal/apps.py): each user's JSON values, per app.
+    apps_db: str = field(default_factory=lambda: _env(
+        "APPS_DB", running_dir("STATE_DIRECTORY", _f().state_dir("apps")) + "/store.db"))
+    apps_max_value: int = field(default_factory=lambda: int(_env("APPS_MAX_VALUE", str(1 << 20))))
+    apps_max_keys: int = field(default_factory=lambda: int(_env("APPS_MAX_KEYS", "200")))
     # Who applicants contact about their personal data (shown in the consent notice).
     privacy_contact: str = field(default_factory=lambda: _env("PRIVACY_CONTACT", ""))
     # gecos is world-readable through NSS (getent passwd), so names are not copied into it by default.

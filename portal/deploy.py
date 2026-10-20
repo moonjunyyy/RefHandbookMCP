@@ -4,11 +4,11 @@ Everything the site needs is derived from the site file and the realm (portal/fa
 rendered from deploy/templates: nothing on the host is named by hand. Run it again after any change
 (to the code, the site file or the templates); every step is idempotent.
 
-    users      <name>-portal, <name>-sso (system users, no shell)
+    users      <name>-portal, <name>-sso, <name>-apps (system users, no shell)
     code       the repository copied to <code> (default /opt/<name>-portal), its virtualenv in .venv
     site file  /etc/<name>/site.toml (the one the services read: PORTAL_SITE), and site.local.toml
                beside it when the site file has one (the host's own keys, kept out of the repository)
-    units      <name>-portal, <name>-sso in /etc/systemd/system
+    units      <name>-portal, <name>-sso, <name>-apps in /etc/systemd/system
     nginx      sites-available/<domain>.conf (enabled), snippets/<name>-{proxy,apps,apps-map}.conf;
                with a `router` in [site], plain HTTP for it, and /etc/<name>/router/<domain>.conf:
                the router's side, for its admin to merge
@@ -44,7 +44,7 @@ from .facts import Facts, facts, local_file
 
 REPO = Path(__file__).resolve().parents[1]
 TEMPLATES = REPO / "deploy" / "templates"
-SERVICES = ("portal", "sso")  # roles that run as their own user
+SERVICES = ("portal", "sso", "apps")  # roles that run as their own user
 # What earlier versions installed, by role: the one list of old names, for the move to derived ones.
 LEGACY = {"portal": "ldap-portal"}
 # Units of services the site no longer runs ({unit} = a derived name): stopped and removed.
@@ -84,6 +84,7 @@ def rendered(f: Facts, site_file: Path) -> dict[str, tuple[str, int]]:
     out = {
         f"/etc/systemd/system/{f.unit('portal')}.service": (t("portal.service"), 0o644),
         f"/etc/systemd/system/{f.unit('sso')}.service": (t("sso.service"), 0o644),
+        f"/etc/systemd/system/{f.unit('apps')}.service": (t("apps.service"), 0o644),
         f"/etc/nginx/sites-available/{f.domain}.conf": (t("site.conf"), 0o644),
         f"/etc/nginx/snippets/{f.name}-proxy.conf": (t("proxy.conf"), 0o644),
         f"/etc/nginx/snippets/{f.name}-apps-map.conf": (site_mod.render_map(site, f.name), 0o644),
@@ -329,6 +330,7 @@ def install(site_file: Path, root: Path = Path("/"), sh: Run = _run, src: Path =
               "and a C compiler, then rerun", file=sys.stderr)
         return 1
     write_rendered(rendered(f, site_file), root)
+    (root / f.apps_root.lstrip("/")).mkdir(parents=True, exist_ok=True)
     if not local_file(site_file).exists():  # dropped from the source: the installed copy goes too
         (root / str(local_file(f.site_file)).lstrip("/")).unlink(missing_ok=True)
     enabled = root / "etc/nginx/sites-enabled" / f"{f.domain}.conf"
@@ -340,7 +342,7 @@ def install(site_file: Path, root: Path = Path("/"), sh: Run = _run, src: Path =
     if shutil.which("nginx") and sh(["nginx", "-t"]) != 0:
         print("nginx -t failed: nothing restarted", file=sys.stderr)
         return 1
-    units = [f"{f.unit('portal')}.service", f"{f.unit('sso')}.service"]
+    units = [f"{f.unit(role)}.service" for role in SERVICES]
     sh(["systemctl", "daemon-reload"])
     sh(["systemctl", "enable", *units])
     sh(["systemctl", "restart", *units])
@@ -360,11 +362,39 @@ def install(site_file: Path, root: Path = Path("/"), sh: Run = _run, src: Path =
     return 0
 
 
+def install_app(f: Facts, site_file: Path, app_id: str, dist: Path, root: Path = Path("/")) -> int:
+    """Publish an app's built files (its `dist`) at /apps/<id>/: copied into <apps_root>/<id>, replacing
+    what was there. The app must be in the site file with `static = true`."""
+    app = next((a for a in site_mod.load(site_file, f).apps if a.id == app_id), None)
+    if app is None or app.static is not True:
+        print(f"{app_id}: no app with `static = true` in {site_file}", file=sys.stderr)
+        return 1
+    if not (dist / "index.html").is_file():
+        print(f"{dist}: no index.html (build the app first)", file=sys.stderr)
+        return 1
+    target = root / f.apps_root.lstrip("/") / app_id
+    new = target.with_name(f".{app_id}.new")
+    shutil.rmtree(new, ignore_errors=True)
+    shutil.copytree(dist, new)
+    for p in [new, *new.rglob("*")]:
+        p.chmod(0o755 if p.is_dir() else 0o644)  # nginx's to read, whatever the build left
+    old = target.with_name(f".{app_id}.old")
+    shutil.rmtree(old, ignore_errors=True)
+    if target.exists():
+        target.rename(old)
+    new.rename(target)
+    shutil.rmtree(old, ignore_errors=True)
+    print(f"published {dist} at /apps/{app_id}/ ({target})")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="deploy/install.sh", description=__doc__.split("\n")[0])
     p.add_argument("site", nargs="?", default=str(REPO / "deploy" / "site.toml"))
     p.add_argument("--render-into", metavar="DIR", help="only render every file under DIR (nothing installed)")
     p.add_argument("--check", action="store_true", help="print the derived facts and the services, and exit")
+    p.add_argument("--app", nargs=2, metavar=("ID", "DIST"),
+                   help="publish an app's built files at /apps/ID/ (an app of the site file with static = true)")
     a = p.parse_args(argv)
     site_file = Path(a.site)
     f = facts(str(site_file))
@@ -374,11 +404,16 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{k:13} {getattr(f, k)}")
         print(f"{'tls':13} " + (f"at the router ({', '.join(f.router)}), plain HTTP on :{f.listen}" if f.router
                                  else f"nginx (/etc/letsencrypt/live/{f.domain})"))
-        for role in ("portal", "sso"):
+        for role in SERVICES:
             print(f"{'unit':13} {f.unit(role)}")
         for app in site_mod.load(site_file, f).apps:
             print(f"{'app':13} {app.id} ({app.audience or '-'}, {len(app.routes)} routes)")
         return 0
+    if a.app:
+        if os.geteuid() != 0:
+            print("run as root: sudo deploy/install.sh --app ID DIST", file=sys.stderr)
+            return 1
+        return install_app(f, site_file, a.app[0], Path(a.app[1]))
     if a.render_into:
         write_rendered(rendered(f, site_file), Path(a.render_into))
         print(f"rendered into {a.render_into}")
