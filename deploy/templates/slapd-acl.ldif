@@ -11,7 +11,7 @@
 dn: olcDatabase={1}mdb,cn=config
 changetype: modify
 replace: olcAccess
-# 0. Kerberos key material: only the KDC and kadmind. (Today a normal user can read these!)
+# 0. Kerberos key material: only the kdc,ou=Services and kadmin,ou=Servicesnd. (Today a normal user can read these!)
 olcAccess: {0}to attrs=krbPrincipalKey,krbMKey,krbPwdHistory,krbExtraData
   by dn.exact="@@kdc_dn@@" read
   by dn.exact="@@kadmin_dn@@" write
@@ -21,7 +21,7 @@ olcAccess: {1}to attrs=userPassword
   by dn.exact="@@portal_dn@@" =w
   by anonymous auth
   by * none
-# 2. Remaining krb* status attributes: kadmind/KDC write, portal and the user read.
+# 2. Remaining krb* status attributes: kadmin,ou=Servicesnd/kdc,ou=Services write, portal and the user read.
 olcAccess: {2}to attrs=krbPrincipalName,krbCanonicalName,krbTicketFlags,krbLoginFailedCount,krbLastFailedAuth,krbLastSuccessfulAuth,krbLastPwdChange,krbPasswordExpiration,krbPrincipalExpiration,krbPwdPolicyReference,krbTicketPolicyReference,krbLastAdminUnlock
   by dn.exact="@@kadmin_dn@@" write
   by dn.exact="@@kdc_dn@@" write
@@ -35,7 +35,7 @@ olcAccess: {3}to dn.base="@@users_ou@@" attrs=children
   by users read
 # 4. Personal data: the user and the portal only. Without this rule, {5} below gives every
 #    signed-in account (and nslcd, so `getent passwd` on every host) each user's name and email.
-#    Must come before {5}. The portal shows these to helpdesk/admin through its own identity.
+#    Must come before {5}. The portal shows these to helpdesk/adminn through its own identity.
 #    After this, `getent passwd` shows an empty gecos field (nslcd falls back to cn, now hidden too).
 olcAccess: {4}to dn.one="@@users_ou@@" attrs=cn,sn,givenName,displayName,mail,gecos,telephoneNumber,mobile,homePhone,postalAddress,homePostalAddress,jpegPhoto,employeeNumber
   by dn.exact="@@portal_dn@@" write
@@ -52,4 +52,29 @@ olcAccess: {6}to dn.base="@@groups_ou@@" attrs=children
 olcAccess: {7}to dn.one="@@groups_ou@@" attrs=entry,objectClass,cn,gidNumber,memberUid
   by dn.exact="@@portal_dn@@" write
   by users read
-# ... then your existing rules (kerberos container, ou=Admins, ou=Machines, catch-all) follow.
+# ... then your existing rules (kerberos container, ou=adminns, ou=Machines, catch-all) follow.
+olcAccess: {8}to dn.children="ou=Services,dc=m00nny,dc=kr" filter=(objectClass=simpleSecurityObject)
+  by dn.regex="^(.*ou=A|cn=a)dmin(s*),dc=m00nny,dc=kr$" write
+  by dn.exact="uid=kadmin,ou=Services,dc=m00nny,dc=kr" write
+  by dn.exact="uid=kdc,ou=Services,dc=m00nny,dc=kr" write
+  by dn.exact="uid=www,ou=Services,dc=m00nny,dc=kr" read
+  by * none
+olcAccess: {9}to dn.base="ou=Services,dc=m00nny,dc=kr" attrs=children
+  by dn.regex="^(.*ou=A|cn=a)dmin(s*),dc=m00nny,dc=kr$" write
+  by users read
+olcAccess: {10}to dn.one="ou=Services,dc=m00nny,dc=kr" attrs=cn,ipServiceProtocol,ipServicePort
+  by dn.regex="^(.*ou=A|cn=a)dmin(s*),dc=m00nny,dc=kr$" write
+  by dn.exact="uid=www,ou=Services,dc=m00nny,dc=kr" write
+  by users read
+olcAccess: {11}to dn.children="ou=Admins,dc=m00nny,dc=kr" filter=(objectClass=simpleSecurityObject)
+  by dn.regex="^(.*ou=A|cn=a)dmin(s*),dc=m00nny,dc=kr$" write
+  by dn.exact="uid=kadmin,ou=Services,dc=m00nny,dc=kr" write
+  by dn.exact="uid=kdc,ou=Services,dc=m00nny,dc=kr" read
+  by * none
+olcAccess: {12}to dn.base="ou=Admins,dc=m00nny,dc=kr" attrs=children
+  by dn.regex="^(.*ou=A|cn=a)dmin(s*),dc=m00nny,dc=kr$" write
+  by * none
+olcAccess: {13}to dn.one="ou=Admins,dc=m00nny,dc=kr" attrs=cn,ipServiceProtocol,ipServicePort
+  by dn.regex="^(.*ou=A|cn=a)dmin(s*),dc=m00nny,dc=kr$" write
+  by * none
+olcAccess: {14}to * by * read
