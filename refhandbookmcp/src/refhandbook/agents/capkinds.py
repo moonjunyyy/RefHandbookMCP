@@ -27,7 +27,7 @@ from ..kernel.capabilities import DAY, CapError, Kind, Registry, register
 from . import sandbox
 
 NUMBERS = {"timeout": float, "memory_mb": int, "cpus": float, "tmp_mb": int, "disk_mb": int, "concurrent": int}
-POLICY_FIELDS = {"commands", "network", "ports", "mounts", "layers", "description", *NUMBERS}
+POLICY_FIELDS = {"commands", "network", "ports", "mounts", "layers", "exec_work", "egress", "description", *NUMBERS}
 RESERVED = ("/", "/usr", "/bin", "/sbin", "/lib", "/lib32", "/lib64", "/libx32", "/etc", "/opt", "/proc", "/dev",
             "/work", "/tmp", "/run", "/job", "/root", "/sys", "/var")
 CMD_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*$")
@@ -98,7 +98,8 @@ def _mounts(ws: Any, mounts: Any) -> list[dict[str, Any]]:
 # build. A new version of the layer does not reach the policy until a new version of the policy
 # moves the pin, which is a widening like any other. Pinned trees are kept.
 
-PIN_RE = re.compile(r"^([a-z0-9][a-z0-9._-]{0,63})(?:@(\d+))?$")
+PIN_RE = re.compile(r"^((?:sys:)?[a-z0-9][a-z0-9._-]{0,63})(?:@(\d+))?$")
+SYS = "sys:"
 
 
 def layer_dir(name: str, version: int) -> str:
@@ -116,6 +117,18 @@ def pin(reg: Registry, entry: str, keep: dict[str, int] | None = None) -> str:
     if not m:
         raise CapError(f"layer {entry!r}: a name, or name@version")
     name, v = m.group(1), m.group(2)
+    if name.startswith(SYS):  # the server's shared layers: built by its administrator, no record here
+        store = _store(reg).system
+        if store is None:
+            raise CapError(f"layer {name}: this server has no system layers (`refhandbook layers build`)")
+        plain = name[len(SYS):]
+        built = sorted(int(x.name.rsplit(".v", 1)[1]) for x in store.list()
+                       if re.fullmatch(rf"{re.escape(plain)}\.v\d+", x.name))
+        n = int(v) if v else (keep or {}).get(name) or (built[-1] if built else 0)
+        if n not in built:
+            raise CapError(f"layer {name}@{n or '?'} is not built on this server; built: "
+                           f"{', '.join(f'{name}@{b}' for b in built) or 'none'}")
+        return f"{name}@{n}"
     rec = reg.get("layer", name)
     if rec["state"] == "retired":
         raise CapError(f"layer {name} is retired")
@@ -140,6 +153,24 @@ def layer_trees(reg: Registry, pins: list[str]) -> list[str]:
             dirs.append(layer_dir(m.group(1), int(m.group(2))))
         return [str(store.tree(d)) for d in store.resolve(dirs)[1]]
     except (ValueError, TypeError, AttributeError) as e:  # LayerError is a ValueError
+        raise CapError(f"layers {' '.join(pins)}: {e}") from e
+
+
+def layer_env(reg: Registry, pins: list[str]) -> dict[str, str]:
+    """The environment the stacked layers ask for, bottom layer first; "$PATH" (any $VAR) in a value
+    is what the layers below, or the sandbox's default, made of it."""
+    from string import Template
+
+    store = _store(reg)
+    try:
+        dirs = [layer_dir(m.group(1), int(m.group(2))) for p in pins for m in [PIN_RE.match(p)]]
+        stack = store.resolve(dirs)[1]
+        env = {"PATH": sandbox.HOST_PATH}
+        for d in reversed(stack):
+            for k, v in store.get(d).env.items():
+                env[k] = Template(v).safe_substitute(env)
+        return env
+    except (ValueError, TypeError, AttributeError) as e:
         raise CapError(f"layers {' '.join(pins)}: {e}") from e
 
 
@@ -225,8 +256,10 @@ def resolve_command(name: str, trees: list[str]) -> str | None:
 
 class PolicyKind(Kind):
     name = "policy"
-    description = ("what a sandbox is: commands (a list, or ['*'] for all), network and ports, limits "
-                   "(timeout, memory_mb, cpus, tmp_mb, disk_mb, concurrent), layers, mounts [{source, target, rw}]")
+    description = ("what a sandbox is: commands (a list, or ['*'] for all), egress (profiles it may reach through "
+                   "the supervisor: pypi, npm, github, …), network (the host's, whole) and ports, limits (timeout, "
+                   "memory_mb, cpus, tmp_mb, disk_mb, concurrent), layers (name@build; sys:name for the server's), "
+                   "mounts [{source, target, rw}], exec_work (what is built in /work may run)")
     ttl = 30 * DAY
 
     def in_force_default(self, reg: Registry) -> dict[str, Any] | None:
@@ -270,6 +303,13 @@ class PolicyKind(Kind):
                 raise CapError(f"not installed on the host{' or its layers' if layers else ''}: {', '.join(missing)}")
         spec["commands"] = cmds
         spec["network"] = bool(spec.get("network"))
+        spec["exec_work"] = bool(spec.get("exec_work"))
+        eg = spec.get("egress") or []
+        if not isinstance(eg, list) or not all(isinstance(x, str) for x in eg):
+            raise CapError("egress is a list of egress profile names (cap kind=egress lists them)")
+        for x in eg:
+            reg.in_force("egress", x)
+        spec["egress"] = sorted(set(eg))
         ports = spec.get("ports")
         if ports in (None, "any", ["any"]):
             ports = "any"
@@ -307,6 +347,11 @@ class PolicyKind(Kind):
             why.append("commands " + " ".join(sorted(nc - oc)))
         if new["network"] and not old.get("network"):
             why.append("the network")
+        if new.get("exec_work") and not old.get("exec_work"):
+            why.append("running what is built in /work")
+        reach = set(new.get("egress") or []) - set(old.get("egress") or [])
+        if reach:
+            why.append("egress " + " ".join(sorted(reach)))
         if new["network"] and old.get("network"):
             op, np_ = old.get("ports"), new.get("ports")
             if op != "any" and (np_ == "any" or set(np_) - set(op or [])):
@@ -444,7 +489,7 @@ class LayerKind(Kind):
     has_body = True
 
     def validate(self, reg: Registry, name: str, spec: dict[str, Any], body: str | None) -> dict[str, Any]:
-        bad = set(spec) - {"policy", "parents", "description"}
+        bad = set(spec) - {"policy", "parents", "description", "env"}
         if bad:
             raise CapError(f"unknown layer fields {sorted(bad)} (a build runs under its policy: its network, "
                            "limits and timeout)")
@@ -456,6 +501,11 @@ class LayerKind(Kind):
             raise CapError("a layer is not its own parent")
         spec["parents"] = [pin(reg, p) for p in parents]
         spec["description"] = str(spec.get("description", ""))
+        env = spec.get("env") or {}
+        if not isinstance(env, dict) or not all(re.fullmatch(r"[A-Z_][A-Z0-9_]*", k) and isinstance(v, str)
+                                                for k, v in env.items()):
+            raise CapError("env is {NAME: value}; $PATH (any $NAME) in a value expands to what is below")
+        spec["env"] = env
         return spec
 
     def apply(self, reg: Registry, rec: dict[str, Any], ver: dict[str, Any]) -> None:
@@ -481,5 +531,76 @@ class LayerKind(Kind):
         return spec.get("description", "")
 
 
-for _k in (PolicyKind(), ScriptKind(), LayerKind()):
+# ── egress ───────────────────────────────────────────────────────────────
+
+# The protocols the kernel knows: package registries and source hosts a computation commonly needs.
+# Seeded once per store (the user may change or remove them; the model may propose its own).
+EGRESS_PROFILES = {
+    "pypi": (["pypi.org", "files.pythonhosted.org"], "Python packages (pip, uv)"),
+    "npm": (["registry.npmjs.org", "registry.yarnpkg.com"], "Node packages (npm, yarn, pnpm)"),
+    "crates": (["crates.io", "index.crates.io", "static.crates.io"], "Rust crates (cargo)"),
+    "github": (["github.com", "api.github.com", "codeload.github.com", "objects.githubusercontent.com",
+                "raw.githubusercontent.com", "release-assets.githubusercontent.com"], "GitHub: git over https, releases"),
+    "huggingface": (["huggingface.co", "cdn-lfs.huggingface.co", "cdn-lfs-us-1.hf.co", "*.hf.co"],
+                    "Hugging Face models and datasets"),
+    "arxiv": (["arxiv.org", "export.arxiv.org"], "arXiv papers and metadata"),
+    "python-tools": (["astral.sh", "github.com", "objects.githubusercontent.com",
+                      "release-assets.githubusercontent.com"], "uv and its managed Pythons"),
+    "nodejs": (["nodejs.org"], "Node.js releases"),
+    "rustup": (["static.rust-lang.org", "sh.rustup.rs"], "the Rust toolchain (rustup)"),
+}
+
+
+class EgressKind(Kind):
+    name = "egress"
+    description = ("a protocol the sandbox may use to reach out, through the egress supervisor: hosts (exact, or "
+                   "*.domain) and ports (default 443), https only (CONNECT); a policy lists the profiles it may use")
+    ttl = 90 * DAY
+
+    def validate(self, reg: Registry, name: str, spec: dict[str, Any], body: str | None) -> dict[str, Any]:
+        from .egress import host_ok
+
+        bad = set(spec) - {"hosts", "ports", "description"}
+        if bad:
+            raise CapError(f"unknown egress fields {sorted(bad)}")
+        hosts = [str(h).lower() for h in spec.get("hosts") or []]
+        if not hosts or not all(host_ok(h) for h in hosts):
+            raise CapError("hosts: one or more host names (a.b.c, or *.b.c)")
+        try:
+            ports = sorted({int(p) for p in spec.get("ports") or [443]})
+        except (TypeError, ValueError) as e:
+            raise CapError("ports are TCP port numbers") from e
+        if not all(0 < p < 65536 for p in ports):
+            raise CapError("ports are TCP port numbers (1-65535)")
+        return {"hosts": sorted(set(hosts)), "ports": ports, "description": str(spec.get("description") or name)}
+
+    def widens(self, reg: Registry, old: dict[str, Any] | None, new: dict[str, Any]) -> list[str]:
+        oh, op = set((old or {}).get("hosts") or []), set((old or {}).get("ports") or [])
+        why = []
+        if set(new["hosts"]) - oh:
+            why.append("hosts " + " ".join(sorted(set(new["hosts"]) - oh)))
+        if set(new["ports"]) - op:
+            why.append("ports " + " ".join(map(str, sorted(set(new["ports"]) - op))))
+        return why
+
+    def summary(self, spec: dict[str, Any]) -> str:
+        return f"{spec.get('description', '')}: {' '.join(spec.get('hosts', []))}"
+
+
+def egress_rules(reg: Registry, names: list[str]) -> Any:
+    """What a job under these profiles may reach (only profiles in force count)."""
+    from .egress import Rules
+
+    allow, used = [], []
+    for n in names:
+        try:
+            _, ver, _ = reg.in_force("egress", n)
+        except CapError:
+            continue
+        used.append(n)
+        allow += [(h, tuple(ver["spec"]["ports"])) for h in ver["spec"]["hosts"]]
+    return Rules(allow=allow, names=used)
+
+
+for _k in (PolicyKind(), ScriptKind(), LayerKind(), EgressKind()):
     register(_k)

@@ -23,7 +23,7 @@ import subprocess
 import tarfile
 import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -50,14 +50,29 @@ class Layer:
     description: str
     created: str
     network: bool
+    env: dict[str, str] = field(default_factory=dict)  # what a sandbox stacking it needs ($PATH expands)
 
     def to_json(self) -> dict[str, Any]:
         return self.__dict__.copy()
 
 
+SYS = "sys:"  # a layer of the server's shared store: built once by the administrator, read by every user
+
+
 class LayerStore:
-    def __init__(self, root: str | Path):
+    """A store of layers. `system` is the server's shared store, whose layers this one names with
+    the prefix "sys:" (and may stack, or build on)."""
+
+    def __init__(self, root: str | Path, system: LayerStore | None = None):
         self.root = Path(root)
+        self.system = system
+
+    def _where(self, name: str) -> tuple[LayerStore, str]:
+        if name.startswith(SYS):
+            if self.system is None:
+                raise LayerError(f"no system layers on this server (asked for {name!r})")
+            return self.system, name[len(SYS):]
+        return self, name
 
     # ── paths ────────────────────────────────────────────────────────────
 
@@ -75,7 +90,8 @@ class LayerStore:
         return str(p)
 
     def tree(self, name: str) -> Path:
-        return self.root / "layers" / _name(name) / "tree"
+        store, plain = self._where(name)
+        return store.root / "layers" / _name(plain) / "tree"
 
     def ensure_hostetc(self, max_age: float = 86400.0) -> Path:
         p = self.hostetc
@@ -86,10 +102,15 @@ class LayerStore:
     # ── catalogue ────────────────────────────────────────────────────────
 
     def get(self, name: str) -> Layer:
-        meta = self.root / "layers" / _name(name) / "layer.json"
+        store, plain = self._where(name)
+        meta = store.root / "layers" / _name(plain) / "layer.json"
         if not meta.is_file():
             raise LayerError(f"no layer {name!r}")
-        return Layer(**json.loads(meta.read_text()))
+        lay = Layer(**json.loads(meta.read_text()))
+        if store is not self:  # its parents are names in its own store
+            lay.parents = [p if p.startswith(SYS) else SYS + p for p in lay.parents]
+            lay.name = SYS + lay.name
+        return lay
 
     def list(self) -> list[Layer]:
         d = self.root / "layers"
@@ -146,6 +167,8 @@ class LayerStore:
         users = [lay.name for lay in self.list() if name in lay.parents]
         if users:
             raise LayerError(f"layer {name!r} is a parent of {', '.join(users)}; remove those first")
+        if name.startswith(SYS):
+            raise LayerError(f"{name!r} is the server's: its administrator removes it")
         d = self.root / "layers" / _name(name)
         if not d.is_dir():
             raise LayerError(f"no layer {name!r}")
@@ -156,7 +179,8 @@ class LayerStore:
     def build(self, name: str, script: str, *, base: str = "host", parents: list[str] | None = None,
               network: bool = False, description: str = "", timeout: float = 3600.0,
               limits: sandbox.Limits | None = None, ports: list[int] | None = None,
-              commands: dict[str, str] | None = None) -> tuple[Layer, int, str]:
+              commands: dict[str, str] | None = None, build_env: dict[str, str] | None = None,
+              env: dict[str, str] | None = None, extra: dict[str, Any] | None = None) -> tuple[Layer, int, str]:
         """Run `script` (shell text) as root in a sandbox over base + parents and keep what it
         changed under the overlay points as layer `name`. Returns (layer, exit status, output);
         the layer is kept only if the script exits 0."""
@@ -184,7 +208,8 @@ class LayerStore:
                 command_paths=commands,
                 timeout=timeout, limits=limits or sandbox.Limits(memory_mb=8192, pids=4096, fsize_mb=16384,
                                                                   tmp_mb=4096, cpus=4.0),
-                env={"HOME": "/root", "DEBIAN_FRONTEND": "noninteractive"}, cwd="/work")
+                env={"HOME": "/root", "DEBIAN_FRONTEND": "noninteractive", **(build_env or {})}, cwd="/work",
+                **(extra or {}))
             (work / "spec.json").write_text(spec.to_json())
             r = subprocess.run(sandbox.command(str(work / "spec.json")), capture_output=True, text=True,
                                timeout=timeout + 30)
@@ -200,7 +225,8 @@ class LayerStore:
                     dst = tree / point
                     dst.parent.mkdir(parents=True, exist_ok=True)
                     os.rename(src, dst)
-            layer = Layer(name, base, parents, description, time.strftime("%Y-%m-%dT%H:%M:%S%z"), network)
+            layer = Layer(name, base, parents, description, time.strftime("%Y-%m-%dT%H:%M:%S%z"), network,
+                          dict(env or {}))
             final.mkdir()
             os.rename(tree, final / "tree")
             self._write(layer)
