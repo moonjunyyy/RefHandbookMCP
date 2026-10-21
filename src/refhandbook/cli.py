@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
 import threading
 from importlib import resources
@@ -375,18 +376,32 @@ def _layers(args: argparse.Namespace) -> int:
             print(f"sys:{lay.name.rpartition('.v')[0]}@{lay.name.rpartition('.v')[2]}  {lay.created}  {lay.description}"
                   + (f"  (on {' '.join(lay.parents)})" if lay.parents else ""))
         return 0
-    names = args.names or list(book)
+    names = set(args.names or book)
+    for n in names:
+        if n not in book:
+            print(f"error: no recipe {n!r} (recipes: {', '.join(book)})", file=sys.stderr)
+            return 2
+
+    def under(n: str) -> list[str]:
+        return [p for p in book[n].get("parents", [])]
+
+    changed = True  # what stands on a rebuilt layer is rebuilt too, so stacks stay whole
+    while changed:
+        changed = False
+        for n in book:
+            if n not in names and any(p in names for p in under(n)) and any(
+                    x.name.rpartition(".v")[0] == n for x in store.list()):
+                names.add(n)
+                changed = True
     order: list[str] = []
 
     def visit(n: str) -> None:
-        if n not in book:
-            raise SystemExit(f"error: no recipe {n!r} (recipes: {', '.join(book)})")
-        for p in book[n].get("parents", []):
+        for p in under(n):
             visit(p)
         if n not in order:
             order.append(n)
 
-    for n in names:
+    for n in sorted(names):
         visit(n)
     root.mkdir(parents=True, exist_ok=True)
     built: dict[str, str] = {}
@@ -395,6 +410,9 @@ def _layers(args: argparse.Namespace) -> int:
         vs = [int(x.name.rpartition(".v")[2]) for x in store.list() if x.name.rpartition(".v")[0] == n]
         return max(vs) if vs else 0
 
+    from .agents import egress
+    from .agents.capkinds import EGRESS_PROFILES
+
     for n in order:
         if n not in names and latest(n):  # a parent already built: stand on its newest build
             built[n] = f"{n}.v{latest(n)}"
@@ -402,35 +420,58 @@ def _layers(args: argparse.Namespace) -> int:
         r = book[n]
         d = f"{n}.v{latest(n) + 1}"
         print(f"building sys:{n}@{latest(n) + 1} …", flush=True)
+        # the build reaches out as a sandbox does: through the supervisor, to the recipe's profiles only
+        prof = [x for x in r.get("egress", []) if x in EGRESS_PROFILES]
+        rules = egress.Rules(allow=[(h, (443,)) for x in prof for h in EGRESS_PROFILES[x][0]], names=prof)
+        key = f"build-{n}-{os.getpid()}"
+        sock = egress.supervisor().open(key, rules, egress.socket_root()) if prof else None
         try:
             _, code, out = store.build(
-                d, (recipes / f"{n}.sh").read_text(), parents=[built[p] for p in r.get("parents", [])], network=True,
+                d, (recipes / f"{n}.sh").read_text(), parents=[built[p] for p in under(n)], network=False,
                 description=r.get("description", ""), timeout=float(r.get("timeout", 1800)),
-                build_env={"HOME": "/tmp"}, env=r.get("env", {}),
-                extra={"binds_ro": [(str(recipes), "/recipes")]})
+                build_env={"HOME": "/tmp", **(egress.proxy_env() if sock else {})}, env=r.get("env", {}),
+                extra={"binds_ro": [(str(recipes), "/recipes")] + ([(str(sock), "/run/egress")] if sock else []),
+                       "egress_port": egress.PORT if sock else None})
         except (L.LayerError, sandbox.SandboxError, OSError) as e:
             print(f"error: {n}: {e}", file=sys.stderr)
             return 1
+        finally:
+            log = egress.supervisor().close(key) if sock else {}
         if code != 0:
             print(out[-4000:], file=sys.stderr)
+            refused = [f"{q.get('host')}: {q.get('why')}" for q in log.get("requests", []) if q.get("status") == "refused"]
+            if refused:
+                print("egress refused: " + "; ".join(refused[-5:]), file=sys.stderr)
             print(f"error: {n}: the build exited {code}; nothing was kept", file=sys.stderr)
             return 1
         built[n] = d
         print(out.strip().splitlines()[-1] if out.strip() else "", flush=True)
+    # every user's dev policy moves to the new builds (while the kernel owns it); then old builds
+    # go, unless a store still pins one or a running job stacks it
+    from .agents.capkinds import in_use
+
+    keep: set[str] = set()
+    for db in stores:
+        try:
+            ws = Workspace(Handbook(str(db)))  # opening a store brings its kernel-owned dev policy up to date
+            ws.refresh_dev()
+            if "dev" in ws.policies():
+                print(f"{db.stem}: dev stacks {' '.join(ws.policy('dev')['attrs'].get('layers') or []) or 'nothing'}")
+            keep |= {x[len("sys:"):] for x in in_use(ws.caps) if x.startswith("sys:")}
+        except HandbookError as e:
+            print(f"{db.stem}: dev policy not moved: {e}", file=sys.stderr)
+            print("keeping every old build (a store could not be read)", file=sys.stderr)
+            return 0
+    for n in order:
         olds = sorted((x.name for x in store.list() if x.name.rpartition(".v")[0] == n),
                       key=lambda x: int(x.rpartition(".v")[2]))
         for old in olds[:-max(1, args.keep)]:
+            if old in keep:
+                continue
             try:
                 store.remove(old)
             except L.LayerError:
                 pass  # a newer layer stands on it
-    for db in stores:
-        try:
-            msg = Workspace(Handbook(str(db))).refresh_dev()
-            if msg:
-                print(f"{db.stem}: {msg}")
-        except HandbookError as e:
-            print(f"{db.stem}: dev policy not moved: {e}", file=sys.stderr)
     shutil.rmtree(root / "hostetc", ignore_errors=True)  # prepared again on the next build
     return 0
 

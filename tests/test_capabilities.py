@@ -292,6 +292,7 @@ def upstream(monkeypatch):
 
     monkeypatch.setattr(egress, "ALLOW_PRIVATE", True)
     monkeypatch.setattr(egress, "host_ok", lambda h: True)  # a loopback name, for the test only
+    monkeypatch.setattr(egress, "ALLOW_PLAIN", True)  # the echo server speaks no TLS
     srv = so.socket()
     srv.bind(("127.0.0.1", 0))
     srv.listen(8)
@@ -357,8 +358,20 @@ def test_a_models_egress_profile_waits_and_the_known_ones_are_seeded(ws):
     assert "PROPOSED" in out and "hosts mirror.example.org" in out
     with pytest.raises(Forbidden, match="the kernel's"):
         cap_api.cap("update", kind="egress", name="pypi", spec={"hosts": ["evil.example"]})
-    dev = ws.policy("dev")["attrs"]
-    assert dev["commands"] == ["*"] and "pypi" in dev["egress"] and dev["exec_work"] is True
+    dev = ws.policy("dev")["attrs"]  # grants only what the administrator configured: nothing yet
+    assert dev["egress"] == [] and dev["exec_work"] is False and dev["commands"] != ["*"]
+
+
+def test_the_dev_policy_follows_the_servers_configuration(ws, monkeypatch):
+    from refhandbook.agents.workspace import Workspace
+
+    monkeypatch.setenv("RHB_SANDBOX_EGRESS", "pypi npm nonsense")
+    monkeypatch.setenv("RHB_SANDBOX_DEV_EXEC", "1")
+    dev = Workspace(ws.hb).policy("dev")["attrs"]
+    assert dev["egress"] == ["npm", "pypi"] and dev["exec_work"] is True and dev["commands"] == ["*"]
+    ws.set_policy("dev", actor="user", egress=["pypi"])  # the user's edit: the kernel no longer moves it
+    monkeypatch.delenv("RHB_SANDBOX_EGRESS")
+    assert Workspace(ws.hb).policy("dev")["attrs"]["egress"] == ["pypi"]
 
 
 @needs_sandbox
@@ -383,7 +396,7 @@ def test_the_servers_layers_are_built_once_and_every_users_dev_policy_stacks_the
     assert ws.policy("dev")["attrs"]["layers"] == []  # nothing built yet
     assert cli.main(["layers", "build", "--data-dir", str(data), "--recipes", str(rec)]) == 0
     out = capsys.readouterr().out
-    assert "building sys:base@1" in out and "building sys:top@1" in out and "moon: policy dev v2 in force" in out
+    assert "building sys:base@1" in out and "building sys:top@1" in out and "moon: dev stacks sys:top@1" in out
     assert cli.main(["layers", "list", "--data-dir", str(data)]) == 0
     assert "sys:top@1" in capsys.readouterr().out
     cap_api._spaces.clear()
@@ -397,3 +410,106 @@ def test_the_servers_layers_are_built_once_and_every_users_dev_policy_stacks_the
     for runner, _ in cap_api._runners.values():
         runner.close()
     cap_api._runners.clear()
+
+
+def _client_hello(sni: str | None, ech: bool = False) -> bytes:
+    ext = b""
+    if sni is not None:
+        name = sni.encode()
+        entry = b"\x00" + len(name).to_bytes(2, "big") + name
+        lst = len(entry).to_bytes(2, "big") + entry
+        ext += b"\x00\x00" + len(lst).to_bytes(2, "big") + lst
+    if ech:
+        ext += b"\xfe\x0d\x00\x01\x00"
+    body = b"\x03\x03" + bytes(32) + b"\x00" + b"\x00\x02\x13\x01" + b"\x01\x00" + len(ext).to_bytes(2, "big") + ext
+    hs = b"\x01" + len(body).to_bytes(3, "big") + body
+    return b"\x16\x03\x01" + len(hs).to_bytes(2, "big") + hs
+
+
+def test_a_tunnel_must_speak_tls_to_the_name_it_asked_for(monkeypatch):
+    import asyncio
+    import socket as so
+
+    from refhandbook.agents import egress
+
+    assert egress.client_hello_sni(_client_hello("pypi.org")) == ("pypi.org", "")
+    assert egress.client_hello_sni(_client_hello("pypi.org", ech=True))[1] == "encrypted ClientHello"
+    assert egress.client_hello_sni(_client_hello(None))[1] == "no server name"
+    assert egress.client_hello_sni(b"GET / HTTP/1.1\r\n")[1] == "not TLS"
+    for a in ("64:ff9b::7f00:1", "::127.0.0.1", "::ffff:10.0.0.1", "2002:7f00:1::1", "169.254.169.254", "127.0.0.1"):
+        assert not egress.public(a), a
+    assert egress.public("1.1.1.1") and egress.public("2606:4700::1111")
+
+    monkeypatch.setattr(egress, "ALLOW_PRIVATE", True)
+    up = so.socket()
+    up.bind(("127.0.0.1", 0))
+    up.listen(4)
+    got = []
+    threading.Thread(target=lambda: got.append(up.accept()[0].recv(4096)), daemon=True).start()
+    port = up.getsockname()[1]
+    sup = egress.Supervisor()
+    d = sup.open("t", egress.Rules(allow=[("relay.test", (port,))], names=["t"]), egress.socket_root())
+    import socket as _s
+    orig = sup.loop.getaddrinfo
+
+    async def fake(host, p, **kw):  # the test's name resolves to the local upstream
+        return [(_s.AF_INET, _s.SOCK_STREAM, 6, "", ("127.0.0.1", p))]
+
+    sup.loop.getaddrinfo = fake
+
+    def tunnel(sni):
+        c = so.socket(so.AF_UNIX)
+        c.connect(str(d / "sock"))
+        c.sendall(f"CONNECT relay.test:{port} HTTP/1.1\r\n\r\n".encode())
+        assert b" 200 " in c.recv(100)
+        c.sendall(_client_hello(sni))
+        c.settimeout(5)
+        try:
+            return c.recv(10)
+        except OSError:
+            return b""
+        finally:
+            c.close()
+
+    tunnel("evil.example")
+    tunnel("relay.test")
+    time.sleep(0.5)
+    log = sup.close("t")
+    whys = [r.get("why", "") for r in log["requests"]]
+    assert any("the TLS server name 'evil.example' is not relay.test" in w for w in whys), log
+    assert got and got[0] == _client_hello("relay.test")  # the admitted hello reached the upstream whole
+    sup.loop.getaddrinfo = orig
+    up.close()
+
+
+def test_a_layer_may_not_set_what_makes_programs_load_something_else(ws):
+    for k in ("LD_PRELOAD", "BASH_ENV", "PYTHONSTARTUP", "NODE_OPTIONS", "HTTPS_PROXY", "SSL_CERT_FILE"):
+        with pytest.raises(KernelError, match=k):
+            cap_api.cap("add", kind="layer", name="x", body="true\n", spec={"env": {k: "/work/x"}})
+
+
+@needs_sandbox
+def test_rebuilding_a_layer_rebuilds_what_stands_on_it_and_keeps_what_is_pinned(tmp_path, capsys):
+    from refhandbook import cli
+    from refhandbook.agents.layers import LayerStore
+
+    rec = tmp_path / "recipes"
+    rec.mkdir()
+    (rec / "recipes.toml").write_text('[base]\ndescription = "b"\n[top]\ndescription = "t"\nparents = ["base"]\n')
+    (rec / "base.sh").write_text("mkdir -p /opt/b\n")
+    (rec / "top.sh").write_text("mkdir -p /opt/t\n")
+    data = tmp_path / "data"
+    (data / "users").mkdir(parents=True)
+    hb = Handbook(data / "users" / "moon.db")
+    args = ["layers", "build", "--data-dir", str(data), "--recipes", str(rec), "--keep", "1"]
+    assert cli.main(args) == 0
+    from refhandbook.agents.workspace import Workspace
+
+    w = Workspace(hb)
+    w.set_policy("mine", actor="user", layers=["sys:top@1"])  # the user's own pin
+    assert cli.main([*args, "base"]) == 0
+    out = capsys.readouterr().out
+    assert "building sys:base@2" in out and "building sys:top@2" in out  # the stack stays whole
+    names = {x.name for x in LayerStore(data / "layers").list()}
+    assert {"base.v2", "top.v2", "top.v1", "base.v1"} <= names  # top@1 is pinned, and base@1 under it
+    assert Workspace(Handbook(data / "users" / "moon.db")).policy("dev")["attrs"]["layers"] == ["sys:top@2"]
