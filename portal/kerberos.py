@@ -17,6 +17,12 @@ _KRB5KDC_ERR_KEY_EXP = -1765328361        # password expired / +needchange
 _KRB5KDC_ERR_CLIENT_REVOKED = -1765328366  # disabled or locked out
 
 
+def _krb5_code(min_code: int) -> int:
+    """A krb5 error code as libkrb5 defines it (signed). gssapi reports minor codes as unsigned 32-bit
+    numbers (2529638935 for -1765328361), so comparing them as they come never matches."""
+    return min_code - (1 << 32) if min_code >= (1 << 31) else min_code
+
+
 class KerberosError(Exception):
     pass
 
@@ -49,9 +55,11 @@ class Kerberos:
         try:
             acquired = acquire_cred_with_password(name, password.encode(), usage="initiate")
         except gssapi.exceptions.GSSError as e:
-            if e.min_code == _KRB5KDC_ERR_KEY_EXP:
+            code = _krb5_code(e.min_code)
+            if code == _KRB5KDC_ERR_KEY_EXP:
+                # (the KDC says so before it checks the password: /auth/expired checks it with kpasswd)
                 return LoginResult.EXPIRED
-            if e.min_code == _KRB5KDC_ERR_CLIENT_REVOKED:
+            if code == _KRB5KDC_ERR_CLIENT_REVOKED:
                 return LoginResult.REVOKED
             return LoginResult.BAD
         try:
@@ -72,11 +80,11 @@ class Kerberos:
         """kpasswd with the user's old password. Needs no admin rights and works for expired passwords."""
         child = pexpect.spawn("kpasswd", [principal], env=_child_env(), encoding="utf-8", timeout=20)
         try:
-            child.expect(r"(?i)password for .*:")
+            if child.expect([r"(?i)password for .*:", pexpect.EOF]) != 0:
+                raise KerberosError(_kpasswd_message(child.before, "Password service is not available."))
             child.sendline(old)
-            i = child.expect([r"(?i)enter new password:", r"(?i)(incorrect|failed|error).*", pexpect.EOF])
-            if i != 0:
-                raise KerberosError("Current password is incorrect.")
+            if child.expect([r"(?i)enter new password:", pexpect.EOF]) != 0:
+                raise KerberosError(_kpasswd_message(child.before, "Current password is incorrect."))
             child.sendline(new)
             child.expect(r"(?i)enter it again:")
             child.sendline(new)
@@ -90,6 +98,19 @@ class Kerberos:
             # e.g. "Password change rejected: Password is too short."
             msg = out.strip().splitlines()[-1] if out.strip() else "Password change failed."
             raise KerberosError(msg.replace("\r", ""))
+
+
+def _kpasswd_message(output: str | None, otherwise: str) -> str:
+    """What to tell the user when kpasswd stops early: a wrong old password as such, a locked or
+    disabled account as such (not as a wrong password), anything else as kpasswd said it."""
+    out = (output or "").replace("\r", "")
+    low = out.lower()
+    if "revoked" in low:
+        return "This account is disabled or locked. Try again later or ask an administrator."
+    if "preauthentication failed" in low or "incorrect" in low or "pre-authentication" in low:
+        return "Current password is incorrect."
+    lines = [ln.strip() for ln in out.splitlines() if ln.strip() and not ln.lower().startswith("password for")]
+    return lines[-1] if lines else otherwise
 
 
 class KAdmin:

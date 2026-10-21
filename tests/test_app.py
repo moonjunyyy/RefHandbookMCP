@@ -377,3 +377,17 @@ def test_ldaps_trusts_ldap_conf_else_the_system(tmp_path):
     assert _ldap_cacert(str(conf)) == "/etc/ldap/private-ca.pem"
     conf.write_text("BASE dc=m00nny,dc=kr\n")
     assert _ldap_cacert(str(conf)).endswith(".crt") or _ldap_cacert(str(conf)).endswith(".pem")  # the system's
+
+
+def test_kerberos_error_codes_as_gssapi_reports_them():
+    """gssapi gives minor codes unsigned: a temp password (KDC_ERR_KEY_EXP) must still read as expired,
+    and a locked account as locked, not as a wrong password."""
+    from portal.kerberos import _KRB5KDC_ERR_CLIENT_REVOKED, _KRB5KDC_ERR_KEY_EXP, _krb5_code, _kpasswd_message
+    assert _krb5_code(2529638935) == _KRB5KDC_ERR_KEY_EXP == -1765328361
+    assert _krb5_code(2529638930) == _KRB5KDC_ERR_CLIENT_REVOKED
+    assert _krb5_code(-1765328361) == -1765328361 and _krb5_code(5) == 5
+    assert _kpasswd_message("kpasswd: Preauthentication failed getting initial ticket", "x") == "Current password is incorrect."
+    assert "locked" in _kpasswd_message("kpasswd: Client's credentials have been revoked getting initial ticket", "x")
+    assert _kpasswd_message("Password for a/user@R: \r\nkpasswd: Cannot contact any KDC for realm 'R'", "x") \
+        == "kpasswd: Cannot contact any KDC for realm 'R'"
+    assert _kpasswd_message("", "fallback") == "fallback"
