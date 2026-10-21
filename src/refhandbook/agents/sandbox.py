@@ -39,9 +39,11 @@ import re
 import resource
 import shutil
 import signal
+import socket
 import stat
 import struct
 import sys
+import threading
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -175,6 +177,12 @@ class Spec:
     # (st_dev, st_ino) each bind's source had when the caller checked it, by its path inside: a
     # source swapped (for a symlink, or another directory) between the check and the bind is refused.
     bind_ids: dict[str, list[int]] = field(default_factory=dict)
+    # /work without noexec: what the command builds there runs (a compiler's output). A grant.
+    work_exec: bool = False
+    # Egress through the supervisor (agents/egress.py): with a port, loopback comes up and a relay
+    # listens on 127.0.0.1:<port>, passing each connection to the unix socket /run/egress/sock (the
+    # caller binds the socket's directory there). The command may connect to that port only.
+    egress_port: int | None = None
     # The uid/gid outside the sandbox (a per-user subordinate id). None maps the runner's own uid.
     # Another id needs a runner with CAP_SETUID/CAP_SETGID (the parent writes the child's map).
     outside_uid: int | None = None
@@ -227,6 +235,8 @@ class Spec:
             for p in glob.glob(pattern):
                 loaders.add(os.path.realpath(p))
         out = ["/usr/bin", *sorted(loaders), *layered]  # a layer the user stacked runs from its own tree
+        if self.work_exec:
+            out.append("/work")
         if self.upper is not None:  # a layer build installs tools that must run
             out += ["/" + p for p in self.overlay_points()]
         return out
@@ -607,9 +617,12 @@ def _point_key(point: str) -> str:
     return point.replace("/", "_")
 
 
-def _command_view(root: str, commands: dict[str, str], keep: tuple[str, ...] = ()) -> None:
+def _command_view(root: str, commands: dict[str, str], keep: tuple[str, ...] = (), trees: tuple[str, ...] = ()) -> None:
     """Empty every command directory of the root (but those under `keep`: a layer build's own
-    writable overlay points), then bind the allowed commands at /usr/bin."""
+    writable overlay points), then put the allowed commands in /usr/bin: a host file is bound
+    there; a file of a stacked layer outside the command directories (an interpreter under /opt) is
+    linked to where the layer shows it inside the sandbox, so it finds its own tree (its prefix)
+    from where it really is."""
     for d in COMMAND_DIRS:
         if any(d == k or d.startswith(k + "/") for k in keep):
             continue
@@ -619,6 +632,10 @@ def _command_view(root: str, commands: dict[str, str], keep: tuple[str, ...] = (
     bindir = f"{root}/usr/bin"
     mount("tmpfs", bindir, "tmpfs", MS_NOSUID | MS_NODEV, "mode=0755,size=64k")
     for name, src in commands.items():
+        inside = next((src[len(t):] for t in trees if src.startswith(t.rstrip("/") + "/")), None)
+        if inside is not None and not any(inside.startswith(f"/{d}/") for d in COMMAND_DIRS):
+            os.symlink(inside, f"{bindir}/{name}")
+            continue
         _touch(f"{bindir}/{name}")
         mount(src, f"{bindir}/{name}", None, MS_BIND)
     mount_setattr(bindir, MOUNT_ATTR_RDONLY | MOUNT_ATTR_NOSUID | MOUNT_ATTR_NODEV)
@@ -670,12 +687,14 @@ def build_root(spec: Spec, commands: dict[str, str] | None = None) -> None:
             _overlay(target, lowers, None, None)
 
     if commands is not None and host:
-        _command_view(root, commands, spec.overlay_points() if upper is not None else ())
+        _command_view(root, commands, spec.overlay_points() if upper is not None else (),
+                      tuple(os.path.realpath(t) for t in spec.layers))
 
     for d in ("work", "tmp", "run", "proc", "dev", "root"):
         _mkdir(f"{root}/{d}")
     mount(_check_path(spec.work), f"{root}/work", None, MS_BIND)
-    mount_setattr(f"{root}/work", MOUNT_ATTR_NOSUID | MOUNT_ATTR_NODEV | MOUNT_ATTR_NOEXEC, recursive=False)
+    mount_setattr(f"{root}/work", MOUNT_ATTR_NOSUID | MOUNT_ATTR_NODEV | (0 if spec.work_exec else MOUNT_ATTR_NOEXEC),
+                  recursive=False)
     mount("tmpfs", f"{root}/tmp", "tmpfs", MS_NOSUID | MS_NODEV | MS_NOEXEC, f"mode=1777,size={spec.limits.tmp_mb}m")
     mount("tmpfs", f"{root}/run", "tmpfs", MS_NOSUID | MS_NODEV | MS_NOEXEC, "mode=0755,size=8m")
     for src, dst, rw in [(s, d, False) for s, d in spec.binds_ro] + [(s, d, True) for s, d in spec.binds_rw]:
@@ -759,14 +778,75 @@ def _memfd_noexec() -> bool:
         return False
 
 
+def _lo_up() -> None:
+    """Bring loopback up in the sandbox's own network namespace (it starts down)."""
+    import fcntl
+    import struct
+
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        req = struct.pack("16sH14s", b"lo", 0, b"")
+        flags = struct.unpack("16sH14s", fcntl.ioctl(s, 0x8913, req))[1]  # SIOCGIFFLAGS
+        fcntl.ioctl(s, 0x8914, struct.pack("16sH14s", b"lo", flags | 0x1, b""))  # SIOCSIFFLAGS, IFF_UP
+
+
+def _relay(port: int, target: str, spec: Spec) -> None:
+    """A process beside the command: 127.0.0.1:<port> → the supervisor's unix socket, byte for byte."""
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("127.0.0.1", port))
+    srv.listen(128)
+    if os.fork() != 0:
+        srv.close()
+        return
+    try:
+        prctl(PR_SET_PDEATHSIG, signal.SIGKILL)
+        if (os.getuid(), os.getgid()) != (spec.uid, spec.gid):
+            os.setresgid(spec.gid, spec.gid, spec.gid)
+            os.setresuid(spec.uid, spec.uid, spec.uid)
+        seccomp_install(deny_memfd=True)
+
+        def pump(a: socket.socket, b: socket.socket) -> None:
+            try:
+                while data := a.recv(65536):
+                    b.sendall(data)
+            except OSError:
+                pass
+            finally:
+                for x in (a, b):
+                    try:
+                        x.shutdown(socket.SHUT_RDWR)
+                    except OSError:
+                        pass
+
+        while True:
+            c, _ = srv.accept()
+            u = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            try:
+                u.connect(target)
+            except OSError:
+                c.close()
+                u.close()
+                continue
+            for a, b in ((c, u), (u, c)):
+                threading.Thread(target=pump, args=(a, b), daemon=True).start()
+    finally:
+        os._exit(0)
+
+
 def _child(spec: Spec, commands: dict[str, str] | None) -> None:
     prctl(PR_SET_PDEATHSIG, signal.SIGKILL)
     mount(None, "/", None, MS_REC | MS_PRIVATE)
     build_root(spec, commands)
     name = spec.hostname.encode()
     _libc.sethostname(name, len(name))  # best effort: a failure leaves the host's name visible
-    landlock_restrict(["/"], spec.writable(), deny_tcp=not spec.network, exec_paths=spec.executable(),
-                      tcp_ports=spec.ports if spec.network else None)
+    if spec.egress_port and not spec.network:
+        _lo_up()
+        _relay(spec.egress_port, "/run/egress/sock", spec)
+        tcp_ports = [spec.egress_port]
+    else:
+        tcp_ports = spec.ports if spec.network else None
+    landlock_restrict(["/"], spec.writable(), deny_tcp=not spec.network and not spec.egress_port,
+                      exec_paths=spec.executable(), tcp_ports=tcp_ports)
     seccomp_install(deny_memfd=not _memfd_noexec())
     env = {"PATH": HOST_PATH, "HOME": "/work",
            "USER": "agent" if spec.uid else "root", "LANG": "C.UTF-8", "TERM": "dumb", "TMPDIR": "/tmp"}

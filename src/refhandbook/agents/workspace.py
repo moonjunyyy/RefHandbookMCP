@@ -72,6 +72,23 @@ class WorkspaceError(HandbookError):
     pass
 
 
+def system_root(hb: Handbook) -> Path:
+    """The server's shared layers: RHB_SANDBOX_SYSTEM_LAYERS, else <data dir>/layers next to the
+    users' stores (remote), else layers/ next to the store (local)."""
+    env = os.environ.get("RHB_SANDBOX_SYSTEM_LAYERS")
+    if env:
+        return Path(env)
+    p = Path(str(hb.path))
+    return (p.parent.parent if p.parent.name == "users" else p.parent) / "layers"
+
+
+def system_layers(hb: Handbook) -> LayerStore | None:
+    if hb.path == ":memory:":
+        return None
+    root = system_root(hb)
+    return LayerStore(root) if (root / "layers").is_dir() else None
+
+
 def _owner(hb: Handbook) -> tuple[str, int]:
     """The store's owner: users/<uid>.db on a remote server, else the local account."""
     import getpass
@@ -141,12 +158,13 @@ class Workspace:
         self.on_queue = lambda: None  # the in-process runner's wake-up (sandbox_api)
         self.caps = capabilities.Registry(self.g, {"ws": self, "hb": hb})
         self._adopt()
+        self._seed()
 
     def kick(self) -> None:
         self.on_queue()
 
     def layer_store(self) -> LayerStore:
-        return LayerStore(self.base / "layerstore")
+        return LayerStore(self.base / "layerstore", system=system_layers(self.hb))
 
     # ── the version in force, as the runner reads it ─────────────────────
 
@@ -176,6 +194,57 @@ class Workspace:
                 "network": False, "ports": [80, 443], "timeout": 120.0, "memory_mb": 2048, "cpus": 2.0,
                 "tmp_mb": 512, "disk_mb": 2048, "concurrent": 2, "mounts": [], "layers": [],
                 "description": "the default: computation, no network"}
+
+    DEV = "dev"
+
+    def dev_policy_spec(self) -> dict[str, Any]:
+        """The kernel's policy for development work: the default's limits, every command of the host
+        and the server's layers (Python, Node, Rust, …), the package registries through the egress
+        supervisor, and what is built in /work may run. RHB_SANDBOX_EGRESS names its profiles
+        ("none": no egress); RHB_SANDBOX_DEV_EXEC=0 keeps /work noexec."""
+        from .capkinds import EGRESS_PROFILES
+
+        spec = {k: v for k, v in self.default_policy_spec().items() if k != "commands"}
+        names = os.environ.get("RHB_SANDBOX_EGRESS", "pypi npm crates github huggingface arxiv").split()
+        sys_layers = self.layer_store().system
+        latest: dict[str, int] = {}
+        for lay in sys_layers.list() if sys_layers else []:
+            base, _, n = lay.name.rpartition(".v")
+            if n.isdigit():
+                latest[base] = max(latest.get(base, 0), int(n))
+        below = {p for b, n in latest.items() for p in sys_layers.get(f"{b}.v{n}").parents} if sys_layers else set()
+        tops = [b for b, n in latest.items() if f"{b}.v{n}" not in below]  # each stack once, by its top
+        spec.update(commands=["*"], egress=[] if names == ["none"] else [n for n in names if n in EGRESS_PROFILES],
+                    exec_work=os.environ.get("RHB_SANDBOX_DEV_EXEC", "1") != "0",
+                    layers=[f"sys:{b}@{latest[b]}" for b in sorted(tops)],
+                    description="development: every command, the server's layers, package registries through "
+                                "the egress supervisor")
+        return spec
+
+    def _seed(self) -> None:
+        """The kernel's records, each once per store (one the user removed stays removed): the known
+        egress profiles, and the development policy."""
+        from .capkinds import EGRESS_PROFILES
+
+        for name, (hosts, desc) in EGRESS_PROFILES.items():
+            if not self.g.db.execute("SELECT 1 FROM k_meta WHERE key = ?", (f"cap:seeded:egress:{name}",)).fetchone():
+                self.caps.seed("egress", name, spec={"hosts": hosts, "ports": [443], "description": desc})
+        if not self.g.db.execute("SELECT 1 FROM k_meta WHERE key = ?", (f"cap:seeded:policy:{self.DEV}",)).fetchone():
+            try:
+                self.caps.seed("policy", self.DEV, spec=self.dev_policy_spec())
+            except KernelError as e:
+                self.g.log("kernel", f"dev policy not seeded: {e}", f"policy:{self.DEV}")
+
+    def refresh_dev(self) -> str | None:
+        """Move the kernel's development policy to the server's newest layers (after the administrator
+        built them): only while the kernel still owns its versions (a user's edit is left alone)."""
+        rec = self.caps.find("policy", self.DEV)
+        if rec is None or rec["author"] != "kernel" or not rec["attrs"].get("version"):
+            return None
+        if self.caps.version(rec)["author"] != "kernel":
+            return None
+        return self.caps.update("policy", self.DEV, spec={"layers": self.dev_policy_spec()["layers"]},
+                                actor="kernel", note="the server's layers were rebuilt")[1]
 
     def _adopt(self) -> None:
         """Records for what came before the registry, once per store, by one rule: nothing stays in
@@ -538,12 +607,32 @@ class Runner:
         with self.lock:
             return self.ws.job(jid)
 
+    def _egress(self, key: str, pol: dict[str, Any]) -> dict[str, Any]:
+        """Spec fields for a policy's egress profiles: the job's socket directory bound at
+        /run/egress, the relay's port and the proxy environment. Empty without profiles."""
+        if not pol.get("egress") or pol.get("network"):
+            return {}
+        from . import egress
+        from .capkinds import egress_rules
+
+        with self.lock:
+            rules = egress_rules(self.ws.caps, pol["egress"])
+        d = egress.supervisor().open(key, rules, egress.socket_root())
+        return {"binds_ro": [(str(d), "/run/egress")], "env": egress.proxy_env(), "egress_port": egress.PORT}
+
+    @staticmethod
+    def _egress_done(key: str) -> dict[str, Any]:
+        from . import egress
+
+        return egress.supervisor().close(key) if egress._sup is not None else {}
+
     def _spec(self, j: dict[str, Any], jobdir: Path) -> sandbox.Spec:
-        from .capkinds import layer_trees, mount_source, resolve_command
+        from .capkinds import layer_env, layer_trees, mount_source, resolve_command
 
         with self.lock:
             pol = self.ws.policy(j["attrs"]["policy"])["attrs"]
             trees = layer_trees(self.ws.caps, pol.get("layers") or []) if pol.get("layers") else []
+            env = layer_env(self.ws.caps, pol.get("layers") or []) if pol.get("layers") else {}
             mounts = [(mount_source(self.ws, m["source"]), m["target"], m["rw"]) for m in pol.get("mounts") or []]
         ids = {}
         for src, dst, _ in mounts:
@@ -560,18 +649,21 @@ class Runner:
         every = pol["commands"] == ["*"]
         paths = None if every else {c: p for c in pol["commands"] if (p := resolve_command(c, trees))}
         argv0 = f"/usr/bin/{interp}"
-        if every:  # no command view: the interpreter is where the layers or the host put it
-            found = [f"/{d}/{interp}" for t in trees for d in sandbox.COMMAND_DIRS if os.path.lexists(f"{t}/{d}/{interp}")]
-            argv0 = found[0] if found else (shutil.which(interp, path=sandbox.HOST_PATH) or argv0)
+        if every:  # no command view: the interpreter is found on the PATH the layers set up
+            argv0 = interp
+        out = self._egress(j["id"][4:], pol)
+        env = {**env, **out.get("env", {})}
         return sandbox.Spec(
             argv=[argv0, "/job/script", *j["attrs"]["args"]],
             root=str(jobdir / "root"), work=str(self.ws.work), hostetc=str(self.hostetc),
-            binds_ro=[(str(script), "/job/script")] + [(src, dst) for src, dst, rw in mounts if not rw],
+            binds_ro=[(str(script), "/job/script")] + [(src, dst) for src, dst, rw in mounts if not rw]
+            + out.get("binds_ro", []), egress_port=out.get("egress_port"),
             binds_rw=[(src, dst) for src, dst, rw in mounts if rw],
             layers=trees, network=bool(pol["network"]),
             ports=(None if pol.get("ports") in ("any", None) else list(pol["ports"])) if pol["network"] else None,
             timeout=float(j["attrs"]["timeout"]), commands=None if every else list(paths or {}),
-            command_paths=paths, bind_ids=ids, limits=limits, cgroup=leaf)
+            command_paths=paths, bind_ids=ids, limits=limits, cgroup=leaf, env=env,
+            work_exec=bool(pol.get("exec_work")))
 
     def _build(self, j: dict[str, Any]) -> None:
         """A layer build: a sandbox of the layer's policy (its commands, network, ports, limits and
@@ -597,15 +689,20 @@ class Runner:
             every = pol["commands"] == ["*"]
             limits = sandbox.Limits(memory_mb=int(pol["memory_mb"]), cpus=float(pol["cpus"]), tmp_mb=int(pol["tmp_mb"]),
                                     address_space=self.cg is None)
+            eg = self._egress(j["id"][4:], pol)
             _, code, out = store.build(
                 d, body, parents=parents, network=bool(pol["network"]),
                 ports=None if pol.get("ports") in ("any", None) else list(pol["ports"]),
                 description=ver["spec"]["description"], timeout=float(pol["timeout"]), limits=limits,
-                commands=None if every else {c: p for c in pol["commands"] if (p := resolve_command(c, []))})
+                commands=None if every else {c: p for c in pol["commands"] if (p := resolve_command(c, []))},
+                build_env=eg.get("env"), env=ver["spec"].get("env") or {},
+                extra={k: v for k, v in eg.items() if k in ("binds_ro", "egress_port")})
             result["exit"] = code
             state = "done" if code == 0 else "failed"
         except Exception as e:  # noqa: BLE001 — a runner never dies of one job
             state, result["error"] = "failed", f"{type(e).__name__}: {e}"
+        if (log := self._egress_done(j["id"][4:])):
+            result["egress"] = log
         with self.lock:
             data = out.encode()
             result.update(stdout=self.ws.g.put_blob(_cap(data)), stdout_bytes=len(data), finished=time.time())
@@ -655,6 +752,8 @@ class Runner:
                      else "done" if code == 0 else "failed")
         except Exception as e:  # noqa: BLE001 — a runner never dies of one job
             state, result["error"] = "failed", f"{type(e).__name__}: {e}"
+        if (log := self._egress_done(j["id"][4:])):
+            result["egress"] = log
         if self.cg is not None:
             sandbox.Cgroups.remove(self.cg.base / j["id"][4:])
         for attempt in range(5):  # the result must land: a busy store is waited out, not dropped

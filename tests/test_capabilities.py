@@ -280,3 +280,82 @@ def test_layer_builds_of_similar_names_are_kept_apart(ws, tmp_path):
             '{"name": "%s", "base": "host", "parents": [], "description": "", "created": "", "network": false}' % d)
     assert prune_layers(ws.caps, "tools") == ["tools.v1"]
     assert (store.root / "layers" / "tools.v1.v1").is_dir()
+
+
+# ── egress: only the protocols the policy names, through the supervisor ──
+
+@pytest.fixture
+def upstream(monkeypatch):
+    import socket as so
+
+    from refhandbook.agents import egress
+
+    monkeypatch.setattr(egress, "ALLOW_PRIVATE", True)
+    monkeypatch.setattr(egress, "host_ok", lambda h: True)  # a loopback name, for the test only
+    srv = so.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(8)
+
+    def serve():
+        while True:
+            try:
+                c, _ = srv.accept()
+            except OSError:
+                return
+            data = c.recv(100)
+            c.sendall(b"echo:" + data)
+            c.close()
+
+    threading.Thread(target=serve, daemon=True).start()
+    yield srv.getsockname()[1]
+    srv.close()
+
+
+CLIENT = """import os, socket, sys
+host, port = sys.argv[1], int(sys.argv[2])
+assert os.environ["HTTPS_PROXY"] == "http://127.0.0.1:3128"
+s = socket.create_connection(("127.0.0.1", 3128))
+s.sendall(f"CONNECT {host}:{port} HTTP/1.1\\r\\nHost: {host}\\r\\n\\r\\n".encode())
+head = s.recv(4096).decode()
+print(head.splitlines()[0])
+if " 200 " in head:
+    s.sendall(b"ping")
+    print(s.recv(100).decode())
+else:
+    print(head.split("\\r\\n\\r\\n", 1)[1].strip())
+try:
+    socket.create_connection(("127.0.0.1", port), timeout=2)
+    print("direct: connected")
+except OSError as e:
+    print("direct: refused", e.errno)
+"""
+
+
+@needs_sandbox
+def test_egress_reaches_only_what_the_policy_names(ws, upstream):
+    ws.caps.add("egress", "local", spec={"hosts": ["localhost"], "ports": [upstream]}, actor="user")
+    out = cap_api.cap("add", kind="policy", name="fetch", spec={"egress": ["local"], "commands": ["python3"]})
+    assert "PROPOSED" in out and "egress local" in out  # reaching out is the user's grant
+    ws.caps.approve("policy", "fetch", 1, actor="user")
+    cap_api.cap("add", kind="script", name="client", spec={"policy": "fetch", "interpreter": "python3"}, body=CLIENT)
+    out = cap_api.run("client", ["localhost", str(upstream)], wait=30)
+    assert "HTTP/1.1 200 Connection Established" in out and "echo:ping" in out, out
+    assert "direct: refused" in out  # nothing but the relay's port
+    out = cap_api.run("client", ["example.com", "443"], wait=30)
+    assert "403 Forbidden" in out and "in none of this policy's egress profiles (local)" in out
+    logs = [j["attrs"]["egress"] for j in ws.jobs() if j["attrs"].get("egress")]
+    refused = [x for x in logs if x["refused"]]
+    assert len(logs) == 2 and refused[0]["requests"][0]["host"] == "example.com"
+    done = [x for x in logs if not x["refused"]][0]["requests"][0]
+    assert done["host"] == "localhost" and done["status"] == "done" and done["down"] == len("echo:ping")
+
+
+def test_a_models_egress_profile_waits_and_the_known_ones_are_seeded(ws):
+    names = {r["attrs"]["name"] for r in ws.caps.list("egress")}
+    assert {"pypi", "npm", "crates", "github"} <= names
+    out = cap_api.cap("add", kind="egress", name="mirror", spec={"hosts": ["mirror.example.org"]})
+    assert "PROPOSED" in out and "hosts mirror.example.org" in out
+    with pytest.raises(Forbidden, match="the kernel's"):
+        cap_api.cap("update", kind="egress", name="pypi", spec={"hosts": ["evil.example"]})
+    dev = ws.policy("dev")["attrs"]
+    assert dev["commands"] == ["*"] and "pypi" in dev["egress"] and dev["exec_work"] is True
