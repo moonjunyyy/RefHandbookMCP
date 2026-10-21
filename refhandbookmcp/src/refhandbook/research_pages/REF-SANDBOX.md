@@ -37,9 +37,10 @@ is checked at every write and every review.
 **Policies** are what a sandbox is; pick one in the script's spec (`policy`).
 `cap(kind="policy")` lists those in force.
 - `default`: a coreutils-like set, a shell and Python; no network.
-- `dev` (when the server has it): every command, the server's layers (Python
-  with uv, the scientific stack, Node, Rust), the package registries through
-  egress, and what is built in `/work` may run (`exec_work`).
+- `dev`: what the server's administrator set up for development: the server's
+  layers (Python with uv, the scientific stack, Node, Rust) with every command,
+  the egress profiles they granted, and `exec_work` if they granted it.
+  `cap(kind="policy", action="show", name="dev")` says what it holds now.
 
 **Egress.** A sandbox has no network of its own. A policy's `egress` profiles
 (`cap(kind="egress")`: `pypi`, `npm`, `crates`, `github`, `huggingface`,
@@ -48,8 +49,9 @@ so `pip`, `uv`, `npm`, `cargo`, `git` and `curl` work unchanged, but only to the
 profiles' hosts. A refusal reads `egress refused: <host> is in none of this
 policy's egress profiles`: use a policy that has the profile, or propose one
 (`cap(kind="egress", action="add", …)`, or `update` a policy of yours with the
-profile); a proposal that widens a grant waits for the user's approval. Never
-try to reach around the proxy.
+profile); a proposal that widens a grant waits for the user's approval. A
+tunnel must speak TLS to the very host it asked for. Never try to reach around
+the proxy.
 
 **Layers** stack software on the sandbox's base. The server's own are named
 `sys:<name>` (built by its administrator). Your own layer is a build script run

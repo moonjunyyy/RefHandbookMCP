@@ -31,6 +31,7 @@ from __future__ import annotations
 import ctypes
 import ctypes.util
 import errno
+import fcntl
 import glob
 import json
 import os
@@ -633,7 +634,8 @@ def _command_view(root: str, commands: dict[str, str], keep: tuple[str, ...] = (
     mount("tmpfs", bindir, "tmpfs", MS_NOSUID | MS_NODEV, "mode=0755,size=64k")
     for name, src in commands.items():
         inside = next((src[len(t):] for t in trees if src.startswith(t.rstrip("/") + "/")), None)
-        if inside is not None and not any(inside.startswith(f"/{d}/") for d in COMMAND_DIRS):
+        if inside is not None and inside.startswith(("/opt/", "/usr/local/")) \
+                and not any(inside.startswith(f"/{d}/") for d in COMMAND_DIRS):
             os.symlink(inside, f"{bindir}/{name}")
             continue
         _touch(f"{bindir}/{name}")
@@ -780,17 +782,31 @@ def _memfd_noexec() -> bool:
 
 def _lo_up() -> None:
     """Bring loopback up in the sandbox's own network namespace (it starts down)."""
-    import fcntl
-    import struct
-
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
         req = struct.pack("16sH14s", b"lo", 0, b"")
         flags = struct.unpack("16sH14s", fcntl.ioctl(s, 0x8913, req))[1]  # SIOCGIFFLAGS
         fcntl.ioctl(s, 0x8914, struct.pack("16sH14s", b"lo", flags | 0x1, b""))  # SIOCSIFFLAGS, IFF_UP
 
 
+RELAY_MAX = 64  # connections at once through the relay
+
+
+def _drop_caps() -> None:
+    """No capabilities left, not even in the bounding set: the relay needs none."""
+    for cap in range(64):
+        try:
+            prctl(24, cap)  # PR_CAPBSET_DROP
+        except SandboxError:
+            break
+    hdr, data = _CapHeader(0x20080522, 0), (_CapData * 2)()
+    if _libc.syscall(_nr("capset"), ctypes.byref(hdr), data) != 0:
+        raise _err("capset")
+
+
 def _relay(port: int, target: str, spec: Spec) -> None:
-    """A process beside the command: 127.0.0.1:<port> → the supervisor's unix socket, byte for byte."""
+    """A process beside the command: 127.0.0.1:<port> → the supervisor's unix socket, byte for byte.
+    It keeps nothing it does not need: no capabilities, no file access (Landlock), no TCP of its own
+    beyond the socket it listens on, the same seccomp filter as the command."""
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind(("127.0.0.1", port))
@@ -800,12 +816,14 @@ def _relay(port: int, target: str, spec: Spec) -> None:
         return
     try:
         prctl(PR_SET_PDEATHSIG, signal.SIGKILL)
-        if (os.getuid(), os.getgid()) != (spec.uid, spec.gid):
-            os.setresgid(spec.gid, spec.gid, spec.gid)
-            os.setresuid(spec.uid, spec.uid, spec.uid)
+        os.setresgid(spec.gid, spec.gid, spec.gid)
+        os.setresuid(spec.uid, spec.uid, spec.uid)
+        _drop_caps()
+        landlock_restrict([], [], deny_tcp=True)
         seccomp_install(deny_memfd=True)
+        slots = threading.BoundedSemaphore(RELAY_MAX)
 
-        def pump(a: socket.socket, b: socket.socket) -> None:
+        def pump(a: socket.socket, b: socket.socket, release: bool) -> None:
             try:
                 while data := a.recv(65536):
                     b.sendall(data)
@@ -817,18 +835,27 @@ def _relay(port: int, target: str, spec: Spec) -> None:
                         x.shutdown(socket.SHUT_RDWR)
                     except OSError:
                         pass
+                if release:
+                    a.close(), b.close()
+                    slots.release()
 
         while True:
-            c, _ = srv.accept()
+            try:
+                c, _ = srv.accept()
+            except OSError:
+                time.sleep(0.05)
+                continue
+            if not slots.acquire(blocking=False):
+                c.close()
+                continue
             u = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             try:
                 u.connect(target)
-            except OSError:
-                c.close()
-                u.close()
-                continue
-            for a, b in ((c, u), (u, c)):
-                threading.Thread(target=pump, args=(a, b), daemon=True).start()
+                threading.Thread(target=pump, args=(c, u, False), daemon=True).start()
+                threading.Thread(target=pump, args=(u, c, True), daemon=True).start()
+            except (OSError, RuntimeError):
+                c.close(), u.close()
+                slots.release()
     finally:
         os._exit(0)
 
