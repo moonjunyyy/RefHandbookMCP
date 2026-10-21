@@ -359,3 +359,41 @@ def test_a_models_egress_profile_waits_and_the_known_ones_are_seeded(ws):
         cap_api.cap("update", kind="egress", name="pypi", spec={"hosts": ["evil.example"]})
     dev = ws.policy("dev")["attrs"]
     assert dev["commands"] == ["*"] and "pypi" in dev["egress"] and dev["exec_work"] is True
+
+
+@needs_sandbox
+def test_the_servers_layers_are_built_once_and_every_users_dev_policy_stacks_them(tmp_path, monkeypatch, capsys):
+    from refhandbook import cli
+
+    monkeypatch.setenv("RHB_RUNNER", "inprocess")
+    rec = tmp_path / "recipes"
+    rec.mkdir()
+    (rec / "recipes.toml").write_text(
+        '[base]\ndescription = "a tool"\nenv = { GREETING = "hello", PATH = "/opt/base/bin:$PATH" }\n'
+        '[top]\ndescription = "on base"\nparents = ["base"]\nenv = { GREETING = "$GREETING from top" }\n')
+    (rec / "base.sh").write_text("mkdir -p /opt/base/bin\nprintf '#!/bin/sh\\necho \"$GREETING\" \"$@\"\\n' "
+                                 "> /opt/base/bin/greet\nchmod 755 /opt/base/bin/greet\n")
+    (rec / "top.sh").write_text("mkdir -p /opt/top && echo top > /opt/top/mark\n")
+    data = tmp_path / "data"
+    (data / "users").mkdir(parents=True)
+    hb = Handbook(data / "users" / "moon.db")
+    cap_api.configure(lambda: hb, threading.RLock())
+    cap_api._spaces.clear()
+    ws = cap_api.W()
+    assert ws.policy("dev")["attrs"]["layers"] == []  # nothing built yet
+    assert cli.main(["layers", "build", "--data-dir", str(data), "--recipes", str(rec)]) == 0
+    out = capsys.readouterr().out
+    assert "building sys:base@1" in out and "building sys:top@1" in out and "moon: policy dev v2 in force" in out
+    assert cli.main(["layers", "list", "--data-dir", str(data)]) == 0
+    assert "sys:top@1" in capsys.readouterr().out
+    cap_api._spaces.clear()
+    ws = cap_api.W()
+    assert ws.policy("dev")["attrs"]["layers"] == ["sys:top@1"]
+    cap_api.cap("add", kind="script", name="hi", spec={"policy": "dev"}, body="greet world; cat /opt/top/mark\n")
+    out = cap_api.run("hi", wait=30)
+    assert "hello from top world" in out and "top" in out, out
+    with pytest.raises(KernelError, match="not built on this server"):
+        ws.set_policy("x", actor="user", layers=["sys:top@7"])
+    for runner, _ in cap_api._runners.values():
+        runner.close()
+    cap_api._runners.clear()

@@ -33,7 +33,7 @@ result gets one line unless more is asked for.
    the **observation or check that would distinguish it** from the minimal
    reading. Each is registered as `R`, with origin `model`, status `proposed`,
    and evidence `closure: <the user's words it was checked against>`.
-3. Nothing proceeds on an alternative until the user adopts it (SKILL.md §4).
+3. Nothing proceeds on an alternative until the user adopts it (card REF-PROV).
 
 ### DV3 — Connect across fields
 

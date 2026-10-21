@@ -602,3 +602,32 @@ def test_stop_hook_judges_only_this_conversations_session(rs):
     assert rs.unfinished("geo", "cc:me") == []
     st = rs.status("geo")
     assert sorted(s["role"] for s in st["open_sessions"]) == ["agent", "chat"] and st["sessions"] == 3
+
+
+def test_skills_only_point_at_the_cards_and_no_card_teaches_an_old_name():
+    """The procedure lives in the cards (served live); a skill file a client caches only points at
+    them, so nothing stale in it can outvote a card. Old tool names appear only in the table of
+    replacements, which follows the code's own list."""
+    from pathlib import Path
+
+    from refhandbook.cap_api import DEPRECATED_TOOLS
+
+    root = Path(__file__).resolve().parents[1]
+    hb = Handbook(":memory:")
+    research.ensure_cards(hb)
+    ids = set(hb._column("SELECT id FROM entries"))
+    old = {k.replace("research_review_rules", "research_review` with `rules") for k in DEPRECATED_TOOLS}
+    for skill in (root / "skills").glob("*/SKILL.md"):
+        text = skill.read_text()
+        for cid in re.findall(r"rs-[a-z0-9-]+", text):
+            assert cid in ids or cid == "rs-dom-", (skill, cid)
+        assert not [o for o in DEPRECATED_TOOLS if o in text and o != "research_review_rules"], skill
+        assert "§" not in text.split("## Index")[0]  # no rules kept here: they are cards
+    table = hb.get_entry("rs-ref-sandbox")["body"]
+    for o in old:
+        assert f"`{o}`" in table, o
+    for page in (root / "src/refhandbook/research_pages").glob("*.md"):
+        if page.name != "REF-SANDBOX.md":
+            text = page.read_text()
+            assert not [o for o in DEPRECATED_TOOLS if o in text and o != "research_review_rules"], page
+            assert "SKILL.md" not in text, page

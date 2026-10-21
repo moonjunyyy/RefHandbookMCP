@@ -103,6 +103,8 @@ curl -fsS "http://127.0.0.1:${PORT:-8765}/healthz" && echo "  <- service is up" 
 cat <<MSG
 next:
   1. test a sign-in:   sudo -u refhandbook $VENV/bin/refhandbook --env-file $ENVF check-login <uid>
+  1b. build the shared layers (Python with the scientific stack, Node, Rust; uses the network once):
+       sudo -u refhandbook $VENV/bin/refhandbook --env-file $ENVF layers build --data-dir /var/lib/refhandbook
   2. put deploy/nginx.conf (or deploy/Caddyfile) in front, then from outside:
        curl -s https://<domain>/.well-known/oauth-protected-resource/mcp
 MSG

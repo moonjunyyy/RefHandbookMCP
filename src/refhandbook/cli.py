@@ -74,6 +74,14 @@ def main(argv: list[str] | None = None) -> int:
     po.add_argument("--layers", help="space-separated layers stacked on the base (replaces the list)")
     po.add_argument("--mount", action="append", metavar="SOURCE:TARGET[:rw]",
                     help="mount the user's data (under RHB_SANDBOX_MOUNT_ROOTS) at TARGET; repeat; 'none' clears")
+    ly = sub.add_parser("layers", help="the server's shared layers: build them (with the network), list them")
+    ly.add_argument("action", choices=["build", "list", "recipes"])
+    ly.add_argument("names", nargs="*", help="recipes to build (default: all)")
+    ly.add_argument("--data-dir", help="the remote server's data directory: layers go to <dir>/layers, and every "
+                                        "user's dev policy moves to the new builds")
+    ly.add_argument("--root", help="where the layers go (default: next to the store, or RHB_SANDBOX_SYSTEM_LAYERS)")
+    ly.add_argument("--recipes", help="a directory of recipes (recipes.toml and <name>.sh) instead of the bundled ones")
+    ly.add_argument("--keep", type=int, default=2, help="builds of each layer to keep (default 2)")
     cp = sub.add_parser("cap", help="the user's channel: capability records (list, show, history, approve, reject, "
                                     "review, add, update, remove, restore)")
     cp.add_argument("action", choices=["list", "show", "history", "approve", "reject", "review", "add", "update",
@@ -169,6 +177,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if all(ok for name, ok, _ in rows if name in ("user namespaces", "seccomp")) else 1
     if args.command == "runner":
         return _runner(args)
+    if args.command == "layers":
+        return _layers(args)
     hb = Handbook(args.db)
     if args.command == "policy":
         return _policy(args, hb)
@@ -336,6 +346,92 @@ def _policy(args: argparse.Namespace, hb: Handbook) -> int:
     except HandbookError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
+    return 0
+
+
+def _layers(args: argparse.Namespace) -> int:
+    """The administrator's terminal: build the server's shared layers from recipes, with the host's
+    network (that is the administrator's grant), and move each user's kernel-owned dev policy to
+    the new builds."""
+    import shutil
+    import tomllib
+
+    from .agents import layers as L
+    from .agents import sandbox
+    from .agents.workspace import Workspace, system_root
+
+    recipes = Path(args.recipes) if args.recipes else Path(__file__).parent / "agents" / "recipes"
+    book = tomllib.loads((recipes / "recipes.toml").read_text())
+    stores = sorted((Path(args.data_dir) / "users").glob("*.db")) if args.data_dir else [Path(args.db or default_db_path())]
+    root = Path(args.root) if args.root else (Path(args.data_dir) / "layers" if args.data_dir
+                                               else system_root(Handbook(str(stores[0]))))
+    store = L.LayerStore(root)
+    if args.action == "recipes":
+        for name, r in book.items():
+            print(f"{name}: {r.get('description', '')}" + (f" (on {', '.join(r['parents'])})" if r.get("parents") else ""))
+        return 0
+    if args.action == "list":
+        for lay in store.list():
+            print(f"sys:{lay.name.rpartition('.v')[0]}@{lay.name.rpartition('.v')[2]}  {lay.created}  {lay.description}"
+                  + (f"  (on {' '.join(lay.parents)})" if lay.parents else ""))
+        return 0
+    names = args.names or list(book)
+    order: list[str] = []
+
+    def visit(n: str) -> None:
+        if n not in book:
+            raise SystemExit(f"error: no recipe {n!r} (recipes: {', '.join(book)})")
+        for p in book[n].get("parents", []):
+            visit(p)
+        if n not in order:
+            order.append(n)
+
+    for n in names:
+        visit(n)
+    root.mkdir(parents=True, exist_ok=True)
+    built: dict[str, str] = {}
+
+    def latest(n: str) -> int:
+        vs = [int(x.name.rpartition(".v")[2]) for x in store.list() if x.name.rpartition(".v")[0] == n]
+        return max(vs) if vs else 0
+
+    for n in order:
+        if n not in names and latest(n):  # a parent already built: stand on its newest build
+            built[n] = f"{n}.v{latest(n)}"
+            continue
+        r = book[n]
+        d = f"{n}.v{latest(n) + 1}"
+        print(f"building sys:{n}@{latest(n) + 1} …", flush=True)
+        try:
+            _, code, out = store.build(
+                d, (recipes / f"{n}.sh").read_text(), parents=[built[p] for p in r.get("parents", [])], network=True,
+                description=r.get("description", ""), timeout=float(r.get("timeout", 1800)),
+                build_env={"HOME": "/tmp"}, env=r.get("env", {}),
+                extra={"binds_ro": [(str(recipes), "/recipes")]})
+        except (L.LayerError, sandbox.SandboxError, OSError) as e:
+            print(f"error: {n}: {e}", file=sys.stderr)
+            return 1
+        if code != 0:
+            print(out[-4000:], file=sys.stderr)
+            print(f"error: {n}: the build exited {code}; nothing was kept", file=sys.stderr)
+            return 1
+        built[n] = d
+        print(out.strip().splitlines()[-1] if out.strip() else "", flush=True)
+        olds = sorted((x.name for x in store.list() if x.name.rpartition(".v")[0] == n),
+                      key=lambda x: int(x.rpartition(".v")[2]))
+        for old in olds[:-max(1, args.keep)]:
+            try:
+                store.remove(old)
+            except L.LayerError:
+                pass  # a newer layer stands on it
+    for db in stores:
+        try:
+            msg = Workspace(Handbook(str(db))).refresh_dev()
+            if msg:
+                print(f"{db.stem}: {msg}")
+        except HandbookError as e:
+            print(f"{db.stem}: dev policy not moved: {e}", file=sys.stderr)
+    shutil.rmtree(root / "hostetc", ignore_errors=True)  # prepared again on the next build
     return 0
 
 
