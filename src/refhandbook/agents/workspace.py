@@ -198,53 +198,63 @@ class Workspace:
     DEV = "dev"
 
     def dev_policy_spec(self) -> dict[str, Any]:
-        """The kernel's policy for development work: the default's limits, every command of the host
-        and the server's layers (Python, Node, Rust, …), the package registries through the egress
-        supervisor, and what is built in /work may run. RHB_SANDBOX_EGRESS names its profiles
-        ("none": no egress); RHB_SANDBOX_DEV_EXEC=0 keeps /work noexec."""
+        """The kernel's policy for development work. It grants only what the server's administrator
+        decided: the server's layers they built (every command with them), the egress profiles named
+        in RHB_SANDBOX_EGRESS (unset: none), and exec_work when RHB_SANDBOX_DEV_EXEC=1. Without any
+        of that it is the default."""
         from .capkinds import EGRESS_PROFILES
 
-        spec = {k: v for k, v in self.default_policy_spec().items() if k != "commands"}
-        names = os.environ.get("RHB_SANDBOX_EGRESS", "pypi npm crates github huggingface arxiv").split()
+        spec = self.default_policy_spec()
+        names = [n for n in os.environ.get("RHB_SANDBOX_EGRESS", "").split() if n in EGRESS_PROFILES]
         sys_layers = self.layer_store().system
         latest: dict[str, int] = {}
         for lay in sys_layers.list() if sys_layers else []:
             base, _, n = lay.name.rpartition(".v")
             if n.isdigit():
                 latest[base] = max(latest.get(base, 0), int(n))
-        below = {p for b, n in latest.items() for p in sys_layers.get(f"{b}.v{n}").parents} if sys_layers else set()
-        tops = [b for b, n in latest.items() if f"{b}.v{n}" not in below]  # each stack once, by its top
-        spec.update(commands=["*"], egress=[] if names == ["none"] else [n for n in names if n in EGRESS_PROFILES],
-                    exec_work=os.environ.get("RHB_SANDBOX_DEV_EXEC", "1") != "0",
+
+        def current(b: str) -> bool:  # the newest build, standing on the newest builds all the way down
+            return all(p.rpartition(".v")[0] in latest and p == f"{p.rpartition('.v')[0]}.v{latest[p.rpartition('.v')[0]]}"
+                       and current(p.rpartition(".v")[0]) for p in sys_layers.get(f"{b}.v{latest[b]}").parents)
+
+        good = [b for b in latest if current(b)]
+        below = {p for b in good for p in sys_layers.get(f"{b}.v{latest[b]}").parents}
+        tops = [b for b in good if f"{b}.v{latest[b]}" not in below]  # each stack once, by its top
+        spec.update(egress=names, exec_work=os.environ.get("RHB_SANDBOX_DEV_EXEC") == "1",
                     layers=[f"sys:{b}@{latest[b]}" for b in sorted(tops)],
-                    description="development: every command, the server's layers, package registries through "
-                                "the egress supervisor")
+                    description="development: the server's layers and the egress the administrator configured")
+        if tops or names:
+            spec["commands"] = ["*"]
         return spec
 
     def _seed(self) -> None:
         """The kernel's records, each once per store (one the user removed stays removed): the known
-        egress profiles, and the development policy."""
+        egress profiles, and the development policy, which then follows the server's configuration
+        while the kernel still owns it."""
         from .capkinds import EGRESS_PROFILES
 
         for name, (hosts, desc) in EGRESS_PROFILES.items():
             if not self.g.db.execute("SELECT 1 FROM k_meta WHERE key = ?", (f"cap:seeded:egress:{name}",)).fetchone():
                 self.caps.seed("egress", name, spec={"hosts": hosts, "ports": [443], "description": desc})
-        if not self.g.db.execute("SELECT 1 FROM k_meta WHERE key = ?", (f"cap:seeded:policy:{self.DEV}",)).fetchone():
-            try:
+        try:
+            if not self.g.db.execute("SELECT 1 FROM k_meta WHERE key = ?", (f"cap:seeded:policy:{self.DEV}",)).fetchone():
                 self.caps.seed("policy", self.DEV, spec=self.dev_policy_spec())
-            except KernelError as e:
-                self.g.log("kernel", f"dev policy not seeded: {e}", f"policy:{self.DEV}")
+            else:
+                self.refresh_dev()
+        except KernelError as e:
+            self.g.log("kernel", f"dev policy not seeded or refreshed: {e}", f"policy:{self.DEV}")
 
     def refresh_dev(self) -> str | None:
-        """Move the kernel's development policy to the server's newest layers (after the administrator
-        built them): only while the kernel still owns its versions (a user's edit is left alone)."""
+        """Bring the kernel's development policy to the server's configuration and newest layers:
+        only while the kernel still owns its versions (a user's edit is left alone)."""
         rec = self.caps.find("policy", self.DEV)
-        if rec is None or rec["author"] != "kernel" or not rec["attrs"].get("version"):
+        if rec is None or rec["author"] != "kernel" or rec["state"] != "active" or not rec["attrs"].get("version"):
             return None
         if self.caps.version(rec)["author"] != "kernel":
             return None
-        return self.caps.update("policy", self.DEV, spec={"layers": self.dev_policy_spec()["layers"]},
-                                actor="kernel", note="the server's layers were rebuilt")[1]
+        _, msg = self.caps.update("policy", self.DEV, spec=self.dev_policy_spec(), actor="kernel", replace=True,
+                                  note="the server's configuration or layers changed")
+        return None if msg.endswith("unchanged") else msg
 
     def _adopt(self) -> None:
         """Records for what came before the registry, once per store, by one rule: nothing stays in
@@ -649,8 +659,10 @@ class Runner:
         every = pol["commands"] == ["*"]
         paths = None if every else {c: p for c in pol["commands"] if (p := resolve_command(c, trees))}
         argv0 = f"/usr/bin/{interp}"
-        if every:  # no command view: the interpreter is found on the PATH the layers set up
-            argv0 = interp
+        if every:  # no command view: the interpreter where a layer or the host has it, by its full path
+            found = resolve_command(interp, trees)
+            under = next((t for t in trees if found and found.startswith(os.path.realpath(t).rstrip("/") + "/")), None)
+            argv0 = (found[len(os.path.realpath(under)):] if under else found) or interp
         out = self._egress(j["id"][4:], pol)
         env = {**env, **out.get("env", {})}
         return sandbox.Spec(

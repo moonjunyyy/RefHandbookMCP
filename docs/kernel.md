@@ -130,19 +130,29 @@ One sandbox per user, shared by Chat sessions (the `cap`, `run`, `job`, `files` 
   make the runner open one unix socket per job (`agents/egress.py`), bound at `/run/egress`. A relay
   inside listens on `127.0.0.1:3128` and the job's environment names it as the HTTP(S) proxy, so
   pip, uv, npm, cargo, git and curl work unchanged; Landlock lets the command connect to that port
-  only. The supervisor speaks HTTP CONNECT and nothing else (TLS stays end to end), admits a
-  profile's host and port, resolves the host itself and refuses any non-public address (the host's
-  own services stay out of reach), caps the bytes a job moves, and records every request, admitted
-  or refused, on the job. Adding a profile to a policy, or a host to a profile, is a widening. A
+  only, and the relay itself runs with no capabilities, no file access and no TCP of its own. The
+  supervisor speaks HTTP CONNECT and nothing else (TLS stays end to end), admits a profile's host
+  and port, resolves the host itself and refuses any address that is not public or carries a
+  non-public IPv4 address (NAT64, 6to4, Teredo, mapped), and requires the tunnel to open with a
+  TLS ClientHello whose server name is that same host (on a shared CDN address another name would
+  reach another site; an encrypted ClientHello is refused). Every job is bounded (32 tunnels at
+  once, 512 in all, bytes, idle time, lookups, a ring of its latest 200 requests), so none can
+  starve another or the process the supervisor lives in. Adding a profile to a policy, or a host to a profile, is a widening. A
   policy may still grant the host's whole network (`network`), port-limited by Landlock.
 - **The server's layers** — `refhandbook layers build` (the administrator's terminal, with the
   host's network once) builds the bundled recipes (`agents/recipes/`: `python` = uv and a
   uv-managed CPython, `python-sci`, `node`, `rust`) into `<data dir>/layers`, shared read-only by
   every user as `sys:<name>@N`, each with the environment a sandbox stacking it needs (layer
-  `env`: `UV_CACHE_DIR`, `CARGO_HOME`, `PATH`, …, all under `/work`). The kernel seeds a `dev`
-  policy per store: every command, the newest server layers, the egress profiles of
-  `RHB_SANDBOX_EGRESS`, and `exec_work`; a rebuild moves it to the new builds while the kernel
-  still owns its versions. An interpreter a layer keeps under `/opt` is linked into the command
+  `env`: `UV_CACHE_DIR`, `CARGO_HOME`, `PATH` with the `/work` directories last, …). A build
+  reaches out as a sandbox does, through the supervisor to its recipe's profiles only, and every
+  download is checked against its publisher's checksum list. Rebuilding a layer rebuilds what
+  stands on it; an old build stays while any store pins it or a running job stacks it. The kernel
+  seeds a `dev` policy per store that grants only what the administrator configured: the server's
+  newest layers (with every command), the egress profiles named in `RHB_SANDBOX_EGRESS` (unset:
+  none) and `exec_work` with `RHB_SANDBOX_DEV_EXEC=1`; it follows that configuration while the
+  kernel still owns it, and a user's edit stops that. A layer's `env` may not set what makes
+  programs load or run something else (`LD_*`, `BASH_ENV`, `PYTHONSTARTUP`, `NODE_OPTIONS`, proxies,
+  certificate paths, …). An interpreter a layer keeps under `/opt` is linked into the command
   view, so it finds its own prefix.
 - **exec_work** — a policy grant: `/work` without noexec, so what is built there (a native
   extension in a virtual environment, a cargo build) runs. A widening.

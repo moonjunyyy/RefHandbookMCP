@@ -98,6 +98,12 @@ def _mounts(ws: Any, mounts: Any) -> list[dict[str, Any]]:
 # build. A new version of the layer does not reach the policy until a new version of the policy
 # moves the pin, which is a widening like any other. Pinned trees are kept.
 
+# Variables that make a program load or run something besides itself, or trust or route elsewhere.
+# A layer, which every script under a policy stacking it runs with, may not set them.
+ENV_HOOKS = re.compile(r"^(LD_\w+|GCONV_PATH|BASH_ENV|ENV|SHELLOPTS|PS4|PROMPT_COMMAND|PYTHON(STARTUP|PATH|HOME|INSPECT|"
+                       r"USERBASE|EXECUTABLE|WARNINGS)|PERL5(LIB|OPT)|PERLLIB|RUBY(OPT|LIB)|NODE_(OPTIONS|PATH)|"
+                       r"SSL_CERT_\w+|REQUESTS_CA_BUNDLE|CURL_CA_BUNDLE|NODE_EXTRA_CA_CERTS|\w*_PROXY|\w*_proxy|"
+                       r"GIT_(SSH\w*|EXEC_PATH|CONFIG\w*|ASKPASS)|MALLOC_\w+)$")
 PIN_RE = re.compile(r"^((?:sys:)?[a-z0-9][a-z0-9._-]{0,63})(?:@(\d+))?$")
 SYS = "sys:"
 
@@ -192,9 +198,23 @@ def pinned_dirs(reg: Registry) -> set[str]:
     return out
 
 
+def in_use(reg: Registry) -> set[str]:
+    """Every layer build this store needs kept: what its records pin (pinned_dirs) and what a job
+    running now stacks."""
+    out = pinned_dirs(reg)
+    for (pol,) in reg.g.db.execute("SELECT json_extract(attrs, '$.policy') FROM k_nodes WHERE type = 'job' "
+                                   "AND state = 'running'").fetchall():
+        n = reg.g.get_node(f"policy:{pol}") if pol else None
+        for p in (n["attrs"].get("layers") or []) if n else []:
+            m = PIN_RE.match(p)
+            if m and m.group(2):
+                out.add(layer_dir(m.group(1), int(m.group(2))))
+    return out
+
+
 def prune_layers(reg: Registry, name: str | None = None) -> list[str]:
     """Remove builds nothing pins (of one layer, or all)."""
-    store, keep, gone = _store(reg), pinned_dirs(reg), []
+    store, keep, gone = _store(reg), in_use(reg), []
     pat = re.compile(rf"^{re.escape(name)}\.v\d+$" if name else r"^.+\.v\d+$")
     for lay in store.list():
         if pat.match(lay.name) and lay.name not in keep and not any(lay.name in o.parents for o in store.list()):
@@ -505,6 +525,10 @@ class LayerKind(Kind):
         if not isinstance(env, dict) or not all(re.fullmatch(r"[A-Z_][A-Z0-9_]*", k) and isinstance(v, str)
                                                 for k, v in env.items()):
             raise CapError("env is {NAME: value}; $PATH (any $NAME) in a value expands to what is below")
+        hooks = sorted(k for k in env if ENV_HOOKS.match(k))
+        if hooks:
+            raise CapError(f"env {' '.join(hooks)}: a layer may not set what makes every program load or run "
+                           "something (loader, shell, interpreter start-up, certificates, proxies)")
         spec["env"] = env
         return spec
 
