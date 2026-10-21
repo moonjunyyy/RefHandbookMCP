@@ -114,7 +114,8 @@ def deprecated(old: str, caps: Registry | None = None) -> str:
     if rec is None or rec["state"] == "retired":
         raise CapError(f"{old} has been removed: use {new}")
     when = time.strftime("%Y-%m-%d", time.localtime(rec["attrs"].get("retire_at") or time.time()))
-    return f"DEPRECATED {old}: use {new} (this name stops working {when})"
+    return (f"DEPRECATED {old}: this call worked, but every later call must use {new} instead; the old name "
+            f"stops working {when} (card rs-ref-sandbox lists the replacements)")
 
 
 def _inprocess() -> bool:

@@ -9,6 +9,11 @@ The handbook holds short cards for situations that have come up before. Each car
 situation it is for, says how to confirm you are in it, and lists what to do. Cards are linked
 to each other by typed relations, so one card leads to the next.
 
+This server's own tools are described by its cards, which are current even when this skill is
+not: `open_entry("rs-start")` for research, `open_entry("rs-ref-sandbox")` for computation (scripts,
+runs, packages, the network). A tool result that begins `DEPRECATED` names its replacement: switch
+now, and never call the old name again.
+
 ## Using a card
 
 1. **Look up by symptom, not by guess.** Call `lookup` with what you observed: the error text,

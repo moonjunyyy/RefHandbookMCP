@@ -1,0 +1,25 @@
+# The server's shared layers (`refhandbook layers build`). Each is built once by the
+# administrator, with the host's network, as root inside a sandbox over its parents; what it
+# installs under /usr/local, /opt and /etc becomes a read-only layer every user may stack
+# (`sys:<name>`). `env` is what a sandbox stacking it needs ($PATH: what is below it).
+
+[python]
+description = "Python (uv-managed CPython) with uv; packages come from pypi through egress"
+timeout = 1800
+env = { UV_PYTHON = "/usr/local/bin/python3", UV_PYTHON_DOWNLOADS = "never", UV_CACHE_DIR = "/work/.cache/uv", PIP_CACHE_DIR = "/work/.cache/pip", PYTHONUSERBASE = "/work/.local", PATH = "/work/.local/bin:$PATH" }
+
+[python-sci]
+description = "numpy, scipy, sympy, mpmath, pandas, matplotlib, networkx, scikit-learn, statsmodels, …"
+parents = ["python"]
+timeout = 3600
+env = { MPLBACKEND = "Agg", MPLCONFIGDIR = "/work/.cache/matplotlib" }
+
+[node]
+description = "Node.js LTS with npm and npx; packages come from npm through egress"
+timeout = 1800
+env = { NPM_CONFIG_CACHE = "/work/.cache/npm", NPM_CONFIG_PREFIX = "/work/.npm-global", NPM_CONFIG_UPDATE_NOTIFIER = "false", PATH = "/work/.npm-global/bin:$PATH" }
+
+[rust]
+description = "Rust stable (rustup, minimal profile): cargo, rustc; crates come through egress"
+timeout = 3600
+env = { RUSTUP_HOME = "/opt/rust/rustup", CARGO_HOME = "/work/.cargo", RUSTUP_TOOLCHAIN = "stable", PATH = "/work/.cargo/bin:/opt/rust/cargo/bin:$PATH" }

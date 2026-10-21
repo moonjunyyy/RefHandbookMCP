@@ -127,7 +127,7 @@ def test_the_kernels_default_repairs_itself(ws, monkeypatch):
 
 def test_old_tool_names_work_with_a_warning_until_their_alias_retires(ws):
     out = cap_api.sandbox_script("add", "legacy", body="echo hi\n")
-    assert out.startswith("DEPRECATED sandbox_script: use cap(kind='script'")
+    assert out.startswith("DEPRECATED sandbox_script: this call worked, but every later call must use cap(kind='script'")
     assert cap_api.sandbox_policy().startswith("DEPRECATED sandbox_policy")
     rec = ws.caps.get("alias", "sandbox-script")
     ws.caps.sweep(now=rec["attrs"]["retire_at"] + 1, force=True)

@@ -28,14 +28,11 @@ opens a session with `research_begin` (its first line is the SESSION token every
 works the plan objects with `research_next` / `research_push` / `research_done`, and closes with
 `research_end` before the reply. Sessions run side by side (another conversation, an agent with
 role="agent"); a CONFLICT names objects to re-read, nothing else is shared.
-Capabilities are records you keep up to date yourself, one tool for every kind: `cap` (kinds:
-script, policy, layer, alias, rule, card). Each is versioned, owned and reviewed on a TTL: add,
-update, deprecate, remove and restore your own freely; a version that widens a grant (a policy's
-commands, network, mounts; a layer built with the network) waits for the user's approval. When a
-review deprecates one of yours, fix it or remove it. Computation runs in the user's sandbox: write a
-script with `cap(kind="script")`, run it with `run` (a background job; read it later with `job`),
-and keep files in the workspace with `files`. Never ask the user to approve a run. The sandbox_*
-tools are old names of these and will be removed."""
+Computation runs in the user's sandbox with `cap` (scripts, policies, layers, egress, rules, cards:
+versioned records you keep current), `run`, `job` and `files`: open_entry("rs-ref-sandbox") says how,
+including how packages and the network are reached. The cards are current; a skill may be older.
+A tool result that begins DEPRECATED names its replacement: switch now. Never ask the user to
+approve a run."""
 
 def _version() -> str:
     from .manifest import project_version

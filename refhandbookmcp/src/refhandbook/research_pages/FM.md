@@ -30,7 +30,7 @@ For each object, settle and note (in the evidence cell) four things:
 - **degeneracy**: where the definition fails, and how that locus is handled.
 
 Unknowns the user isolated go to `Z`. A stand-in scalar for a form, tensor, or
-geometry is marked `proxy(X)` in its content. Both follow the SKILL.md §4 use
+geometry is marked `proxy(X)` in its content. Both follow the card REF-PROV use
 rules.
 
 ### FM3 — Premises

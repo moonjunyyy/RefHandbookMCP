@@ -124,6 +124,28 @@ One sandbox per user, shared by Chat sessions (the `cap`, `run`, `job`, `files` 
   a new policy version (a widening). A policy resolves its commands from its layers first: a file
   the layer itself holds, every symlink resolved inside the layer (a link out of it resolves to
   nothing); it may execute beneath `/usr/local` and `/opt`.
+- **Egress** — the only way out. A sandbox has a network namespace of its own with loopback only;
+  a policy's `egress` profiles (capability kind `egress`: named hosts and ports; the kernel seeds
+  `pypi`, `npm`, `crates`, `github`, `huggingface`, `arxiv`, `python-tools`, `nodejs`, `rustup`)
+  make the runner open one unix socket per job (`agents/egress.py`), bound at `/run/egress`. A relay
+  inside listens on `127.0.0.1:3128` and the job's environment names it as the HTTP(S) proxy, so
+  pip, uv, npm, cargo, git and curl work unchanged; Landlock lets the command connect to that port
+  only. The supervisor speaks HTTP CONNECT and nothing else (TLS stays end to end), admits a
+  profile's host and port, resolves the host itself and refuses any non-public address (the host's
+  own services stay out of reach), caps the bytes a job moves, and records every request, admitted
+  or refused, on the job. Adding a profile to a policy, or a host to a profile, is a widening. A
+  policy may still grant the host's whole network (`network`), port-limited by Landlock.
+- **The server's layers** — `refhandbook layers build` (the administrator's terminal, with the
+  host's network once) builds the bundled recipes (`agents/recipes/`: `python` = uv and a
+  uv-managed CPython, `python-sci`, `node`, `rust`) into `<data dir>/layers`, shared read-only by
+  every user as `sys:<name>@N`, each with the environment a sandbox stacking it needs (layer
+  `env`: `UV_CACHE_DIR`, `CARGO_HOME`, `PATH`, …, all under `/work`). The kernel seeds a `dev`
+  policy per store: every command, the newest server layers, the egress profiles of
+  `RHB_SANDBOX_EGRESS`, and `exec_work`; a rebuild moves it to the new builds while the kernel
+  still owns its versions. An interpreter a layer keeps under `/opt` is linked into the command
+  view, so it finds its own prefix.
+- **exec_work** — a policy grant: `/work` without noexec, so what is built there (a native
+  extension in a virtual environment, a cargo build) runs. A widening.
 - **Script** — the model's to add, revise, deprecate and remove with no approval, because it can
   call only what its policy shows; `requires` names the commands it needs, checked at every write
   and review. A user's script cannot be overwritten by the model.
