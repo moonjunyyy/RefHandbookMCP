@@ -47,6 +47,10 @@ grep -q '^RHB_PUBLIC_URL=https://hb.example.org$' "$ENVF" && { echo "set RHB_PUB
 # Not common-account: pam_unix's account phase reads shadow through a setuid/setgid helper, which a
 # non-root service under NoNewPrivileges cannot run, so it would refuse every directory account.
 # The account policy is the server's own: the name must resolve through NSS (and RHB_REQUIRE_GROUP).
+# Passwords that must be changed (expired, or a one-time +needchange) are refused with a pointer to
+# the account portal. pam_krb5 asks for the new password inside auth, which the server notices; with
+# pam_krb5's defer_pwchange or with pam_sss the expiry only shows in the account phase, so then add
+# "account required pam_krb5.so" (or pam_sss.so) above pam_permit; neither needs root there.
 # Kept if it exists, so a hand-tuned stack survives updates.
 if [ ! -e /etc/pam.d/refhandbook ]; then
   HEAD="# refhandbook: the system's password check; account policy is the server's own (NSS + RHB_REQUIRE_GROUP)"
@@ -84,9 +88,13 @@ fi
 "$VENV/bin/refhandbook" --env-file "$ENVF" plugin-json "$(grep -oP '^RHB_PUBLIC_URL=\K.*' "$ENVF" | tail -1 | sed 's#/*$##')/mcp" >/dev/null
 
 install -o root -g root -m 0644 "$SRC/deploy/refhandbook.service" /etc/systemd/system/refhandbook.service
+# The sandbox runner: the only unit that creates namespaces (docs/agents.md §7). Kernel primitives
+# and systemd only: nothing LSM-specific is installed.
+install -o root -g root -m 0644 "$SRC/deploy/refhandbook-runner.service" /etc/systemd/system/refhandbook-runner.service
 systemctl daemon-reload
-systemctl enable refhandbook >/dev/null
-systemctl restart refhandbook
+systemctl enable refhandbook refhandbook-runner >/dev/null
+systemctl restart refhandbook refhandbook-runner
+/opt/refhandbook-venv/bin/refhandbook sandbox-check || echo "warning: the sandbox is not fully available (see above)"
 PORT=$(grep -oP '^RHB_PORT=\K\d+' "$ENVF" | tail -1 || true)
 for _ in $(seq 1 15); do
   curl -fsS "http://127.0.0.1:${PORT:-8765}/healthz" >/dev/null 2>&1 && break; sleep 1
@@ -95,6 +103,8 @@ curl -fsS "http://127.0.0.1:${PORT:-8765}/healthz" && echo "  <- service is up" 
 cat <<MSG
 next:
   1. test a sign-in:   sudo -u refhandbook $VENV/bin/refhandbook --env-file $ENVF check-login <uid>
+  1b. build the shared layers (Python with the scientific stack, Node, Rust; uses the network once):
+       sudo -u refhandbook $VENV/bin/refhandbook --env-file $ENVF layers build --data-dir /var/lib/refhandbook
   2. put deploy/nginx.conf (or deploy/Caddyfile) in front, then from outside:
        curl -s https://<domain>/.well-known/oauth-protected-resource/mcp
 MSG

@@ -17,7 +17,7 @@ Q  <research question, in the user's words>
 └─ Q2 ...
 ```
 
-Node evidence uses the SKILL.md §4 evidence table. **gap** means the knowledge does not appear to
+Node evidence uses the card REF-PROV evidence table. **gap** means the knowledge does not appear to
 exist after search, which makes it a candidate contribution. It is not a search
 failure.
 

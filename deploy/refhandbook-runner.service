@@ -1,0 +1,45 @@
+# /etc/systemd/system/refhandbook-runner.service
+# Runs the sandbox jobs the MCP server queues (docs/agents.md §7). The only unit that may create
+# namespaces; it shares nothing with the MCP service but the store files under /var/lib/refhandbook.
+[Unit]
+Description=refhandbook sandbox runner
+After=network-online.target refhandbook.service
+
+[Service]
+Type=simple
+User=refhandbook
+Group=refhandbook
+EnvironmentFile=/etc/refhandbook/env
+WorkingDirectory=/var/lib/refhandbook
+ExecStart=/opt/refhandbook-venv/bin/refhandbook runner --data-dir /var/lib/refhandbook
+Restart=on-failure
+RestartSec=3
+Delegate=yes
+
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/lib/refhandbook
+# no ProtectKernelTunables: a mount over /proc/sys stops the sandbox from mounting its own /proc
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectClock=yes
+# AF_INET/6 for policies that grant the network (the sandbox's own netns and Landlock's port list
+# confine them); without the grant the sandbox has a network namespace of its own with no link
+RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_INET AF_INET6
+# the launcher makes these namespaces, then installs its own seccomp filter inside them
+RestrictNamespaces=user mnt pid net ipc uts cgroup
+SystemCallFilter=@system-service @mount @sandbox unshare pivot_root sethostname
+SystemCallErrorNumber=EPERM
+SystemCallArchitectures=native
+LockPersonality=yes
+UMask=0077
+# Kernel primitives and systemd only: no LSM profile. If the host forbids unprivileged user
+# namespaces (Ubuntu's kernel.apparmor_restrict_unprivileged_userns=1), `refhandbook sandbox-check`
+# says so and how to lift it with a sysctl.
+
+[Install]
+WantedBy=multi-user.target

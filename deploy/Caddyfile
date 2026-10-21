@@ -2,6 +2,11 @@
 # use the caddy-ratelimit plugin, or nginx (deploy/nginx.conf).
 hb.example.org {
 	header Strict-Transport-Security "max-age=31536000"
+	# Account portal (ldap-portal, PORTAL_ROOT_PATH=/account); RHB_ACCOUNT_URL=/account links to it.
+	redir /account /account/
+	reverse_proxy /account/* 127.0.0.1:8080 {
+		header_up X-Forwarded-For {remote_host}
+	}
 	reverse_proxy 127.0.0.1:8765 {
 		header_up X-Forwarded-For {remote_host}
 		flush_interval -1

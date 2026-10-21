@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import sys
+import threading
 from importlib import resources
 from pathlib import Path
 
 from . import render
-from .store import Handbook, HandbookError
+from .store import Handbook, HandbookError, default_db_path
 
 
 def load_env_file(path: str) -> None:
@@ -52,6 +54,51 @@ def main(argv: list[str] | None = None) -> int:
     rp.add_argument("tool", help="e.g. research_begin; 'list' prints the tools")
     rp.add_argument("arguments", nargs="?", default="{}",
                     help="JSON object of the tool's arguments, @FILE for a JSON file, or - for stdin")
+    ap = sub.add_parser("approve", help="the user's channel: approve a proposed rule or type (see `proposals`)")
+    ap.add_argument("what", choices=["rule", "type"])
+    ap.add_argument("name")
+    ap.add_argument("--seen", required=True, metavar="APPROVAL",
+                    help="the approval hash `proposals` showed (8+ hex digits): it names the proposal and the "
+                         "rules it retires, so anything changed since is not approved")
+    sub.add_parser("proposals", help="list the model's open rule proposals")
+    po = sub.add_parser("policy", help="the user's channel: show or grant a sandbox policy")
+    po.add_argument("name", nargs="?", default="")
+    po.add_argument("--commands", help="space-separated commands the sandbox shows (replaces the list)")
+    po.add_argument("--add", help="space-separated commands to add")
+    po.add_argument("--network", choices=["on", "off"])
+    for k in ("timeout", "memory_mb", "disk_mb", "tmp_mb", "concurrent"):
+        po.add_argument(f"--{k.replace('_', '-')}", type=int)
+    po.add_argument("--cpus", type=float)
+    po.add_argument("--description")
+    po.add_argument("--ports", help="space-separated TCP ports the network may reach ('any': every port)")
+    po.add_argument("--layers", help="space-separated layers stacked on the base (replaces the list)")
+    po.add_argument("--mount", action="append", metavar="SOURCE:TARGET[:rw]",
+                    help="mount the user's data (under RHB_SANDBOX_MOUNT_ROOTS) at TARGET; repeat; 'none' clears")
+    ly = sub.add_parser("layers", help="the server's shared layers: build them (with the network), list them")
+    ly.add_argument("action", choices=["build", "list", "recipes"])
+    ly.add_argument("names", nargs="*", help="recipes to build (default: all)")
+    ly.add_argument("--data-dir", help="the remote server's data directory: layers go to <dir>/layers, and every "
+                                        "user's dev policy moves to the new builds")
+    ly.add_argument("--root", help="where the layers go (default: next to the store, or RHB_SANDBOX_SYSTEM_LAYERS)")
+    ly.add_argument("--recipes", help="a directory of recipes (recipes.toml and <name>.sh) instead of the bundled ones")
+    ly.add_argument("--keep", type=int, default=2, help="builds of each layer to keep (default 2)")
+    cp = sub.add_parser("cap", help="the user's channel: capability records (list, show, history, approve, reject, "
+                                    "review, add, update, remove, restore)")
+    cp.add_argument("action", choices=["list", "show", "history", "approve", "reject", "review", "add", "update",
+                                       "remove", "restore", "kinds"])
+    cp.add_argument("kind", nargs="?", default="")
+    cp.add_argument("name", nargs="?", default="")
+    cp.add_argument("--version", type=int, default=0, help="the version to approve, reject or restore")
+    cp.add_argument("--spec", help="JSON object: the record's spec (add, update)")
+    cp.add_argument("--body-file", help="a file holding the body (a script's or a layer build's)")
+    cp.add_argument("--why", default="")
+    rn = sub.add_parser("runner", help="run sandbox jobs: of --db, or of every store under --data-dir (remote)")
+    rn.add_argument("--data-dir", help="the remote server's data directory (RHB_DATA_DIR)")
+    rn.add_argument("--once", action="store_true", help="start what is queued, wait for it, and exit")
+    rn.add_argument("--workers", type=int, default=4)
+    sub.add_parser("sandbox-check", help="report the sandbox primitives this host offers")
+    sub.add_parser("reject", help="the user's channel: reject a proposed rule (the model cannot revive it)"
+                   ).add_argument("name")
     ix = sub.add_parser("research-index", help="print (or --write into a SKILL.md) the research skill's abnormal index")
     ix.add_argument("--write", metavar="SKILL_MD", help="replace the generated index block in this file")
     hk = sub.add_parser("research-hook", help="Claude Code hook support: prompt | stop")
@@ -94,6 +141,9 @@ def main(argv: list[str] | None = None) -> int:
         except remote.DirectoryUnavailable as e:
             print(f"directory unavailable: {e}", file=sys.stderr)
             return 2
+        except remote.PasswordChangeRequired:
+            print(f"password right, but {args.user} must change it first (expired or one-time)", file=sys.stderr)
+            return 1
         print(f"ok: signed in as {uid} ({cfg.auth})" if uid else f"refused ({cfg.auth}): wrong user or password, unknown account, or not in the required group; see the log")
         return 0 if uid else 1
     if args.command == "plugin-json":
@@ -118,7 +168,24 @@ def main(argv: list[str] | None = None) -> int:
         server.mcp.run()
         return 0
 
+    if args.command == "sandbox-check":
+        from .agents import sandbox
+
+        rows = sandbox.check()
+        for name, ok, detail in rows:
+            print(f"{'ok ' if ok else 'NO '} {name}: {detail}")
+        return 0 if all(ok for name, ok, _ in rows if name in ("user namespaces", "seccomp")) else 1
+    if args.command == "runner":
+        return _runner(args)
+    if args.command == "layers":
+        return _layers(args)
     hb = Handbook(args.db)
+    if args.command == "policy":
+        return _policy(args, hb)
+    if args.command == "cap":
+        return _cap(args, hb)
+    if args.command in ("approve", "proposals", "reject"):
+        return _approve(args, hb)
     if args.command in ("research", "research-index", "research-hook"):
         return _research(args, hb)
     if args.command in ("show", "lookup", "index"):
@@ -185,20 +252,17 @@ def _research(args, hb: Handbook) -> int:
                 print(research.abnormal_index())
             return 0
         if args.command == "research-hook":
+            payload = json.loads(sys.stdin.read() or "{}") if not sys.stdin.isatty() else {}
+            label = f"cc:{payload['session_id']}" if payload.get("session_id") else ""
             if args.event == "prompt":
-                print(research_api.R().prompt(args.ledger))
+                print(research_api.R().prompt(args.ledger, label))
                 return 0
-            payload = json.loads(sys.stdin.read() or "{}")
             if payload.get("stop_hook_active"):
                 return 0
-            st = research_api.R().status(args.ledger)
-            if st["open"]:
-                print(f"Research turn {st['turn']} on {args.ledger!r} is still open: dispose PENDING, settle U rows, "
-                      "then research_end.", file=sys.stderr)
-                return 2
-            if st["prompts"] > st["last_closed"]:
-                print(f"Prompt {st['prompts']} has no closed research turn (last closed {st['last_closed']}): "
-                      f"research_begin turn={st['prompts']}, register the message, research_end.", file=sys.stderr)
+            # this conversation's session (the label the prompt hook gave) must be closed by the reply's end
+            left = research_api.R().unfinished(args.ledger, label)
+            if left:
+                print(f"Research on {args.ledger!r}:\n  " + "\n  ".join(left), file=sys.stderr)
                 return 2
             return 0
         if args.tool == "list":
@@ -214,6 +278,245 @@ def _research(args, hb: Handbook) -> int:
     except (HandbookError, TypeError, json.JSONDecodeError, OSError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
+
+
+
+def _approve(args: argparse.Namespace, hb: Handbook) -> int:
+    """The terminal on the server is the user's channel (as the approval page /agents is): the one place
+    a proposal becomes a rule that blocks."""
+    from . import research
+    r = research.Research(hb)
+    if args.command == "proposals":
+        print(r.proposals())
+        return 0
+    from .kernel import proposals
+
+    g = r.k.g
+    try:
+        if args.command == "reject":
+            proposals.reject(g, args.name, actor="user")
+            print(f"rule {args.name} rejected")
+            return 0
+        if args.what == "type":
+            g.approve("type", args.name, actor="user")
+            retired: list[str] = []
+        else:
+            retired = proposals.approve(g, args.name, args.seen, actor="user")
+    except HandbookError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    print(f"{args.what} {args.name} approved" + "".join(f"; {o} retired" for o in retired))
+    return 0
+
+
+def _policy(args: argparse.Namespace, hb: Handbook) -> int:
+    """The terminal on the server is the user's channel: a policy granted here is the user's."""
+    from . import cap_api
+    from .agents.workspace import Workspace
+
+    ws = Workspace(hb)
+    changes: dict = {}
+    if args.commands is not None:
+        changes["commands"] = args.commands.split()
+    if args.add:
+        name = args.name or "default"
+        current = ws.policy(name if name in ws.policies() else "default")["attrs"]["commands"]
+        changes["commands"] = list(changes.get("commands", current)) + args.add.split()
+    if args.network:
+        changes["network"] = args.network == "on"
+    if args.ports:
+        changes["ports"] = "any" if args.ports.strip() == "any" else [int(x) for x in args.ports.split()]
+    if args.layers is not None:
+        changes["layers"] = args.layers.split()
+    if args.mount:
+        try:
+            changes["mounts"] = [] if args.mount == ["none"] else [
+                {"source": m.split(":")[0], "target": m.split(":")[1], "rw": m.split(":")[2:] == ["rw"]}
+                for m in args.mount]
+        except IndexError:
+            print("error: --mount SOURCE:TARGET[:rw]", file=sys.stderr)
+            return 2
+    for k in ("timeout", "memory_mb", "disk_mb", "tmp_mb", "concurrent", "cpus", "description"):
+        if getattr(args, k) is not None:
+            changes[k] = getattr(args, k)
+    try:
+        if changes:
+            ws.set_policy(args.name or "default", actor="user", **changes)
+        print(cap_api.policy_text(ws, args.name))
+    except HandbookError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def _layers(args: argparse.Namespace) -> int:
+    """The administrator's terminal: build the server's shared layers from recipes, with the host's
+    network (that is the administrator's grant), and move each user's kernel-owned dev policy to
+    the new builds."""
+    import shutil
+    import tomllib
+
+    from .agents import layers as L
+    from .agents import sandbox
+    from .agents.workspace import Workspace, system_root
+
+    recipes = Path(args.recipes) if args.recipes else Path(__file__).parent / "agents" / "recipes"
+    book = tomllib.loads((recipes / "recipes.toml").read_text())
+    stores = sorted((Path(args.data_dir) / "users").glob("*.db")) if args.data_dir else [Path(args.db or default_db_path())]
+    root = Path(args.root) if args.root else (Path(args.data_dir) / "layers" if args.data_dir
+                                               else system_root(Handbook(str(stores[0]))))
+    store = L.LayerStore(root)
+    if args.action == "recipes":
+        for name, r in book.items():
+            print(f"{name}: {r.get('description', '')}" + (f" (on {', '.join(r['parents'])})" if r.get("parents") else ""))
+        return 0
+    if args.action == "list":
+        for lay in store.list():
+            print(f"sys:{lay.name.rpartition('.v')[0]}@{lay.name.rpartition('.v')[2]}  {lay.created}  {lay.description}"
+                  + (f"  (on {' '.join(lay.parents)})" if lay.parents else ""))
+        return 0
+    names = args.names or list(book)
+    order: list[str] = []
+
+    def visit(n: str) -> None:
+        if n not in book:
+            raise SystemExit(f"error: no recipe {n!r} (recipes: {', '.join(book)})")
+        for p in book[n].get("parents", []):
+            visit(p)
+        if n not in order:
+            order.append(n)
+
+    for n in names:
+        visit(n)
+    root.mkdir(parents=True, exist_ok=True)
+    built: dict[str, str] = {}
+
+    def latest(n: str) -> int:
+        vs = [int(x.name.rpartition(".v")[2]) for x in store.list() if x.name.rpartition(".v")[0] == n]
+        return max(vs) if vs else 0
+
+    for n in order:
+        if n not in names and latest(n):  # a parent already built: stand on its newest build
+            built[n] = f"{n}.v{latest(n)}"
+            continue
+        r = book[n]
+        d = f"{n}.v{latest(n) + 1}"
+        print(f"building sys:{n}@{latest(n) + 1} …", flush=True)
+        try:
+            _, code, out = store.build(
+                d, (recipes / f"{n}.sh").read_text(), parents=[built[p] for p in r.get("parents", [])], network=True,
+                description=r.get("description", ""), timeout=float(r.get("timeout", 1800)),
+                build_env={"HOME": "/tmp"}, env=r.get("env", {}),
+                extra={"binds_ro": [(str(recipes), "/recipes")]})
+        except (L.LayerError, sandbox.SandboxError, OSError) as e:
+            print(f"error: {n}: {e}", file=sys.stderr)
+            return 1
+        if code != 0:
+            print(out[-4000:], file=sys.stderr)
+            print(f"error: {n}: the build exited {code}; nothing was kept", file=sys.stderr)
+            return 1
+        built[n] = d
+        print(out.strip().splitlines()[-1] if out.strip() else "", flush=True)
+        olds = sorted((x.name for x in store.list() if x.name.rpartition(".v")[0] == n),
+                      key=lambda x: int(x.rpartition(".v")[2]))
+        for old in olds[:-max(1, args.keep)]:
+            try:
+                store.remove(old)
+            except L.LayerError:
+                pass  # a newer layer stands on it
+    for db in stores:
+        try:
+            msg = Workspace(Handbook(str(db))).refresh_dev()
+            if msg:
+                print(f"{db.stem}: {msg}")
+        except HandbookError as e:
+            print(f"{db.stem}: dev policy not moved: {e}", file=sys.stderr)
+    shutil.rmtree(root / "hostetc", ignore_errors=True)  # prepared again on the next build
+    return 0
+
+
+def _cap(args: argparse.Namespace, hb: Handbook) -> int:
+    """Capability records from the server's terminal, as the user."""
+
+    from . import cap_api
+
+    cap_api.configure(lambda: hb, threading.RLock())
+    cap_api._spaces.clear()
+    ws = cap_api.W()
+    caps = ws.caps
+    try:
+        spec = json.loads(args.spec) if args.spec else None
+        body = Path(args.body_file).read_text() if args.body_file else None
+        a = args.action
+        if a in ("kinds", "list"):
+            print(cap_api.cap(a, kind=args.kind))
+        elif a == "show":
+            print(cap_api._show(ws, args.kind, args.name))
+        elif a == "history":
+            print(cap_api.cap("history", kind=args.kind, name=args.name))
+        elif a == "approve":
+            print(caps.approve(args.kind, args.name, args.version, actor="user"))
+        elif a == "reject":
+            print(caps.reject(args.kind, args.name, args.version, actor="user"))
+        elif a == "review":
+            print(cap_api.cap("review", kind=args.kind or "policy", name=args.name))
+        elif a == "add":
+            print(caps.add(args.kind, args.name, spec=spec, body=body, actor="user")[1])
+        elif a == "update":
+            print(caps.update(args.kind, args.name, spec=spec, body=body, actor="user")[1])
+        elif a == "remove":
+            print(caps.remove(args.kind, args.name, actor="user", why=args.why))
+        elif a == "restore":
+            print(caps.restore(args.kind, args.name, actor="user", version=args.version or None)[1])
+    except (HandbookError, json.JSONDecodeError, OSError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def _runner(args: argparse.Namespace) -> int:
+    """Run sandbox jobs. With --data-dir, every user's store (users/<uid>.db) that has a queued job
+    (a marker in users/<uid>.db.sandbox/queue/) is opened and its jobs started."""
+    import signal
+    import time
+
+    from .agents.workspace import Runner, Workspace
+
+    runners: dict[str, Runner] = {}
+
+    def runner_for(db: str) -> Runner:
+        r = runners.get(db)
+        if r is None:
+            r = runners[db] = Runner(Workspace(Handbook(db)), workers=args.workers)
+        return r
+
+    def stores() -> list[str]:
+        if args.data_dir:
+            root = Path(args.data_dir) / "users"
+            out = {str(m.parent.parent)[: -len(".sandbox")] for m in root.glob("*.db.sandbox/queue/*")}
+            return sorted(out | set(runners))
+        return [args.db or str(default_db_path())]
+
+    stop = {"now": False}
+    signal.signal(signal.SIGTERM, lambda *_: stop.update(now=True))
+    log = logging.getLogger("refhandbook.runner")
+    while not stop["now"]:
+        for db in stores():
+            try:  # one store's trouble (a busy file, a bad row) never stops the others
+                r = runner_for(db)
+                r.reap_lost()
+                r.poll()
+                with r.lock:  # the capability records' TTL reviews of this store
+                    if r.ws.caps.due():
+                        r.ws.caps.sweep()
+            except Exception:  # noqa: BLE001
+                log.exception("runner: %s", db)
+        if args.once:
+            break
+        time.sleep(0.5)
+    for r in runners.values():
+        r.close()
+    return 0
 
 
 if __name__ == "__main__":

@@ -28,15 +28,26 @@ device.
 
 The map `M` is free text, replaced whole with `research_set(id="M")`.
 
-**dep.** A `dep` cell holds tokens of the form `[rel:]ID`. `rel` is one of:
-- `req` (the default);
-- `der`;
-- `sup`, which is evidence, not proof;
-- `eq`;
-- `iso`, which needs the map;
-- `spec`, a special case;
-- `int`, which needs the map;
-- `con`, contradicts.
+**dep.** A `dep` cell holds tokens of the form `[rel:]ID`. Each `rel` is either a
+**basis** (the row rests on the target) or a **link** (it relates to the target
+without resting on it):
+
+| class | rel | meaning |
+|---|---|---|
+| basis | `req` (the default) | requires |
+| basis | `der` | derived from |
+| basis | `eq` | equivalent to |
+| basis | `iso` | isomorphic to; needs the map |
+| basis | `spec` | a special case of |
+| basis | `int` | interprets; needs the map |
+| link | `sup` | supports: evidence, not proof |
+| link | `con` | contradicts |
+| link | `ref` | refers to, without resting on it |
+
+Basis checks (a stale, replaced, model-origin or pointer-only target) and
+propagation (PENDING) follow basis edges only. Record a relation honestly as a
+link instead of deleting it to pass a gate. A relation the device does not know
+counts as a basis.
 
 A claim's premises come from its configuration, not from `dep`. A true verdict
 that rests on an external result `T` needs that `T` in the configuration.
@@ -65,24 +76,26 @@ that rests on an external result `T` needs that `T` in the configuration.
 
 | tool | purpose |
 |---|---|
-| `research_ledgers` | list · init · status · export (`include_log`) · import (`to`, `dry_run`) · copy · rename |
+| `research_ledgers` | list · init · status · export (`include_log`) · import (`to`, `dry_run`, `ref`) · copy · rename |
 | `research_ledger_delete` | delete a ledger permanently (`confirm` repeats its id) |
-| `research_begin` | open a turn: TOKEN, ledger view (`recent` · `brief` · `full`), OBLIGATIONS |
+| `research_begin` | open a session (`role` chat · agent): SESSION token, ledger view (`recent` · `brief` · `full`), OBLIGATIONS |
 | `research_show` | read the ledger (`open_only`, `ids`, `recent`) |
 | `research_add` | add a row |
 | `research_set` | replace one cell, or the map `M` |
 | `research_dispose` | VALID · RECHECK · INVALID · UNAFFECTED for a PENDING hit |
-| `research_carry` | keep a `U` open past this turn, with a reason |
+| `research_carry` | keep a `U` open past this session, with a reason |
 | `research_push` | push a plan object |
 | `research_next` | take the next plan object and print its card |
 | `research_done` | finish a plan object through an exit |
 | `research_drop` | drop a plan object, with a reason |
 | `research_explore` | config · verdict · matrix |
-| `research_doc` | register · plan · sync · check |
+| `research_doc` | register · plan · sync · check (`text`, or `ref` for a staged blob) |
+| `research_blob` | put · append · info: send a long text once (in pieces if needed), then pass its `ref` |
+| `research_review` | record a review of the rules (`why`); rule changes are rule records, `cap(kind="rule")`, tried as warnings until the user adopts them (card RV) |
 | `research_check` | consistency check, or the `closure` of ids |
-| `research_end` | close the turn: RECEIPT, ledger, Δ, NEXT |
+| `research_end` | close the session: RECEIPT, changed rows, Δ |
 
-Every write needs the newest TOKEN. A REFUSED names what to resolve (card X7).
+Every write names its session. A REFUSED or CONFLICT names what to resolve (card X7).
 
 **Checks to know when porting a ledger.**
 - `check` judges the basis of `proposed` rows as well as settled ones: a

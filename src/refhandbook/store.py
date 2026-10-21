@@ -16,6 +16,8 @@ import os
 import re
 import sqlite3
 from collections import deque
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -125,9 +127,15 @@ class Handbook:
         self.path = str(path) if path is not None else str(default_db_path())
         if self.path != ":memory:":
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
-        self.db = sqlite3.connect(self.path, check_same_thread=False)
+        self._hooks: list[Callable[[], None]] = []
+        self._quiet = 0
+        self.db = sqlite3.connect(self.path, check_same_thread=False, timeout=30)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA foreign_keys = ON")
+        if self.path != ":memory:":  # the server and the runner share the file: readers never block a writer
+            self.db.execute("PRAGMA journal_mode = WAL")
+            self.db.execute("PRAGMA busy_timeout = 30000")
+            self.db.isolation_level = "IMMEDIATE"  # `with db:` takes the write lock first (see Graph.transaction)
         self.db.executescript(SCHEMA)
         with self.db:
             self.db.executemany(
@@ -136,6 +144,44 @@ class Handbook:
 
     def close(self) -> None:
         self.db.close()
+
+    # ── change notification: a mirror (the kernel graph) follows the cards ──
+
+    def on_change(self, fn: "Callable[[], None]") -> None:
+        self._hooks.append(fn)
+
+    @contextmanager
+    def _tx(self) -> Iterator[None]:
+        """A write unit: its own transaction, or a savepoint inside a caller's (a capability record
+        writing a card commits or rolls back with the record)."""
+        if not self.db.in_transaction:
+            with self.db:
+                yield
+            return
+        name = f"hb_{id(self) & 0xffff:x}_{os.getpid()}"
+        self.db.execute(f"SAVEPOINT {name}")
+        try:
+            yield
+        except BaseException:
+            self.db.execute(f"ROLLBACK TO {name}")
+            self.db.execute(f"RELEASE {name}")
+            raise
+        self.db.execute(f"RELEASE {name}")
+
+    def changed(self) -> None:
+        if not self._quiet:
+            for fn in self._hooks:
+                fn()
+
+    @contextmanager
+    def quiet(self) -> "Iterator[None]":
+        """Batch many writes into one change notification, sent at the end."""
+        self._quiet += 1
+        try:
+            yield
+        finally:
+            self._quiet -= 1
+        self.changed()
 
     # ── entries ──────────────────────────────────────────────────────────
 
@@ -169,7 +215,7 @@ class Handbook:
             id = slugify(id)
         clean_items = None if items is None else [_clean_item(i, n) for n, i in enumerate(items, 1)]
 
-        with self.db:
+        with self._tx():
             row = self.db.execute("SELECT * FROM entries WHERE id = ?", (id,)).fetchone()
             if row is None:
                 if not title:
@@ -211,6 +257,7 @@ class Handbook:
                     ],
                 )
             self._reindex(id)
+        self.changed()
         return self.get_entry(id)
 
     def _reindex(self, entry_id: str) -> None:
@@ -255,9 +302,10 @@ class Handbook:
 
     def delete_entry(self, entry_id: str) -> None:
         self._require(entry_id)
-        with self.db:
+        with self._tx():
             self.db.execute("DELETE FROM entries WHERE id = ?", (entry_id,))
             self.db.execute("DELETE FROM search WHERE entry_id = ?", (entry_id,))
+        self.changed()
 
     # ── finding the right entry ──────────────────────────────────────────
 
@@ -274,7 +322,8 @@ class Handbook:
             f"SELECT e.id, e.kind, e.title, e.condition, e.objective,"
             f"       bm25(search, {SEARCH_WEIGHTS}) AS score,"
             f"       (SELECT group_concat(src, ', ') FROM relations"
-            f"         WHERE type = 'supersedes' AND dst = e.id) AS superseded_by"
+            f"         WHERE type = 'supersedes' AND dst = e.id) AS superseded_by,"
+            f"       (SELECT group_concat(tag, ' ') FROM tags WHERE entry_id = e.id AND tag LIKE 'device:%') AS device"
             f"  FROM search JOIN entries e ON e.id = search.entry_id"
             f" WHERE search MATCH ?{where}"
             # A superseded entry is still findable, but never ahead of a current one.
@@ -310,12 +359,13 @@ class Handbook:
                 raise HandbookError(f"{name!r}/{inverse!r} collides with existing type {row['name']!r}/{row['inverse']!r}")
         if name == STEP_LINK:
             raise HandbookError(f"{STEP_LINK!r} is built in")
-        with self.db:
+        with self._tx():
             self.db.execute(
                 "INSERT INTO relation_types VALUES (?, ?, ?)"
                 " ON CONFLICT(name) DO UPDATE SET inverse = excluded.inverse, description = excluded.description",
                 (name, inverse, description),
             )
+        self.changed()
         return {"name": name, "inverse": inverse, "description": description}
 
     def _orient(self, src: str, type: str, dst: str) -> tuple[str, str, str]:
@@ -336,22 +386,24 @@ class Handbook:
         if src == dst:
             raise HandbookError("an entry cannot be related to itself")
         edge = self._orient(src, type, dst)
-        with self.db:
+        with self._tx():
             self.db.execute(
                 "INSERT INTO relations VALUES (?, ?, ?, ?)"
                 " ON CONFLICT(src, type, dst) DO UPDATE SET note = excluded.note",
                 (*edge, note),
             )
+        self.changed()
         return edge
 
     def unrelate(self, src: str, type: str, dst: str) -> bool:
         s, t, d = self._orient(src, type, dst)
-        with self.db:
+        with self._tx():
             cur = self.db.execute(
                 "DELETE FROM relations WHERE type = ? AND ((src = ? AND dst = ?)"
                 " OR (src = ? AND dst = ? AND type IN (SELECT name FROM relation_types WHERE name = inverse)))",
                 (t, s, d, d, s),
             )
+        self.changed()
         return cur.rowcount > 0
 
     def neighbors(self, entry_id: str) -> list[dict[str, Any]]:
@@ -454,6 +506,10 @@ class Handbook:
         }
 
     def load(self, data: dict[str, Any]) -> int:
+        with self.quiet():
+            return self._load(data)
+
+    def _load(self, data: dict[str, Any]) -> int:
         for rt in data.get("relation_types", []):
             if not self.db.execute("SELECT 1 FROM relation_types WHERE name = ?", (rt["name"],)).fetchone():
                 self.define_relation_type(rt["name"], rt.get("inverse"), rt.get("description", ""))

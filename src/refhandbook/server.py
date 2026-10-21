@@ -12,7 +12,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
-from . import render, research_api
+from . import cap_api, render, research_api
 from .store import Handbook, HandbookError
 
 INSTRUCTIONS = """\
@@ -23,9 +23,16 @@ and follow it in order: memory items first, then the numbered steps, taking GO T
 step's IF holds. Stop at END. Keep deferred items in mind until their moment arrives.
 Cards are linked: RELATED lists what to open next (escalates_to, requires, see_also, ...).
 When you solve a problem no card covers, record it with `save_entry` and link it with `relate`.
-Research work runs as a ledgered turn loop over the research cards (rs-*): start every turn with
-`research_begin`, work the plan objects with `research_next` / `research_push` / `research_done`, and
-close with `research_end`; its last line (NEXT) is the first action of the next turn."""
+Research work runs as a ledgered session loop over the research cards (rs-*): every user message
+opens a session with `research_begin` (its first line is the SESSION token every later call names),
+works the plan objects with `research_next` / `research_push` / `research_done`, and closes with
+`research_end` before the reply. Sessions run side by side (another conversation, an agent with
+role="agent"); a CONFLICT names objects to re-read, nothing else is shared.
+Computation runs in the user's sandbox with `cap` (scripts, policies, layers, egress, rules, cards:
+versioned records you keep current), `run`, `job` and `files`: open_entry("rs-ref-sandbox") says how,
+including how packages and the network are reached. The cards are current; a skill may be older.
+A tool result that begins DEPRECATED names its replacement: switch now. Never ask the user to
+approve a run."""
 
 def _version() -> str:
     from .manifest import project_version
@@ -41,7 +48,7 @@ DELETE = ToolAnnotations(read_only_hint=False, destructive_hint=True, idempotent
 LEDGER_WRITE = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=False)
 
 # mcp 2 runs sync tools on worker threads. A store is one SQLite connection, and a ledger write
-# reads the token, checks it, then writes: so tool calls run one at a time.
+# checks its session's claims, then writes: so tool calls run one at a time.
 _CALLS = threading.RLock()
 
 
@@ -232,6 +239,11 @@ def audit() -> str:
 
 for _fn in research_api.READ_TOOLS:
     tool(READ)(_fn)
+for _fn in cap_api.WRITE_TOOLS + cap_api.DEPRECATED:
+    tool(LEDGER_WRITE)(_fn)
+
+
+cap_api.configure(handbook, _CALLS)
 for _fn in research_api.WRITE_TOOLS:
     tool(LEDGER_WRITE)(_fn)
 for _fn in research_api.DELETE_TOOLS:

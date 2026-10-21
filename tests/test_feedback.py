@@ -11,7 +11,7 @@ import pytest
 from refhandbook import Handbook, research
 from refhandbook.research import Research, ResearchError
 
-from test_research import Turn, tok
+from test_research import Turn
 
 
 @pytest.fixture
@@ -61,18 +61,19 @@ def test_rename_copy_delete(rs):
             for t in Research.CHILD_TABLES}
     assert set(left.values()) == {0}
     # the original is untouched and still gated: a new turn opens on it
-    assert rs.begin("geo", 2).startswith("TOKEN")
+    assert rs.begin("geo").startswith("SESSION S2-")
     with pytest.raises(ResearchError, match="exists"):
         rs.rename("geo", "geo")
 
 
-def test_rename_keeps_an_open_turn_usable(rs):
+def test_rename_keeps_an_open_session_usable(rs):
     t = Turn(rs)
     t.begin(1)
     t.add("U", "q", "user", "active")
     msg = rs.rename("geo", "geo2")
-    assert "research_begin(ledger='geo2', turn=1)" in msg
+    assert "open sessions keep their tokens" in msg
     t2 = Turn(rs, "geo2")
+    t2.T = t.T  # the same token, on the new name
     t2.begin(1)
     t2.push("await", "USER", "U1")
     t2.set("U1", "status", "answered")
@@ -150,15 +151,14 @@ def test_begin_views_and_end_prints_only_changed_rows(rs):
         close_turn(t, n, f"msg {n}")
     t.begin(6)
     t.add("E", "fresh object", "user", "established", evidence="computed")
-    out = rs.begin("geo", 6, view="recent", recent=2)
+    out = t.begin(6, view="recent", recent=2)
     assert "fresh object" in out and "old object 3" not in out and "VIEW recent" in out
-    assert "OBLIGATIONS THIS TURN" in out
-    brief = rs.begin("geo", 6, view="brief")
+    assert "OBLIGATIONS" in out
+    brief = t.begin(6, view="brief")
     assert "| id |" not in brief and "VIEW brief" in brief and "OBLIGATIONS" in brief
-    assert "old object 3" in rs.begin("geo", 6, view="full")
-    t.T = tok(rs.begin("geo", 6))
+    assert "old object 3" in t.begin(6, view="full")
     receipt = close_turn(t, 6, "msg 6")
-    assert receipt.startswith("RECEIPT") and "rows changed this turn" in receipt
+    assert receipt.startswith("RECEIPT") and "rows changed in this session" in receipt
     assert "old object 3" not in receipt and "msg 6" in receipt
     assert len(receipt) < len(rs.render("geo"))
 

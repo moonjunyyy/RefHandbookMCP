@@ -9,6 +9,11 @@ The handbook holds short cards for situations that have come up before. Each car
 situation it is for, says how to confirm you are in it, and lists what to do. Cards are linked
 to each other by typed relations, so one card leads to the next.
 
+This server's own tools are described by its cards, which are current even when this skill is
+not: `open_entry("rs-start")` for research, `open_entry("rs-ref-sandbox")` for computation (scripts,
+runs, packages, the network). A tool result that begins `DEPRECATED` names its replacement: switch
+now, and never call the old name again.
+
 ## Using a card
 
 1. **Look up by symptom, not by guess.** Call `lookup` with what you observed: the error text,
@@ -44,6 +49,9 @@ user before recording anything specific to their systems.
   before the step it concerns. Use `when` for a conditional step, and `goto` in place of copying
   another card's steps.
 - **Deferred items**: actions that belong to a later moment, each with a `when`.
+- **Tags**: a card that describes this device itself (its tools, rules, files) carries
+  `device:<version>`, the server version it was checked against. Opened on another version, the
+  card says so: verify it, then update the card and the tag.
 
 Then link it: `relate` it to the cards it escalates to, requires, or supersedes. If none of the
 existing relation types says what you mean, add one with `define_relation_type`. Run `audit`

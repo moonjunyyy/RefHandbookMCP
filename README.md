@@ -11,9 +11,9 @@ cross-references) with a relational store that changes at runtime.
 
 The same store also carries the **research cards** (`rs-*`) and the **research ledger**: the run
 state of a research conversation (directives, premises, claims and their verdicts per
-assumption configuration, plan objects, documents). The `research` skill drives a turn loop over
-them, so a turn continues from stored state instead of from the model's memory, and so does the
-next session.
+assumption configuration, plan objects, documents). The `research` skill drives a session loop over
+them (one session per message, or per delegated agent run), so each continues from stored state
+instead of from the model's memory, and several can work on one ledger side by side.
 
 Status: prototype.
 
@@ -108,7 +108,9 @@ search                                (FTS5: title, triggers, condition, body)
 | `relate`, `unrelate` | Typed edges between cards |
 | `define_relation_type`, `relation_types` | The relation vocabulary |
 | `audit` | CAP 676 assessment checks over the whole handbook |
-| `research_*` | The research ledger: turns, rows, plan objects, configurations and verdicts, documents (16 tools; card `rs-ref-ledger`) |
+| `research_*` | The research ledger: sessions, rows, plan objects, configurations and verdicts, documents (16 tools; card `rs-ref-ledger`) |
+| `cap` | Capability records of every kind (script, policy, layer, alias, rule, card): versioned, owned, reviewed on a TTL, deprecated and retired; a widening grant waits for the user (docs/kernel.md "Capabilities") |
+| `run`, `job`, `files` | Run a script in the user's sandbox as a background job, read jobs, and keep files in the workspace. No network of its own: a policy's egress profiles (pypi, npm, crates, github, …) reach out through the egress supervisor, HTTPS only, to those hosts only; the server's layers bring Python, Node and Rust (`refhandbook layers build`) |
 
 Read tools are annotated `readOnlyHint`, and deletes `destructiveHint`, so a client can ask for
 confirmation on the right ones. Tools return the rendered card as text, since the reader is a
@@ -150,11 +152,13 @@ agree.
 
 | Mechanism | What it enforces |
 | :- | :- |
-| Turn protocol: `research_begin` → token on every write → `research_end` | A write proves the caller read the current state. `research_end` refuses while any of these remain: a pending hit, a running plan object, no continuation, an unaddressed directive, an unsynced document plan, or a check error. |
-| Plan objects (K) | Every card exit returns objects. `research_done` refuses an exit that pushed nothing. One K waits for the user across turns: a push to page USER re-arms it, so a one-word turn adds no K. |
-| Volume | `research_begin` shows the rows changed in the last 3 turns and every live row (`view=recent`; `brief` and `full` too), and `research_end` prints only the rows the turn changed. `research_show(ids=…)` reads the rest. |
+| Session protocol: `research_begin` → its token on every call → `research_end` | Sessions (kernel `k_sessions`) run side by side: a write is refused with CONFLICT only when it changes an object another session changed concurrently (still open, or after this one opened) and this one has not read since (`k_writes` / `k_seen`, per object); what a view shows counts as read, nothing else. `research_end` refuses while what the session opened remains (a pending hit it raised, a K it runs, a plan it committed and has not synced) or a check error; a `chat` session also answers for the user's directives and the continuation, an `agent` session does not. A session is resumed only by its token, or by its `label` (the client's conversation id, which the prompt hook passes), never by another participant. |
+| Plan objects (K) | Every card exit returns objects. `research_done` refuses an exit that pushed nothing. One K waits for the user across sessions: a push to page USER re-arms it, so a one-word message adds no K. |
+| Volume | `research_begin` shows the rows changed in the last 3 sessions and every live row (`view=recent`; `brief` and `full` too), and `research_end` prints only the rows the session changed. `research_show(ids=…)` reads the rest. |
 | Configurations | `main` is the set of premises that are on, and only the user switches it. Named configurations switch premises on or off, swap alternatives, or add model premises, and the boundary report shows which single change flips a verdict. Model origin taints: nothing on the main line may rest on it. |
 | Propagation | Changing a row opens hits on everything that rests on it, verdict cells included. Switching a premise off reaches only the main line. Superseding or refuting a premise also reaches the exploration cells that contain it. |
+| Judge | The kernel's rules (`docs/kernel.md`) decide every check, obligation and end refusal; they are data, versioned with the package, and a user's change to one survives upgrades. |
+| Review | Every 7 sessions, or sooner when refusals, UNAFFECTED disposals, carries and drops gather, `research_begin` lists REVIEW (card `rs-rv`). `research_review` records it; rule changes are rule records (`cap kind=rule`), which run as warnings until the user approves them on the server. |
 | Documents | Each document has a role. `source` is the user's original: read-only and hash-checked. `deliverable` is for the reader: ids sit in hidden section markers, and a lint keeps ledger artefacts out of the prose. `working` is the model's own. A deliverable changes only through a committed change list: plan, then whole-section rewrites, then sync. Unplanned edits, appended corrections, and citations of replaced rows are refused. |
 
 The research tools are plain functions in `research_api.py`, with no import from `mcp`. The server
@@ -162,7 +166,8 @@ registers them, and `scripts/research.py` runs them through the CLI with JSON ar
 session with no connection to the server therefore runs the same code on a local database, and
 `research_ledgers` export and import move a ledger between the two. The CLI takes the arguments as
 JSON, `@FILE` or `-` (stdin), and an import's `data_file` names the export, so a large ledger never
-goes through argv. `export` takes `include_log=false`; `import` takes `to` (another name) and
+goes through argv. Through the tools, a long text goes once with `research_blob` (in pieces if
+needed) and is passed on as `ref`. `export` takes `include_log=false`; `import` takes `to` (another name) and
 `dry_run`; `copy` makes a sandbox copy, `rename` renames, and `research_ledger_delete` deletes with
 `confirm` set to the ledger id. `lookup` searches the ordinary cards unless `scope="research"` or
 `"all"`.
@@ -197,15 +202,17 @@ tool calls are serialized, and a refusal is raised as `ToolError` so its text re
 Two skills ship with the plugin:
 - `skills/handbook/SKILL.md` teaches the lookup, confirm, follow discipline and how to write a
   card;
-- `skills/research/SKILL.md` runs the research turn loop over the `rs-*` cards and the ledger.
+- `skills/research/SKILL.md` runs the research session loop over the `rs-*` cards and the ledger.
 
 Optional Claude Code hooks for the research loop are left unwired, because Cowork rarely uses
 hooks. They read a local store, so they only help with the local declaration. To use them, add
 these to `.claude/settings.json`:
 - `UserPromptSubmit`: `refhandbook research-hook prompt <ledger>`, which counts prompts and names
-  the first action of the turn;
-- `Stop`: `refhandbook research-hook stop <ledger>`, which exits 2 while a turn is open, or while
-  the latest prompt has no closed turn.
+  the first action of the reply;
+- `Stop`: `refhandbook research-hook stop <ledger>`, which exits 2 while this conversation's chat
+  session (by the label the prompt hook gave, from the hook payload's `session_id`) is still
+  open, or the latest prompt has no session; other conversations' sessions and agents' are not
+  the reply's.
 
 ### Remote server
 
@@ -225,7 +232,12 @@ It is its own OAuth authorization server, which is what Claude expects of a conn
    phase is `pam_permit`, since pam_unix's account check needs root; instead the name must
    resolve through NSS, and `RHB_REQUIRE_GROUP` limits sign-in to one POSIX group. With `RHB_AUTH=ldap` it binds to the
    directory as the user instead (`RHB_LDAP_GROUP_FILTER` for the group). An empty password is
-   refused, and so is any non-ASCII name.
+   refused, and so is any non-ASCII name. A password that must be changed first (expired, or an
+   admin's one-time password) is refused with a message saying so; the server never changes it.
+   Under PAM, the conversation gives the password only to "Password:" prompts and ends the sign-in
+   at a "New password:" prompt, which pam_krb5 shows inside authentication; with `defer_pwchange`
+   or pam_sss the expiry comes from the account phase, so add `pam_krb5.so`/`pam_sss.so` to the
+   `account` lines of `/etc/pam.d/refhandbook`.
 4. The server issues a one-time code, bound to the PKCE challenge (S256) and to this server as the
    resource, and `/token` exchanges it for an access token (1 h) and a refresh token. Tokens carry
    the uid as their subject; codes and tokens are stored hashed in `RHB_DATA_DIR/auth.db`.
@@ -265,6 +277,21 @@ server, use `deploy/nginx-behind-router.conf` instead. The proxy must pass serve
 from outside with `curl https://<domain>/.well-known/oauth-protected-resource/mcp`, and test a
 sign-in on the server with
 `sudo -u refhandbook /opt/refhandbook-venv/bin/refhandbook --env-file /etc/refhandbook/env check-login <uid>`.
+
+**Site sign-in (`RHB_AUTH=sso`).** Behind the site-wide sign-in of
+[ldap-portal](../ldap-portal) (`deploy/site/www.m00nny.kr.conf`), this server checks no passwords.
+nginx runs `/login` through `auth_request`; the sign-in service vouches for the user with
+`X-Auth-Token`, an EdDSA JWT for audience `refhandbook` valid for a minute, which this server
+verifies with `RHB_SSO_PUBLIC_KEY_FILE`. A signed-in user only sees "allow <client> as <uid>?";
+someone not signed in is sent to `RHB_LOGIN_URL`. Before the grant, and on every refresh, the
+account must still resolve through NSS (and be in `RHB_REQUIRE_GROUP`). A consent POST from another
+origin is refused. The OAuth endpoints Claude talks to are unchanged.
+
+**Accounts.** This server creates no accounts. With the account portal
+([ldap-portal](../ldap-portal)) served under `/account` on the same host (`PORTAL_ROOT_PATH=/account`;
+`deploy/nginx.conf` and `deploy/Caddyfile` carry the proxy block) and `RHB_ACCOUNT_URL=/account`, the
+sign-in page links to its account request form (사용 신청, approved by an admin, who gets a one-time
+password to pass on) and to its password-change page for one-time and expired passwords.
 
 **Connect.** In Claude, add the plugin (built with `plugin-json`) and press Connect on its
 Connectors tab, or add `https://<domain>/mcp` as a custom connector. Claude Code connects through

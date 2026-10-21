@@ -1,13 +1,52 @@
 # PAGE REF-PROV — Provenance, relations, and approximations
 KIND: reference
 TAGS: research, reference
-TRIGGERS: origin; entailed; model origin; relation type; approximation; proxy
-OBJECTIVE: Rules for classifying an item's origin, typing relations, and telling approximation from added information.
+TRIGGERS: origin; entailed; model origin; use table; evidence; computed; sourced; unverified; relation type; approximation; proxy
+OBJECTIVE: The core rules (origin, use, evidence) and how to classify origins, type relations, and tell approximation from added information.
 
 Consulted from a card step; return to that step. Not a procedure: it consumes no K.
 
-Origins and the use table are in the research skill (§4). This card holds the
+The core rules every basis tag uses (origin, the use table, evidence), then the
 rules for classifying items, typing relations, and exploring premises.
+
+
+**Origin** of an item:
+
+- **user**: the user's words, or the same content restated in symbols with
+  no structure added (the minimal reading);
+- **entailed(<step>)**: follows from user items by a cited step, including
+  premises presupposed by a definition the user gave;
+- **model**: everything else, such as a larger reading, an added premise, a
+  frame, an intermediate object, or a special case.
+
+A model item stays out of the main line until the user adopts it. It may be
+used inside named exploration configurations meanwhile, and anything built on
+it is `model` too. On adoption, set its origin to `user(adopted, session N)`.
+Content cells hold only the user's words for user items; notes go in the
+evidence cell.
+
+| item | may be used as |
+|---|---|
+| origin `model`; status `proposed` | inside exploration configurations and model rows only; never on the main line |
+| status `off`, `superseded`, `refuted`, `stale`, `false`, `history` | nothing on the main line (`off` premises may still be members of an exploration configuration) |
+| status `question` | nothing (a question is not a premise) |
+| `Z` isolated unknown | a symbol or gauge only; never a value, coordinate, or reference location |
+| an object marked `proxy(X)` | its own properties; a property of X needs a row showing it transfers |
+| evidence `[unverified]` | a premise whose conclusion is at most `[unverified]` |
+| evidence `pointer:` (memory lines, other projects) | a search seed for RF only; never a premise |
+
+**Evidence** (what the work actually earned):
+
+| evidence | earned by |
+|---|---|
+| `computed` | executed symbolic or exact check, result visible |
+| `measured` | executed run with recorded configuration; corroborates, does not prove |
+| `sourced: <locator>` | original opened and read this session; the locator is `chat:<uuid>`, `file:<path>`, or a URL |
+| `followed` | each step reproduced |
+| `[unverified]` | recall, plausibility, summaries, anything else |
+| `restored` | copied verbatim from an earlier printed ledger |
+| `pointer: <where>` | a memory line or summary that says where to look; not evidence |
+| `not found: <calls>` | failed search or reading |
 
 **Classifying an item's origin is itself a claim.** Compare the item with the
 user's words before labeling it.
@@ -20,14 +59,19 @@ user's words before labeling it.
 
 A model item stays out of the main line until the user adopts it; it may be
 explored in a named configuration meanwhile. On adoption, `set` its
-origin to `user(adopted, turn N)`. Content cells hold only the user's words for
+origin to `user(adopted, session N)`. Content cells hold only the user's words for
 user items; notes go in the evidence cell.
 
 **Relations** (typed `dep` edges; syntax in REF-LEDGER). Record the exact relation. Never
 infer one relation from surface similarity.
 
+- A relation is a basis (the row rests on its target) or a link (it relates to
+  it): the table is in REF-LEDGER. Choose by what the row does with the target,
+  not by what makes a gate pass.
 - `sup` (supports) is evidence, not proof. A claim becomes `true` only through
-  `req` or `der` edges under explicit assumptions.
+  basis edges (`req`, `der`, …) under explicit assumptions.
+- `ref` points to a row the claim is about, or compares with, without resting
+  on it.
 - `iso` and `int` need the explicit map, written in the evidence cell.
 - `spec` marks a special case. A result on a `spec` row does not transfer to the
   general row.

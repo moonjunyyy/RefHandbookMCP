@@ -148,7 +148,7 @@ def test_full_flow_and_per_user_isolation(client, cfg):
     names = {t["name"] for t in tools}
     assert {"lookup", "open_entry", "research_begin", "research_end", "research_doc"} <= names
 
-    refused = call(client, t_moon["access_token"], s1, "research_end", {"ledger": "none", "turn": 1, "token": "x"}, rid=7)
+    refused = call(client, t_moon["access_token"], s1, "research_end", {"ledger": "none", "session": "x"}, rid=7)
     assert refused["isError"] and "no ledger 'none'" in refused["content"][0]["text"]  # the reason survives mcp 2
     out = call(client, t_moon["access_token"], s1, "research_ledgers",
                {"action": "init", "ledger": "gauss", "question": "Gaussian on the t-measure"})
@@ -161,7 +161,7 @@ def test_full_flow_and_per_user_isolation(client, cfg):
     assert "gauss" not in other["content"][0]["text"]
     # the research cards are in every user's store
     card = call(client, t_kim["access_token"], s2, "open_entry", {"id": "rs-n1"}, rid=5)
-    assert "Turn loop" in card["content"][0]["text"]
+    assert "Session loop" in card["content"][0]["text"]
     assert (cfg.data_dir / "users" / "moon.db").exists() and (cfg.data_dir / "users" / "kim.db").exists()
 
 
@@ -688,3 +688,277 @@ def test_enter_submits_login_not_cancel(client):
     req = start(client, cid, challenge)
     r = client.post("/login", data={"req": req, "username": "moon", "password": "pw-moon"}, follow_redirects=False)
     assert r.status_code == 400 and "access_denied" not in r.headers.get("location", "")
+
+
+# ── account portal links and passwords that must be changed first ────────
+
+
+class ChangeFirstDirectory(FakeDirectory):
+    """'otp-*' passwords are right but one-time: PAM asks for a new one."""
+
+    def authenticate(self, username, password):
+        if password.startswith("otp-"):
+            raise remote.PasswordChangeRequired(username)
+        return super().authenticate(username, password)
+
+
+@pytest.fixture
+def portal_client(tmp_path):
+    cfg = remote.Config(public_url=BASE, data_dir=tmp_path / "data", account_url="/account")
+    m = remote.build(cfg, ChangeFirstDirectory({"moon": "pw-moon"}))
+    try:
+        with TestClient(m.http_app(), base_url=BASE) as c:
+            c.provider = m.provider  # type: ignore[attr-defined]
+            yield c
+    finally:
+        server._user_store = None
+        research_api.use_resolver(None)
+
+
+def test_login_page_links_to_account_portal(portal_client, client):
+    cid = register(portal_client).json()["client_id"]
+    page = portal_client.get("/login", params={"req": start(portal_client, cid, pkce()[1])}).text
+    assert 'href="/account/request"' in page and 'href="/account/expired"' in page
+    cid = register(client).json()["client_id"]  # no RHB_ACCOUNT_URL: no links
+    assert "/request" not in client.get("/login", params={"req": start(client, cid, pkce()[1])}).text
+
+
+def test_password_change_required(portal_client):
+    cid = register(portal_client).json()["client_id"]
+    for _ in range(6):  # a right but one-time password is not a failure: no lockout
+        req = start(portal_client, cid, pkce()[1])
+        r = portal_client.post("/login", data={"req": req, "username": "moon", "password": "otp-1", "action": "allow"},
+                               follow_redirects=False)
+        assert r.status_code == 403 and "변경해야" in r.text and 'href="/account/expired"' in r.text
+    sign_in(portal_client)  # the real password still works
+
+
+def test_account_url_config(monkeypatch, tmp_path):
+    monkeypatch.setenv("RHB_PUBLIC_URL", BASE)
+    monkeypatch.setenv("RHB_DATA_DIR", str(tmp_path))
+    for ok, want in (("/account/", "/account"), ("https://portal.example.org", "https://portal.example.org")):
+        monkeypatch.setenv("RHB_ACCOUNT_URL", ok)
+        assert remote.Config.from_env().account_url == want
+    for bad in ("javascript:alert(1)", "//evil.example", "http://portal.example.org", "account"):
+        monkeypatch.setenv("RHB_ACCOUNT_URL", bad)
+        with pytest.raises(SystemExit):
+            remote.Config.from_env()
+
+
+def test_answer_prompt():
+    assert remote.answer_prompt(True, "Password: ") == "password"
+    assert remote.answer_prompt(True, "Password for moon/user@M00NNY.KR: ") == "password"
+    for prompt in ("Enter new password: ", "New password: ", "Retype new password: ", "Enter it again: ",
+                   "Current Password: (then) Repeat password"):
+        assert remote.answer_prompt(True, prompt) == "refuse"
+    assert remote.answer_prompt(False, "login: ") == "blank"
+
+
+def test_pam_authenticator_classifies(tmp_path):
+    import getpass
+
+    me = getpass.getuser()  # an account NSS knows; the PAM transaction itself is faked
+    results = {}
+
+    def fake(service, user, password):
+        return results[password]
+
+    a = remote.PamAuthenticator(remote.Config(public_url=BASE, data_dir=tmp_path), transaction=fake)
+    results.update({"ok": (0, ["Password: "], False), "bad": (7, ["Password: "], False),
+                    "asked": (12, ["Password: ", "You are required to change your password immediately (administrator enforced)"], False),
+                    "deferred": (12, ["Password: "], False), "said": (7, ["Password expired. You must change it now."], False),
+                    "refused": (19, ["Password: "], True), "down": (9, [], False)})
+    assert a.authenticate(me, "ok") == me
+    assert a.authenticate(me, "bad") is None
+    for pw in ("asked", "deferred", "said", "refused"):
+        with pytest.raises(remote.PasswordChangeRequired):
+            a.authenticate(me, pw)
+    with pytest.raises(remote.DirectoryUnavailable):
+        a.authenticate(me, "down")
+
+
+def test_pam_transaction_real_libpam():
+    """The ctypes conversation against the host's libpam: a wrong password for our own account
+    (an unknown service falls back to /etc/pam.d/other). The prompt is answered, nothing changes."""
+    import getpass
+    from pathlib import Path
+
+    if not Path("/etc/pam.d/other").exists():
+        pytest.skip("no PAM 'other' service")
+    code, messages, asked_new = remote.pam_transaction("refhandbook-no-such-service", getpass.getuser(),
+                                                       "not-the-password-" + secrets.token_hex(4))
+    assert code != 0 and not asked_new
+    assert messages  # the conversation was called
+
+
+def test_pam_expired_password(pam_account, tmp_path):
+    """pam_unix reports an expired password from the account phase (chage -d 0)."""
+    import subprocess
+
+    user, group, service = pam_account
+    subprocess.run(["chage", "-d", "0", user], check=True)
+    a = remote.PamAuthenticator(remote.Config(public_url=BASE, data_dir=tmp_path, pam_service=service))
+    with pytest.raises(remote.PasswordChangeRequired):
+        a.authenticate(user, "s3cret-Pw")
+    assert a.authenticate(user, "wrong") is None
+
+
+# ── RHB_AUTH=sso: the site sign-in vouches for the user ─────────────────
+
+
+class Accounts:
+    def __init__(self, allowed):
+        self.allowed = allowed
+
+    def authenticate(self, username, password):
+        return None
+
+    def exists(self, uid):
+        return uid in self.allowed
+
+
+@pytest.fixture
+def sso(tmp_path):
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    key = Ed25519PrivateKey.generate()
+    cfg = remote.Config(public_url=BASE, data_dir=tmp_path / "data", auth="sso", sso_issuer="https://www.m00nny.kr")
+    m = remote.build(cfg, Accounts({"moon"}), remote.SsoTokens(cfg, key.public_key()))
+    try:
+        with TestClient(m.http_app(), base_url=BASE) as c:
+            yield c, key
+    finally:
+        server._user_store = None
+        research_api.use_resolver(None)
+
+
+def sso_token(key, uid="moon", aud="refhandbook", ttl=60):
+    import time
+
+    import jwt
+
+    now = int(time.time())
+    return jwt.encode({"iss": "https://www.m00nny.kr", "aud": aud, "sub": uid, "iat": now, "exp": now + ttl},
+                      key, algorithm="EdDSA")
+
+
+def test_sso_consent_flow(sso):
+    c, key = sso
+    cid = register(c).json()["client_id"]
+    verifier, challenge = pkce()
+    req = start(c, cid, challenge)
+    r = c.get("/login", params={"req": req}, follow_redirects=False)  # not signed in to the site
+    assert r.status_code == 303 and r.headers["location"] == f"/auth/login?next=/login?req={req}"
+    tok = {"X-Auth-Token": sso_token(key)}
+    page = c.get("/login", params={"req": req}, headers=tok).text
+    assert "<b>moon</b>" in page and 'name="password"' not in page and "허용" in page
+    assert f"/auth/login?switch=1&amp;next=/login?req={req}" in page
+    # a POST from another site is refused even with a valid token
+    r = c.post("/login", data={"req": req, "action": "allow"}, headers={**tok, "Origin": "https://evil.example"},
+               follow_redirects=False)
+    assert r.status_code == 403
+    r = c.post("/login", data={"req": req, "action": "allow"}, headers={**tok, "Origin": BASE}, follow_redirects=False)
+    assert r.status_code == 303
+    q = parse_qs(urlparse(r.headers["location"]).query)
+    t = c.post("/token", data={"grant_type": "authorization_code", "code": q["code"][0], "redirect_uri": CALLBACK,
+                               "client_id": cid, "code_verifier": verifier, "resource": BASE + "/mcp"})
+    assert t.status_code == 200
+    sid = mcp_session(c, t.json()["access_token"])
+    assert sid
+
+
+def test_sso_refuses_bad_tokens_and_accounts(sso):
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    c, key = sso
+    cid = register(c).json()["client_id"]
+    req = start(c, cid, pkce()[1])
+    other = Ed25519PrivateKey.generate()
+    for bad in (sso_token(key, aud="account"), sso_token(other), sso_token(key, ttl=-60), "junk"):
+        r = c.post("/login", data={"req": req, "action": "allow"}, headers={"X-Auth-Token": bad,
+                   "X-Remote-User": "moon"}, follow_redirects=False)
+        assert r.status_code == 303 and r.headers["location"].startswith("/auth/login")
+    r = c.post("/login", data={"req": req, "action": "allow"}, headers={"X-Auth-Token": sso_token(key, uid="kim")},
+               follow_redirects=False)
+    assert r.status_code == 403 and "쓸 수 없습니다" in r.text  # signed in, but not allowed here
+    r = c.post("/login", data={"req": req, "action": "deny"}, follow_redirects=False)  # cancel needs no token
+    assert "error=access_denied" in r.headers["location"]
+
+
+# ── the approval page (/agents): the user's channel, behind the site sign-in ──
+
+
+def _csrf(page):
+    import re
+
+    return re.search(r"name=csrf value='([0-9a-f]+)'", page).group(1)
+
+
+def test_the_approval_page_needs_the_site_sign_in_and_an_allowed_account(sso):
+    c, key = sso
+    r = c.get("/agents", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/auth/login?next=/agents"
+    r = c.get("/agents", headers={"X-Auth-Token": sso_token(key, uid="kim")}, follow_redirects=False)
+    assert r.status_code == 303  # signed in, but not an account of this server
+    page = c.get("/agents", headers={"X-Auth-Token": sso_token(key)}).text
+    assert "<b>moon</b>" in page and "제안된 규칙 (0)" in page and "default" in page
+
+
+def test_a_proposal_is_approved_only_by_the_user_on_the_page(sso):
+    from refhandbook.kernel import proposals, runtime
+
+    c, key = sso
+    tok = {"X-Auth-Token": sso_token(key)}
+    g = runtime.attach(server._user_store("moon")).g
+    with g.tx():
+        g.define_rule("rv_page", "check", 'rv_page(R) :- rs_row(Self, X, R, "H").', actor="model",
+                      applies_to="ledger", message="{R}")
+    page = c.get("/agents", headers=tok).text
+    sha = proposals.approval_sha(g, "rv_page")[:12]
+    assert "rv_page" in page and f"승인 해시 {sha}" in page
+    form = {"rule": "rv_page", "seen": sha, "csrf": _csrf(page)}
+    r = c.post("/agents/approve", data={**form, "csrf": "0" * 64}, headers={**tok, "Origin": BASE}, follow_redirects=False)
+    assert r.status_code == 403
+    r = c.post("/agents/approve", data=form, headers={**tok, "Origin": "https://evil.example"}, follow_redirects=False)
+    assert r.status_code == 403
+    r = c.post("/agents/approve", data=form, headers=tok, follow_redirects=False)  # no Origin: refused
+    assert r.status_code == 403
+    r = c.post("/agents/approve", data=form, headers={**tok, "Origin": BASE}, follow_redirects=False)
+    assert r.status_code == 303 and "ok=" in r.headers["location"]
+    assert g.get_rule("rv_page")["authority"] == "sealed"
+
+
+def test_a_policy_is_granted_on_the_page(sso):
+    from refhandbook.agents.workspace import Workspace
+
+    c, key = sso
+    tok = {"X-Auth-Token": sso_token(key), "Origin": BASE}
+    page = c.get("/agents", headers=tok).text
+    r = c.post("/agents/policy", data={"name": "net", "commands": "sh cat", "network": "on", "timeout": "30",
+                                       "csrf": _csrf(page)}, headers=tok, follow_redirects=False)
+    assert r.status_code == 303 and "ok=" in r.headers["location"]
+    w = Workspace(server._user_store("moon"))
+    p = w.policy("net")
+    assert w.caps.get("policy", "net")["author"] == "user" and p["attrs"]["network"] is True and p["attrs"]["commands"] == ["sh", "cat"]
+    r = c.post("/agents/policy", data={"name": "bad", "commands": "no-such-tool-xyz", "csrf": _csrf(page)},
+               headers=tok, follow_redirects=False)
+    assert "err=" in r.headers["location"]
+
+
+def test_a_grant_the_model_asked_for_is_approved_on_the_page(sso):
+    from refhandbook.agents.workspace import Workspace
+
+    c, key = sso
+    tok = {"X-Auth-Token": sso_token(key), "Origin": BASE}
+    w = Workspace(server._user_store("moon"))
+    w.caps.add("policy", "wider", spec={"network": True, "commands": ["sh", "cat"]}, actor="model")
+    page = c.get("/agents", headers=tok).text
+    assert "승인 대기 중인 권한 (1)" in page and "policy wider" in page and "the network" in page
+    form = {"kind": "policy", "name": "wider", "version": "1", "csrf": _csrf(page)}
+    r = c.post("/agents/cap/approve", data=form, headers={**tok, "Origin": "https://evil.example"}, follow_redirects=False)
+    assert r.status_code == 403
+    r = c.post("/agents/cap/approve", data=form, headers=tok, follow_redirects=False)
+    assert r.status_code == 303 and "ok=" in r.headers["location"]
+    assert Workspace(server._user_store("moon")).policy("wider")["attrs"]["network"] is True
+    r = c.post("/agents/cap/approve", data=form, headers=tok, follow_redirects=False)  # nothing waits any more
+    assert "err=" in r.headers["location"]
