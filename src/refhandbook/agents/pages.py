@@ -313,6 +313,7 @@ def install(m: Any, *, stores: Callable[[str], Handbook], uid_of: Callable[[str]
     async def policy(request: Request) -> Response:
         def act(ws: Workspace, f: dict[str, str]) -> str:
             changes: dict[str, Any] = {"commands": f.get("commands", "").split(), "network": f.get("network") == "on",
+                                       "exec_work": f.get("exec_work") == "on",
                                        "description": f.get("description", ""),
                                        "layers": f.get("layers", "").split(), "mounts": _mounts(f.get("mounts", ""))}
             ports = f.get("ports", "").strip()
@@ -482,6 +483,7 @@ def _policy(name: str, a: dict[str, Any], p: dict[str, Any] | None, hidden: str,
                 f"<span class='tag {'warn' if a['network'] else ''}'>네트워크 {'켜짐' if a['network'] else '꺼짐'}"
                 f"{' · ' + _e(ports) if a['network'] else ''}</span>"
                 f"<span class='tag'>명령 {'전부' if '*' in a['commands'] else len(a['commands'])}</span>"
+                + ("<span class='tag warn'>빌드 실행</span>" if a.get("exec_work") else "") +
                 f"<span class='tag'>{_e(a.get('timeout', ''))}s · {_e(a.get('memory_mb', ''))} MB</span>"
                 + (f"<span class='muted small'>{_e(p['content'])}</span>" if p["content"] else ""))
         ident = f"<input type=hidden name=name value='{_e(name)}'>"
@@ -500,6 +502,9 @@ def _policy(name: str, a: dict[str, Any], p: dict[str, Any] | None, hidden: str,
             f"<textarea name=mounts rows=2>{_e(mounts)}</textarea></label></div>"
             f"<div class='cols'><label class='check'><input type=checkbox name=network {'checked' if a['network'] else ''}>"
             f" 네트워크 허용</label><label>포트 <input name=ports value='{_e(ports)}'></label></div>"
+            f"<label class='check'><input type=checkbox name=exec_work {'checked' if a.get('exec_work') else ''}>"
+            f" 빌드 결과 실행 허용 <span class='muted small'>/work·/tmp에서 만든 실행 파일(컴파일 결과, 빌드 도구)을 "
+            f"실행할 수 있게 합니다. 끄면 인터프리터로만 실행됩니다.</span></label>"
             f"<div class='fields'>{limits}</div>"
             f"<div class='actions'><button>저장</button></div></form></details>")
 

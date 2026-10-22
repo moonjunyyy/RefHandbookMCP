@@ -178,7 +178,8 @@ class Spec:
     # (st_dev, st_ino) each bind's source had when the caller checked it, by its path inside: a
     # source swapped (for a symlink, or another directory) between the check and the bind is refused.
     bind_ids: dict[str, list[int]] = field(default_factory=dict)
-    # /work without noexec: what the command builds there runs (a compiler's output). A grant.
+    # /work and the job's /tmp without noexec: what the command builds there runs (a compiler's output,
+    # a build's helper in $TMPDIR). A grant.
     work_exec: bool = False
     # Egress through the supervisor (agents/egress.py): with a port, loopback comes up and a relay
     # listens on 127.0.0.1:<port>, passing each connection to the unix socket /run/egress/sock (the
@@ -237,7 +238,7 @@ class Spec:
                 loaders.add(os.path.realpath(p))
         out = ["/usr/bin", *sorted(loaders), *layered]  # a layer the user stacked runs from its own tree
         if self.work_exec:
-            out.append("/work")
+            out += ["/work", "/tmp"]
         if self.upper is not None:  # a layer build installs tools that must run
             out += ["/" + p for p in self.overlay_points()]
         return out
@@ -697,7 +698,8 @@ def build_root(spec: Spec, commands: dict[str, str] | None = None) -> None:
     mount(_check_path(spec.work), f"{root}/work", None, MS_BIND)
     mount_setattr(f"{root}/work", MOUNT_ATTR_NOSUID | MOUNT_ATTR_NODEV | (0 if spec.work_exec else MOUNT_ATTR_NOEXEC),
                   recursive=False)
-    mount("tmpfs", f"{root}/tmp", "tmpfs", MS_NOSUID | MS_NODEV | MS_NOEXEC, f"mode=1777,size={spec.limits.tmp_mb}m")
+    mount("tmpfs", f"{root}/tmp", "tmpfs", MS_NOSUID | MS_NODEV | (0 if spec.work_exec else MS_NOEXEC),
+          f"mode=1777,size={spec.limits.tmp_mb}m")
     mount("tmpfs", f"{root}/run", "tmpfs", MS_NOSUID | MS_NODEV | MS_NOEXEC, "mode=0755,size=8m")
     for src, dst, rw in [(s, d, False) for s, d in spec.binds_ro] + [(s, d, True) for s, d in spec.binds_rw]:
         target = f"{root}/{dst.lstrip('/')}"

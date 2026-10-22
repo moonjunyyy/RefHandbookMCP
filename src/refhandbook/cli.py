@@ -60,6 +60,7 @@ def main(argv: list[str] | None = None) -> int:
     po.add_argument("--commands", help="space-separated commands the sandbox shows (replaces the list)")
     po.add_argument("--add", help="space-separated commands to add")
     po.add_argument("--network", choices=["on", "off"])
+    po.add_argument("--exec-work", choices=["on", "off"], help="what is built in /work and /tmp may run")
     for k in ("timeout", "memory_mb", "disk_mb", "tmp_mb", "concurrent"):
         po.add_argument(f"--{k.replace('_', '-')}", type=int)
     po.add_argument("--cpus", type=float)
@@ -253,6 +254,8 @@ def _policy(args: argparse.Namespace, hb: Handbook) -> int:
         changes["commands"] = list(changes.get("commands", current)) + args.add.split()
     if args.network:
         changes["network"] = args.network == "on"
+    if args.exec_work:
+        changes["exec_work"] = args.exec_work == "on"
     if args.ports:
         changes["ports"] = "any" if args.ports.strip() == "any" else [int(x) for x in args.ports.split()]
     if args.layers is not None:

@@ -524,6 +524,11 @@ def test_a_policy_is_granted_on_the_page(client):
     w = Workspace(server._user_store("moon"))
     p = w.policy("net")
     assert w.caps.get("policy", "net")["author"] == "user" and p["attrs"]["network"] is True and p["attrs"]["commands"] == ["sh", "cat"]
+    assert p["attrs"]["exec_work"] is False and "name=exec_work" in page
+    r = c.post("/agents/policy", data={"name": "net", "commands": "sh cat", "exec_work": "on", "csrf": _csrf(page)},
+               headers=tok, follow_redirects=False)
+    assert "ok=" in r.headers["location"] and w.policy("net")["attrs"]["exec_work"] is True
+    assert "빌드 실행" in c.get("/agents", headers=tok).text
     r = c.post("/agents/policy", data={"name": "bad", "commands": "no-such-tool-xyz", "csrf": _csrf(page)},
                headers=tok, follow_redirects=False)
     assert "err=" in r.headers["location"]

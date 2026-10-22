@@ -170,8 +170,30 @@ def _render(ws: Workspace, j: dict[str, Any], show: int = SHOW) -> str:
                 cut = f"\n… {len(text) - show} more characters: job(action='output', id='{j['id']}', " \
                       f"which='{which}', offset={show})" if len(text) > show else ""
                 out.append(f"--- {which} ({a.get(which + '_bytes', len(text))} bytes)\n{text[:show]}{cut}")
+        out += _hints(ws, j)
         return "\n".join(out)
     return head + f" — read it later with job(action='status', id='{j['id']}')"
+
+
+def _hints(ws: Workspace, j: dict[str, Any]) -> list[str]:
+    """What a refusal in the output means, when the policy is why: a program built in /work or /tmp
+    that may not run under a policy without exec_work."""
+    pol = j["attrs"].get("policy")
+    if not pol or "Permission denied" not in ws.output(j, "stderr"):
+        return []
+    try:
+        if ws.policy(pol)["attrs"].get("exec_work"):
+            return []
+    except WorkspaceError:
+        return []
+    own = ws.caps.find("policy", pol)
+    how = (f"propose it: cap(kind='policy', action='update', name='{pol}', spec={{..., 'exec_work': true}})"
+           if own is not None and own["author"] == "model" else
+           "propose a policy of your own with it: cap(kind='policy', action='add', name=<new name>, "
+           "spec={<this policy's spec>, 'exec_work': true}), or ask the user to turn it on for this one")
+    return [f"HINT: policy {pol!r} does not let what is built in /work or /tmp run (exec_work is off), so a "
+            f"compiled program or build helper there fails with 'Permission denied'. Run it through an interpreter, "
+            f"or {how}; the user approves it on the approval page."]
 
 
 def _wait(ws: Workspace, jid: str, wait: float) -> dict[str, Any]:
@@ -442,7 +464,8 @@ def policy_text(ws: Workspace, name: str = "") -> str:
                    f"{p['content']}\n  network {'yes' if a['network'] else 'no'}"
                    f"{' ports ' + _ports(a.get('ports')) if a['network'] else ''} · "
                    f"timeout {a['timeout']:g} s · memory {a['memory_mb']} MB · cpus {a['cpus']} · disk {a['disk_mb']} MB · "
-                   f"{a.get('concurrent', 2)} at once\n  commands: {' '.join(a['commands'])}"
+                   f"{a.get('concurrent', 2)} at once · built programs {'run' if a.get('exec_work') else 'do not run'}"
+                   f"\n  commands: {' '.join(a['commands'])}"
                    + (f"\n  layers: {' '.join(a['layers'])}" if a.get("layers") else "")
                    + "".join(f"\n  mount {m['source']} at {m['target']}{' (rw)' if m['rw'] else ''}"
                              for m in a.get("mounts") or []))

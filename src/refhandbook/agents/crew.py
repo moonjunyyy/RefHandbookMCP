@@ -675,12 +675,16 @@ class Crew:
                     self.ws.cancel(jid, actor="kernel")
                     end += 30
                 self.team.lease(ctx.aid, self.rid, LEASE)
+        from ..cap_api import _hints
+
         with self.lock:
             j = self.ws.job(jid)
             out, err = self.ws.output(j, "stdout"), self.ws.output(j, "stderr")
+            hints = _hints(self.ws, j)
         a = j["attrs"]
         head = f"{j['state']}" + (f", exit {a['exit']}" if "exit" in a else "") + (f": {a['error']}" if a.get("error") else "")
-        return (f"{head}\n--- stdout ---\n{_cut(out, SHOW // 2)}" + (f"\n--- stderr ---\n{_cut(err, SHOW // 3)}" if err else ""))
+        return (f"{head}\n--- stdout ---\n{_cut(out, SHOW // 2)}" + (f"\n--- stderr ---\n{_cut(err, SHOW // 3)}" if err else "")
+                + "".join("\n" + h for h in hints))
 
     def _t_read(self, ctx: Ctx, call: P.ToolCall, path: str, offset: int = 0, limit: int = 0) -> str:
         with self.lock:

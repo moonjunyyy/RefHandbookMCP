@@ -345,7 +345,7 @@ class PolicyKind(Kind):
     description = ("what a sandbox is: commands (a list, or ['*'] for all), egress (profiles it may reach through "
                    "the supervisor: pypi, npm, github, …), network (the host's, whole) and ports, limits (timeout, "
                    "memory_mb, cpus, tmp_mb, disk_mb, concurrent), layers (name@build; sys:name for the server's), "
-                   "mounts [{source, target, rw}], exec_work (what is built in /work may run)")
+                   "mounts [{source, target, rw}], exec_work (what is built in /work and /tmp may run)")
     ttl = 30 * DAY
 
     def in_force_default(self, reg: Registry) -> dict[str, Any] | None:
@@ -434,7 +434,7 @@ class PolicyKind(Kind):
         if new["network"] and not old.get("network"):
             why.append("the network")
         if new.get("exec_work") and not old.get("exec_work"):
-            why.append("running what is built in /work")
+            why.append("running what is built in /work and /tmp")
         reach = set(new.get("egress") or []) - set(old.get("egress") or [])
         if reach:
             why.append("egress " + " ".join(sorted(reach)))

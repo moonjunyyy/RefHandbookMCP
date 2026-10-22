@@ -169,8 +169,11 @@ One sandbox per user, shared by Chat sessions (the `cap`, `run`, `job`, `files` 
   programs load or run something else (`LD_*`, `BASH_ENV`, `PYTHONSTARTUP`, `NODE_OPTIONS`, proxies,
   certificate paths, …). An interpreter a layer keeps under `/opt` is linked into the command
   view, so it finds its own prefix.
-- **exec_work** — a policy grant: `/work` without noexec, so what is built there (a native
-  extension in a virtual environment, a cargo build) runs. A widening.
+- **exec_work** — a policy grant: `/work` and the job's own `/tmp` without noexec, so what is
+  built there (a native extension in a virtual environment, a cargo build, a build helper written
+  to `$TMPDIR`) runs. A widening: the user turns it on in the policy form on `/agents` (or
+  `refhandbook policy <name> --exec-work on`); the model proposes a policy of its own with it. A job
+  refused with "Permission denied" under a policy without it says so (a HINT line in its result).
 - **Script** — the model's to add, revise, deprecate and remove with no approval, because it can
   call only what its policy shows; `requires` names the commands it needs, checked at every write
   and review. A user's script cannot be overwritten by the model.
@@ -185,8 +188,8 @@ pivot_root onto a tmpfs root, Landlock, and seccomp: a deny-list of dangerous ca
 any syscall newer than its table. `tests/test_sandbox_escape.py` runs real sandboxes against each
 rule below.
 
-- **Nothing written runs as code**, except through an allowed interpreter: every writable mount is
-  noexec, `/dev` is read-only and noexec, and memfds are noexec (`vm.memfd_noexec=2` in the
+- **Nothing written runs as code**, except through an allowed interpreter (or under `exec_work`, in
+  `/work` and `/tmp`): every writable mount is noexec, `/dev` is read-only and noexec, and memfds are noexec (`vm.memfd_noexec=2` in the
   sandbox's pid namespace; where that cannot be set, `memfd_create` is refused).
 - **What runs is the view**: with a command list, Landlock grants execution only beneath `/usr/bin`
   (the view) and the dynamic loader. The loader can still map any readable ELF, so the view bounds

@@ -333,3 +333,21 @@ def test_removing_a_symlink_removes_the_link(ws, tmp_path):
     os.symlink(target, ws.work / "l")
     ws.remove("l")
     assert target.read_text() == "keep" and not (ws.work / "l").is_symlink()
+
+
+@needs_sandbox
+def test_what_a_build_makes_runs_only_under_exec_work_and_the_refusal_says_why(ws, monkeypatch):
+    monkeypatch.setenv("RHB_CGROUPS", "0")
+    body = ("cd /work; printf '#!/bin/sh\\necho ran-work\\n' > x; chmod +x x; ./x; "
+            "printf '#!/bin/sh\\necho ran-tmp\\n' > /tmp/y; chmod +x /tmp/y; /tmp/y\n")
+    ws.set_policy("build", actor="user", commands=["*"])
+    cap_api.cap("add", kind="script", name="b", spec={"policy": "build"}, body=body)
+    out = cap_api.run("b", wait=30)
+    assert "ran-work" not in out and "ran-tmp" not in out and "HINT: policy 'build'" in out
+    assert "./x: Permission denied" in out and "/tmp/y: Permission denied" in out
+    assert "action='add'" in out  # the user's policy: the model proposes one of its own
+    out = cap_api.cap("add", kind="policy", name="build-exec", spec={"commands": ["*"], "exec_work": True})
+    assert "PROPOSED" in out and "running what is built" in out  # the model asks; the user decides
+    ws.set_policy("build", actor="user", commands=["*"], exec_work=True)
+    out = cap_api.run("b", wait=30)
+    assert "ran-work" in out and "ran-tmp" in out and "HINT" not in out
