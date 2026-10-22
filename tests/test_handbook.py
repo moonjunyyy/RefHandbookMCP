@@ -148,3 +148,41 @@ def test_mcp_tools(hb, monkeypatch):
     )
     with pytest.raises(Exception, match="no entry with id"):
         asyncio.run(call("open_entry", id="nope"))
+
+
+def test_a_card_holds_one_topic():
+    """A procedure (one sequence of at most 10 steps), a set (one list or table) or an index; the
+    model's writes of anything more are refused with the parts, and opening one says split first."""
+    from refhandbook.store import decomposition
+
+    hb = Handbook(":memory:")
+    steps = [{"text": f"step {n}"} for n in range(11)]
+    with pytest.raises(HandbookError, match=r"holds more than one topic: 11 steps"):
+        hb.save_entry(title="Long", condition="c", items=steps, atomic=True)
+    assert not hb.exists("long")  # nothing written
+    sub = [{"kind": "note", "text": "Build"}, {"text": "a"}, {"kind": "note", "text": "Test"}, {"text": "b"}]
+    with pytest.raises(HandbookError, match="2 sub-procedures"):
+        hb.save_entry(title="Two", condition="c", items=sub, atomic=True)
+    with pytest.raises(HandbookError, match="reference material inside a procedure"):
+        hb.save_entry(title="Mixed", condition="c", body="| a | b |\n|---|---|\n| 1 | 2 |", items=[{"text": "x"}],
+                      atomic=True)
+    with pytest.raises(HandbookError, match="2 sets"):
+        hb.save_entry(title="Ref", kind="reference", condition="c", body="**One.** x\n\n**Two.** y", atomic=True)
+    hb.save_entry(title="Set", kind="reference", condition="c", body="**Codes.**\n\n| code | means |\n|---|---|\n| 1 | a |",
+                  atomic=True)  # one labeled table: one set
+    hb.save_entry(title="Seq", condition="c", items=steps[:10], atomic=True)
+    hb.save_entry(title="Legacy", condition="c", items=steps)  # the user's own channel is not refused …
+    assert any("holds more than one topic" in f["message"] for f in hb.audit() if f["entry"] == "legacy")  # … but audited
+    assert decomposition(hb.get_entry("seq")) == []
+
+
+def test_opening_a_compound_card_says_split_first(monkeypatch):
+    import asyncio
+
+    from refhandbook import server
+
+    hb = Handbook(":memory:")
+    monkeypatch.setattr(server, "_handbook", hb)
+    hb.save_entry(title="Legacy", condition="c", items=[{"text": f"s{n}"} for n in range(12)])
+    out = asyncio.run(server.mcp.call_tool("open_entry", {"id": "legacy"})).content[0].text
+    assert out.startswith("SPLIT BEFORE USE") and "rs-split" in out

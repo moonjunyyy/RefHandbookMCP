@@ -38,6 +38,12 @@ response you confirmed. Do not restart from memory.
 Write one after resolving a situation that no card covered and that is likely to recur. Ask the
 user before recording anything specific to their systems.
 
+**One card holds one topic.** A card is a procedure (one situation, one outcome, one sequence of at
+most 10 steps, branching only to other cards), a set (one list or one table), or an index (only the
+names of its parts). The server refuses a card that holds more, and says what the parts are; a
+card you open that holds more is marked SPLIT BEFORE USE: split it first (card `rs-split`), then
+follow the part that fits.
+
 - **Title**: the situation as it would be named by someone in it. "Rebase stops on a conflict",
   not "Git tips".
 - **Condition**: the observable state that confirms the card applies.
