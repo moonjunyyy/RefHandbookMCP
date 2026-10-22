@@ -28,6 +28,8 @@ HANDOFF_LEVELS = ("refs", "digest", "full")
 RETENTION_LEVELS = ("all", "verified", "exits", "purge")
 NOTE_KINDS = ("fact", "finding", "plan", "decision", "question", "digest", "artifact")
 AGENT_LIVE = ("ready", "running", "waiting")
+ROLES = ("lead", "worker", "verifier")
+EFFORTS = ("", "low", "medium", "high", "xhigh", "max")
 
 DEFAULT_GRANT: dict[str, Any] = {
     "max_agents": 4,  # slots: agents open at once
@@ -35,9 +37,12 @@ DEFAULT_GRANT: dict[str, Any] = {
     "max_depth": 3,
     "max_steps": 60,  # model turns per agent
     "max_tokens": 0,  # input + output tokens over the run; 0: only counted
-    "providers": [],  # [{"provider": "anthropic", "model": "...", "key": "<label>"}], first is the default
-    "layers": [],
-    "network": False,
+    # the routing policy: which key and model serve which roles, in order of preference. An agent
+    # starts on the first route for its role; on a refused key or a provider that keeps failing it
+    # moves to the next route for the role (docs/agents.md §6, "Routing").
+    "routes": [],  # [{"key": "anthropic/main", "model": "claude-opus-5-5", "roles": ["lead", "verifier"]}]
+    "policy": "default",  # the sandbox policy the agents' sh runs under
+    "effort": "",  # passed to providers that take one; "" leaves each provider's default
     "context": "trim",
     "handoff": "digest",
     "retention": "verified",
@@ -119,7 +124,15 @@ class Team:
             raise TeamError(f"{run} is {_attr(r, 'phase')}, not awaiting approval")
         cfg = {**DEFAULT_GRANT, **{k: v for k, v in grant.items() if k in DEFAULT_GRANT}}
         for k in ("max_agents", "max_spawns", "max_depth", "max_steps", "max_tokens", "disk_mb"):
-            cfg[k] = int(cfg[k])
+            try:
+                cfg[k] = int(cfg[k])
+            except (TypeError, ValueError) as e:
+                raise TeamError(f"{k}: a number") from e
+        if not 1 <= cfg["max_steps"] <= 1000 or cfg["max_tokens"] < 0:
+            raise TeamError("max_steps 1–1000; max_tokens 0 (no limit) or more")
+        if cfg["effort"] not in EFFORTS:
+            raise TeamError(f"effort: {'|'.join(e or '(default)' for e in EFFORTS)}")
+        cfg["routes"] = check_routes(cfg["routes"])
         if not (1 <= cfg["max_agents"] <= 64 and 1 <= cfg["max_spawns"] <= 1024 and 0 <= cfg["max_depth"] <= 16):
             raise TeamError("limits out of range: 1–64 agents at once, 1–1024 spawns, depth 0–16")
         if cfg["max_spawns"] < cfg["max_agents"]:
@@ -128,8 +141,6 @@ class Team:
                 or cfg["retention"] not in RETENTION_LEVELS:
             raise TeamError("pruning levels: context " + "|".join(CONTEXT_LEVELS) + ", handoff "
                             + "|".join(HANDOFF_LEVELS) + ", retention " + "|".join(RETENTION_LEVELS))
-        if not cfg["providers"]:
-            raise TeamError("a grant names at least one provider and model")
         g = f"{run}:grant"
         with self.g.tx():
             self.g.put_node(g, "grant", actor="user", attrs={**cfg, "run": run, "approved": _now()})
@@ -170,6 +181,17 @@ class Team:
                              actor=K, audience="user", outcome="cancelled")
             self.g.update_node(run, actor=K, attrs={"phase": "cancelled", "ended": _now()})
             self._close(run, actor)
+
+    def request_cancel(self, run: str, why: str, *, by: str) -> None:
+        """Ask for a run to stop: one still awaiting approval closes at once; a live one is cancelled
+        by the runner, which holds its agents' leases."""
+        r = self.g.node(run)
+        if r["type"] != "run" or r["state"] != "open":
+            raise TeamError(f"{run} is not an open run")
+        if _attr(r, "phase") == "requested":
+            self.cancel_run(run, why, actor=by)
+            return
+        self.g.update_node(run, actor=K, attrs={"cancel": why or "cancelled", "cancel_by": by})
 
     def _close(self, scope: str, actor: str) -> list[Any]:
         return scopes.close(self.g, scope, actor=actor)
@@ -218,16 +240,23 @@ class Team:
             " AND json_extract(t.attrs, '$.run') = ? AND NOT EXISTS (SELECT 1 FROM k_edges e"
             " WHERE e.type = 'consumes' AND e.dst = t.id) ORDER BY t.id", (run,))]
 
-    def open_agent(self, run: str, *, role: str, goal: str, parent: str | None = None, provider: str | None = None,
-                   model: str | None = None, key: str | None = None, mode: str = "fresh",
-                   give: list[str] | None = None, context: str | None = None, handoff: str | None = None,
-                   actor: str = "model", variant: str = "") -> str:
+    def open_agent(self, run: str, *, role: str, goal: str, parent: str | None = None, model: str | None = None,
+                   mode: str = "fresh", give: list[str] | None = None, context: str | None = None,
+                   handoff: str | None = None, actor: str = "model", variant: str = "") -> str:
         """Open an agent scope, claiming a free slot and an unused ticket. The kernel's gates decide:
-        no slot, no ticket, too deep, or no grant raise ScopeRefused with the reasons."""
+        no slot, no ticket, too deep, or no grant raise ScopeRefused with the reasons. The agent
+        starts on the first of the grant's routes for its role (with `model`, the first that runs it)."""
         grant = self.grant(run)
         if mode not in ("fresh", "split", "clone", "root"):
             raise TeamError("mode: fresh, split or clone")
-        prov = self._pick_provider(grant, provider, model)
+        if role not in ROLES:
+            raise TeamError(f"role: {', '.join(ROLES)}")
+        routes = routes_for(grant, role, model)
+        if not routes:
+            have = ", ".join(f"{r['model']} ({'/'.join(r['roles'])})" for r in grant["routes"])
+            raise TeamError(f"no route of the grant serves a {role}{' on ' + model if model else ''}; routes: {have}")
+        i = routes[0]
+        route = grant["routes"][i]
         ctx = context or grant["context"]
         ho = handoff or grant["handoff"]
         if ctx not in CONTEXT_LEVELS or ho not in HANDOFF_LEVELS:
@@ -237,13 +266,14 @@ class Team:
         tickets = self.free_tickets(run)
         aid = f"{run}:a{self._seq(run, 'a')}"
         links = ([("occupies", slot)] if slot else []) + ([("consumes", tickets[0])] if tickets else [])
+        provider, label = route["key"].split("/", 1)
         with self.g.tx():
             scopes.open_scope(self.g, aid, "agent", actor=actor, parent_id=parent or run, content=goal.strip(),
                               links=links, attrs={
                                   "run": run, "role": role, "depth": depth, "parent": parent, "mode": mode,
-                                  "variant": variant, "provider": prov["provider"], "model": prov["model"],
-                                  "key": key or prov.get("key"), "context": ctx, "handoff": ho, "status": "ready",
-                                  "steps": 0, "usage": {}, "created_at": _now(),
+                                  "variant": variant, "route": i, "routes": routes, "provider": provider,
+                                  "key": label, "model": route["model"], "context": ctx, "handoff": ho,
+                                  "status": "ready", "steps": 0, "usage": {}, "created_at": _now(), "segment": 0,
                                   "transcript": f"transcripts/{aid.rsplit(':', 1)[1]}.jsonl"})
             if parent:
                 self.g.link(parent, "spawned", aid, actor=K, attrs={"mode": mode})
@@ -255,14 +285,6 @@ class Team:
             if self.g.node(run)["attrs"].get("phase") == "approved":
                 self.g.update_node(run, actor=K, attrs={"phase": "running", "started": _now()})
         return aid
-
-    def _pick_provider(self, grant: dict[str, Any], provider: str | None, model: str | None) -> dict[str, Any]:
-        allowed = grant["providers"]
-        for p in allowed:
-            if (provider is None or p["provider"] == provider) and (model is None or p["model"] == model):
-                return p
-        names = ", ".join(f"{p['provider']}/{p['model']}" for p in allowed)
-        raise TeamError(f"{provider or '*'}/{model or '*'} is not in the grant; allowed: {names}")
 
     def queue_spawn(self, run: str, parent: str, spec: dict[str, Any], *, actor: str = "model") -> str:
         """A spawn while no slot is free: kept until one frees (the scheduler starts it)."""
@@ -563,6 +585,39 @@ class Team:
                     counts["retired"] += 1
             self.g.update_node(run, actor=K, attrs={"retention": {"level": level, **counts}})
         return counts
+
+
+def check_routes(routes: Any) -> list[dict[str, Any]]:
+    """The routing policy as the grant keeps it: each route a key ('provider/label'), a model and
+    the roles it serves ('*' for all); at least one serves the lead (the root agent)."""
+    from .keys import KeyError_, split_ref
+
+    if not isinstance(routes, list) or not routes:
+        raise TeamError("a grant names at least one route: a key, a model and the roles it serves")
+    out = []
+    for r in routes:
+        if not isinstance(r, dict):
+            raise TeamError("a route is {key, model, roles}")
+        try:
+            split_ref(str(r.get("key", "")))
+        except KeyError_ as e:
+            raise TeamError(str(e)) from e
+        model = str(r.get("model", "")).strip()
+        if not model or len(model) > 200 or any(c.isspace() for c in model):
+            raise TeamError(f"route {r.get('key')}: a model name")
+        roles = r.get("roles") or ["*"]
+        roles = list(ROLES) if "*" in roles else [x for x in ROLES if x in roles]
+        if not roles:
+            raise TeamError(f"route {r['key']} {model}: roles among {', '.join(ROLES)}")
+        out.append({"key": r["key"], "model": model, "roles": roles})
+    if not any("lead" in r["roles"] for r in out):
+        raise TeamError("no route serves the lead (the agent that starts the run)")
+    return out
+
+
+def routes_for(grant: dict[str, Any], role: str, model: str | None = None) -> list[int]:
+    """The grant's routes for a role, in order (indices); with `model`, those that run it."""
+    return [i for i, r in enumerate(grant["routes"]) if role in r["roles"] and (model is None or r["model"] == model)]
 
 
 def _title(text: str) -> str:

@@ -13,6 +13,10 @@ that blocks and where a sandbox policy is granted. Forms carry a token bound to 
     POST /agents/approve      rule, seen   → Graph.approve(actor=user, seen=…), optionally retiring `replaces`
     POST /agents/reject       rule         → retire_rule(actor=user): the model cannot propose that id again
     POST /agents/policy       name, …      → Workspace.set_policy(actor=user): a new version of the policy
+
+    GET  /agents/keys, POST /agents/keys/add|delete         the user's API keys (run_pages.py)
+    GET  /agents/runs, POST /agents/runs/new                runs, and a new one approved as it is made
+    GET  /agents/runs/<run>, POST …/approve, POST …/cancel  one run: its grant, its agents, its result
 """
 
 from __future__ import annotations
@@ -35,6 +39,7 @@ from starlette.responses import HTMLResponse, RedirectResponse, Response
 from ..kernel import proposals
 from ..page import page
 from ..store import Handbook, HandbookError
+from . import run_pages
 from .workspace import Workspace
 
 def _key(data_dir: Path) -> bytes:
@@ -84,18 +89,199 @@ def install(m: Any, *, stores: Callable[[str], Handbook], uid_of: Callable[[str]
         body = await locked(lambda: _overview(Workspace(stores(uid)), uid, csrf(uid), request.query_params))
         return _html(body)
 
-    async def post(request: Request, action: Callable[[Workspace, dict[str, str]], str]) -> Response:
+    async def checked(request: Request) -> tuple[str, dict[str, str]] | Response:
+        """The signed-in user and the form, or the refusal: a POST needs the sign-in, this origin and
+        the form's token."""
         uid = who(request)
         if uid is None:
             return _html("<p class='flash error'>로그인이 필요합니다.</p>", 401)
         form = {k: str(v)[:20_000] for k, v in (await request.form()).items()}
         if not same_origin(request) or not hmac.compare_digest(form.get("csrf", ""), csrf(uid)):
             return _html("<p class='flash error'>요청을 확인할 수 없습니다. 페이지를 새로 열어 다시 시도하세요.</p>", 403)
+        return uid, form
+
+    def back(where: str, done: str = "", err: str = "") -> Response:
+        q = f"ok={quote(done)}" if done else f"err={quote(err[:300])}"
+        return RedirectResponse(f"{where}{'&' if '?' in where else '?'}{q}", status_code=303)
+
+    async def post(request: Request, action: Callable[[Workspace, dict[str, str]], str]) -> Response:
+        got = await checked(request)
+        if isinstance(got, Response):
+            return got
+        uid, form = got
         try:
             done = await locked(lambda: action(Workspace(stores(uid)), form))
-            return RedirectResponse(f"/agents?ok={quote(done)}", status_code=303)
+            return back("/agents", done)
         except HandbookError as e:
-            return RedirectResponse(f"/agents?err={quote(str(e)[:300])}", status_code=303)
+            return back("/agents", err=str(e))
+
+    async def get_page(request: Request, here: str, render: Callable[[str, str], str]) -> Response:
+        uid = who(request)
+        if uid is None:
+            return RedirectResponse(f"{login_url}?next={quote(here)}", status_code=303)
+        return _html(await locked(lambda: render(uid, f"<input type=hidden name=csrf value='{csrf(uid)}'>")))
+
+    # ── API keys ─────────────────────────────────────────────────────────
+
+    from .. import agents_api
+    from . import keys as K
+
+    def keystore() -> K.KeyStore:
+        try:
+            pub = K.load_public()
+        except (K.KeyError_, OSError, ValueError):
+            pub = None
+        return K.KeyStore(Path(data_dir) / "agent-keys.db", public=pub)
+
+    def cannot_add() -> str | None:
+        try:
+            K.load_public()
+            return None
+        except (K.KeyError_, OSError, ValueError) as e:
+            return f"키를 암호화할 공개키가 없습니다 ({e}). 관리자가 설치 스크립트를 다시 실행해야 합니다."
+
+    @m.custom_route("/agents/keys", methods=["GET"])
+    async def keys_page(request: Request) -> Response:
+        ks, why = keystore(), cannot_add()
+        return await get_page(request, "/agents/keys", lambda uid, hidden: run_pages.keys_page(
+            uid, ks.list(uid), hidden, request.query_params, why))
+
+    @m.custom_route("/agents/keys/add", methods=["POST"])
+    async def keys_add(request: Request) -> Response:
+        got = await checked(request)
+        if isinstance(got, Response):
+            return got
+        uid, f = got
+        provider, label, secret = f.get("provider", ""), f.get("label", "").strip(), f.get("secret", "").strip()
+        fmt, base = f.get("format", ""), f.get("base_url", "").strip()
+        try:
+            models, status = await _check_key(provider, secret, fmt, base)
+            ks = keystore()
+            info = await anyio.to_thread.run_sync(lambda: ks.put(uid, provider, label, secret, fmt=fmt, base_url=base,
+                                                                 models=models))
+            if status != "ok":
+                await anyio.to_thread.run_sync(lambda: ks.mark(uid, provider, label, status))
+        except (K.KeyError_, HandbookError) as e:
+            return back("/agents/keys", err=str(e))
+        note = f" · 모델 {len(models)}개" if models else (" · 확인하지 못했습니다(나중에 실행 때 확인됩니다)"
+                                                        if status == "unchecked" else "")
+        return back("/agents/keys", f"{info.ref} 등록{note}")
+
+    @m.custom_route("/agents/keys/delete", methods=["POST"])
+    async def keys_delete(request: Request) -> Response:
+        got = await checked(request)
+        if isinstance(got, Response):
+            return got
+        uid, f = got
+        try:
+            provider, label = K.split_ref(f.get("ref", ""))
+        except K.KeyError_ as e:
+            return back("/agents/keys", err=str(e))
+        gone = await anyio.to_thread.run_sync(lambda: keystore().delete(uid, provider, label))
+        return back("/agents/keys", f"{provider}/{label} 삭제" if gone else "", "" if gone else "그런 키가 없습니다")
+
+    # ── runs ─────────────────────────────────────────────────────────────
+
+    from . import crew
+    from .team import Team
+
+    def team(uid: str) -> tuple[Team, Workspace]:
+        ws = Workspace(stores(uid))
+        return Team(ws.g), ws
+
+    @m.custom_route("/agents/runs", methods=["GET"])
+    async def runs_page(request: Request) -> Response:
+        ks = keystore()
+
+        def render(uid: str, hidden: str) -> str:
+            t, ws = team(uid)
+            return run_pages.runs_page(uid, t, ks.list(uid), ws.policies(), hidden, request.query_params)
+        return await get_page(request, "/agents/runs", render)
+
+    @m.custom_route("/agents/runs/new", methods=["POST"])
+    async def runs_new(request: Request) -> Response:
+        got = await checked(request)
+        if isinstance(got, Response):
+            return got
+        uid, f = got
+        keys = await anyio.to_thread.run_sync(lambda: keystore().list(uid))
+
+        def act() -> str:
+            t, ws = team(uid)
+            grant = run_pages.parse_grant(f, keys)
+            run = t.request_run(f.get("goal", ""), actor="user", title=f.get("title", "").strip())
+            try:
+                t.approve(run, grant, actor="user")
+            except HandbookError:
+                t.cancel_run(run, "the grant was refused", actor="user")
+                raise
+            crew.mark(ws, run)
+            return run
+        try:
+            run = await locked(act)
+        except HandbookError as e:
+            return back("/agents/runs", err=str(e))
+        return back(f"/agents/runs/{run}", "시작했습니다. 러너가 곧 리드 에이전트를 띄웁니다.")
+
+    def run_of(request: Request) -> str:
+        run = request.path_params["run"]
+        if not run.startswith("run:") or len(run) > 40:
+            raise HandbookError("그런 실행이 없습니다")
+        return run
+
+    @m.custom_route("/agents/runs/{run}", methods=["GET"])
+    async def run_page(request: Request) -> Response:
+        ks = keystore()
+
+        def render(uid: str, hidden: str) -> str:
+            t, ws = team(uid)
+            run = run_of(request)
+            n = t.g.get_node(run)
+            if n is None or n["type"] != "run":
+                return "<p class='flash error'>그런 실행이 없습니다.</p>" + run_pages.nav("/agents/runs")
+            return run_pages.run_page(uid, t, run, ks.list(uid), ws.policies(), hidden, request.query_params)
+        try:
+            return await get_page(request, "/agents/runs", render)
+        except HandbookError as e:
+            return _html(f"<p class='flash error'>{html.escape(str(e))}</p>", 404)
+
+    @m.custom_route("/agents/runs/{run}/approve", methods=["POST"])
+    async def run_approve(request: Request) -> Response:
+        got = await checked(request)
+        if isinstance(got, Response):
+            return got
+        uid, f = got
+        keys = await anyio.to_thread.run_sync(lambda: keystore().list(uid))
+
+        def act() -> str:
+            run = run_of(request)
+            t, ws = team(uid)
+            t.approve(run, run_pages.parse_grant(f, keys), actor="user")
+            crew.mark(ws, run)
+            return run
+        try:
+            run = await locked(act)
+        except HandbookError as e:
+            return back(f"/agents/runs/{request.path_params['run']}", err=str(e))
+        return back(f"/agents/runs/{run}", "승인했습니다. 러너가 곧 시작합니다.")
+
+    @m.custom_route("/agents/runs/{run}/cancel", methods=["POST"])
+    async def run_cancel(request: Request) -> Response:
+        got = await checked(request)
+        if isinstance(got, Response):
+            return got
+        uid, _ = got
+
+        def act() -> str:
+            run = run_of(request)
+            t, _ws = team(uid)
+            t.request_cancel(run, "cancelled by the user", by="user")
+            return run
+        try:
+            run = await locked(act)
+        except HandbookError as e:
+            return back(f"/agents/runs/{request.path_params['run']}", err=str(e))
+        return back(f"/agents/runs/{run}", "취소를 요청했습니다.")
 
     @m.custom_route("/agents/approve", methods=["POST"])
     async def approve(request: Request) -> Response:
@@ -146,6 +332,40 @@ def install(m: Any, *, stores: Callable[[str], Handbook], uid_of: Callable[[str]
             ws.set_policy(name, actor="user", **changes)
             return f"정책 {name} 저장"
         return await post(request, act)
+
+
+async def _check_key(provider: str, secret: str, fmt: str, base: str) -> tuple[list[str], str]:
+    """Check a key once with the provider's model list: (models, "ok"); a refused key raises; a
+    provider that cannot be reached now gives ([], "unchecked") (the runner finds out on use)."""
+    import httpx
+
+    from . import keys as K
+    from . import providers as P
+
+    if provider not in K.PROVIDERS:
+        raise K.KeyError_("제공자를 고르세요")
+    if provider == "custom":
+        if fmt not in K.FORMATS:
+            raise K.KeyError_("Custom 서버의 형식을 고르세요")
+        base = K.check_base_url(base)
+        try:
+            await P.check_endpoint(base)
+        except P.EndpointRefused as e:
+            raise K.KeyError_(f"이 주소는 쓸 수 없습니다: {e}") from e
+    else:
+        fmt, base = K.NATIVE_FORMAT[provider], ""
+    try:
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=False) as http:
+            models = await P.adapter(fmt, base).models(http, secret)
+        return models, "ok"
+    except P.ProviderError as e:
+        if e.auth:
+            raise K.KeyError_(f"제공자가 키를 거부했습니다 ({e.status})") from e
+        if e.status == 404:  # no model list on this server: the key is not refused
+            return [], "unchecked"
+        raise K.KeyError_(K.scrub(f"키를 확인하지 못했습니다: {e}", [secret])[:300]) from e
+    except (httpx.HTTPError, ValueError):
+        return [], "unchecked"
 
 
 def _int(x: str | None) -> int:
@@ -312,7 +532,8 @@ def _overview(ws: Workspace, uid: str, token: str, q: Any) -> str:
                                                 ("records", "기능 기록", n_records, False)))
     out = [f"<div class='page-head'><h1>에이전트 · 샌드박스</h1>"
            f"<p class='muted'><b>{_e(uid)}</b> · 여기서 하는 승인과 정책은 모델이 대신할 수 없는, 사용자의 결정입니다.</p>"
-           f"<nav class='chips'>{summary}</nav></div>"]
+           f"<nav class='chips'>{summary}<a class='chip' href='/agents/runs'>에이전트 실행</a>"
+           f"<a class='chip' href='/agents/keys'>API 키</a></nav></div>"]
     if q.get("ok"):
         out.append(f"<p class='flash ok'>{_e(q['ok'])}</p>")
     if q.get("err"):

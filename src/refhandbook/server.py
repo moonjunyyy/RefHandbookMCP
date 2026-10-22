@@ -12,7 +12,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
-from . import cap_api, render, research_api
+from . import agents_api, cap_api, render, research_api
 from .store import Handbook, HandbookError
 
 INSTRUCTIONS = """\
@@ -31,6 +31,8 @@ role="agent"); a CONFLICT names objects to re-read, nothing else is shared.
 Computation runs in the user's sandbox with `cap` (scripts, policies, layers, egress, rules, cards:
 versioned records you keep current), `run`, `job` and `files`: open_entry("rs-ref-sandbox") says how,
 including how packages and the network are reached. The cards are current.
+A task too big for one conversation can go to a team of agents on the user's own API keys:
+agent_run(action="request", goal=…) asks for it; the user approves it on the approval page.
 A tool result that begins DEPRECATED names its replacement: switch now. Never ask the user to
 approve a run."""
 
@@ -251,6 +253,11 @@ for _fn in cap_api.WRITE_TOOLS + cap_api.DEPRECATED:
 
 
 cap_api.configure(handbook, _CALLS)
+agents_api.configure(handbook, _CALLS)
+for _fn in agents_api.WRITE_TOOLS:
+    tool(LEDGER_WRITE)(_fn)
+for _fn in agents_api.READ_TOOLS:
+    tool(READ)(_fn)
 for _fn in research_api.WRITE_TOOLS:
     tool(LEDGER_WRITE)(_fn)
 for _fn in research_api.DELETE_TOOLS:

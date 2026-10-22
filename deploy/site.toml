@@ -80,18 +80,19 @@ storage = true
 [[app]]
 id = "agents"
 title = "에이전트 · 샌드박스"
-description = "모델이 제안한 규칙의 승인·거절, 샌드박스 정책(쓸 수 있는 명령·네트워크·한도), 스크립트와 작업 현황."
+description = "본인 API 키(Claude·OpenAI·Gemini·호환 서버)로 에이전트 팀 실행, 모델이 제안한 규칙의 승인·거절, 샌드박스 정책(쓸 수 있는 명령·네트워크·한도), 스크립트와 작업 현황."
 audience = "refhandbook"
 upstream = "@@upstream:handbook@@"
 menu = "Agents"
 menu_href = "/agents"
-link = [{ label = "승인 화면", href = "/agents" }]
+link = [{ label = "승인 화면", href = "/agents" }, { label = "에이전트 실행", href = "/agents/runs" },
+        { label = "API 키", href = "/agents/keys" }]
   [[app.route]]
   path = "/agents"
   limit = "oauth"
   burst = 20
   body = "64k"
-  note = "the approval page: rule proposals, sandbox policies, jobs"
+  note = "the approval page, the agent runs (/agents/runs) and the user's API keys (/agents/keys)"
 
 [[app]]
 id = "refhandbook"

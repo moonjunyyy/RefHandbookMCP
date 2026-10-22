@@ -168,3 +168,16 @@ details.panel > form { padding: 14px; }
 label .muted.small { font-weight: 400; margin-left: 4px; }
 label.check { margin-bottom: 14px; padding: 9px 0; }
 .actions form + form { margin-top: 0; }  /* side by side, not stacked as .card form + form would */
+
+/* agent runs: the routing table and the agent tree */
+table.routes td { vertical-align: middle; }
+table.routes select, table.routes input { width: 100%; margin: 0; }
+table.routes td.roles { white-space: nowrap; }
+table.routes td.roles label.check { display: inline-flex; align-items: center; gap: 4px; margin: 0 10px 0 0;
+                                   padding: 0; }
+table.routes td.roles label.check input { margin: 0; }
+ul.tree { list-style: none; margin: 8px 0 0; padding-left: 0; }
+ul.tree ul.tree { padding-left: 18px; border-left: 1px solid var(--line); margin-left: 6px; }
+ul.tree li { padding: 6px 0; }
+ul.tree li > .small { margin-top: 2px; }
+pre.wrap { white-space: pre-wrap; word-break: break-word; }

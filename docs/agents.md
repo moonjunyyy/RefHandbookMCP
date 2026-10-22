@@ -1,12 +1,14 @@
 # Autonomous agents
 
-Status: partly built. The sandbox, the workspace it shares with Chat sessions (policies, scripts,
-layers and mounts as capability records, jobs and the runner) are built and tested; see
-`docs/kernel.md` ("Capabilities", "The sandbox workspace"). The agents themselves (`team.py`,
-`providers.py`, `keys.py`) are first implementations without tests, and run on the research
-ledger as `agent` sessions (`research_begin(role="agent")`), which answer only for what they open.
+Status: built and tested (P0–P4), with the differences listed under "Where the build differs" at the
+end. The sandbox and the workspace it shares with Chat sessions are in `docs/kernel.md`
+("Capabilities", "The sandbox workspace"). The agents: `team.py` (runs, agents, notes, packets on the
+kernel graph), `crew.py` (the runner's planner and agent loop), `providers.py` (one adapter per wire
+format), `keys.py` (sealed per-user keys), `run_pages.py` and `pages.py` (/agents/keys, /agents/runs),
+`agents_api.py` (the `agent_run` and `agent_keys` tools); tests in `tests/refhandbook/test_agents.py`.
 
-A user who has registered their own API keys (Anthropic, OpenAI, Google) asks for a **run**: a goal,
+A user who has registered their own API keys (Anthropic, OpenAI, Google, or any server that speaks one
+of their formats) asks for a **run**: a goal,
 a grant (how many agents, how deep, how much), and a pruning policy. On the remote server, a
 **runner** spawns agents for it. Each agent is an LLM loop that may use a **sandbox**, the
 user's store, and the other agents. The agents pass knowledge to each other, share it, split work,
@@ -42,7 +44,7 @@ The philosophy is the one the handbook already follows:
                  └──────────► /var/lib/<name>-handbook ◄──────────┘     ┌─────────────────────────┐
                                   users/<uid>.db                        │ sandbox (per tool call)  │
                                   runs/<uid>/<run>/…                    │ userns+mntns+pidns+netns │
-                                  auth.db (+ api_keys, ciphertext)      │ Landlock, seccomp, cgroup│
+                                  agent-keys.db (sealed API keys)       │ Landlock, seccomp, cgroup│
                                                                         │ no network, no keys      │
                                                                         └─────────────────────────┘
 ```
@@ -70,22 +72,32 @@ decrypt one.
   (nginx `auth_request` vouches for the user with the sign-in's token).
 
   The page takes a provider, a label and the key. It checks the key once with the provider's
-  model-list call, encrypts it, and drops the plaintext.
+  model-list call (a refused key is not stored; a provider that cannot be reached now stores it as
+  `unchecked`), keeps the model list for the run form, encrypts the key, and drops the plaintext.
+- **Providers:** `anthropic`, `openai`, `gemini`, and `custom`: a base URL of the user's that speaks
+  one of the four wire formats (`keys.FORMATS`): Anthropic Messages, OpenAI Responses, OpenAI Chat
+  Completions (vLLM, Ollama, OpenRouter, …) or Gemini generateContent. A custom key may be empty (a
+  server without authentication). Its endpoint must be https to a public address unless the
+  administrator lists the host (or host:port) in `RHB_AGENT_PRIVATE_ENDPOINTS` (handbook.env, read
+  by both units); the page checks this before the model-list call and the runner before every call,
+  since a name can resolve elsewhere later.
 - **Encryption** is a sealed box made from what `cryptography` already provides (pulled in by
   `pyjwt[crypto]`): an ephemeral X25519 key, then HKDF-SHA256, then AES-256-GCM.
-  - The associated data is `uid | provider | label`, so a row moved to another user or provider
-    fails to decrypt.
+  - The associated data is `uid | provider | label | format | base_url`, so a row moved to another
+    user or provider fails to decrypt, and so does a custom key whose endpoint was rewritten (it
+    cannot be redirected to another server by whoever can write the table).
   - The installer makes the pair once in `/etc/<name>-handbook/` (`python -m
     refhandbook.agents.keys gen <dir>`). The web process has only `agent-keys.pub`.
   - The runner receives the private key through systemd `LoadCredential=`. The root file is
     `/etc/<name>-handbook/agent-keys` (0400), and no other unit can read the credential.
-- **Storage:** an `api_keys` table in `auth.db` holding uid, provider, label, ephemeral public key,
-  nonce, ciphertext, a fingerprint (`sk-…abcd`), created, last_used, and status.
+- **Storage:** an `api_keys` table in `<data>/agent-keys.db` holding uid, provider, label, format,
+  base URL, ephemeral public key, nonce, ciphertext, a fingerprint (`sk-ant…abcd`), the model list,
+  created, last_used, and status (`ok`, `unchecked`, `rejected` once a provider refuses it).
 - **Use:** the runner decrypts a key per call and keeps it only in local variables. Any exception
   text is scrubbed of the key before it reaches a log, a note or the model.
-- **Revocation:** a key can be deleted on the page. An agent whose key is gone parks with the
-  abnormal card `ag-x-key`. The MCP tool `agent_keys` lists only providers, labels and
-  fingerprints.
+- **Revocation:** a key can be deleted on the page. An agent whose key is gone or refused moves to
+  its next route (§6, "Routing"), or ends with the reason when none is left. The MCP tool
+  `agent_keys` lists only providers, labels, formats, endpoints and fingerprints.
 
 ## 3. The kernel package `agents`
 
@@ -275,6 +287,25 @@ loop:
 - **Crash safety:** a step is committed after the model's turn and after each tool result. A
   resumed agent re-sends its compiled context, and tool calls are not replayed.
 
+### Routing
+
+The grant's `routes` are the routing policy: an ordered list of `{key: "provider/label", model,
+roles}`, roles among `lead`, `worker`, `verifier` (at least one route serves the lead, which starts
+the run). An agent starts on the first route for its role; `spawn(model=…)` picks the first route
+for the child's role that runs that model, so a lead can put workers on a cheaper model the grant
+offers.
+
+A call is retried with backoff on 408/409/429/5xx/529 and network errors (honouring `retry-after`).
+When it keeps failing, or the provider refuses the key (401/403: the key is marked `rejected`), or
+the key is gone, or a custom endpoint is refused, the agent moves to its next route for the role.
+On the same wire format it keeps its transcript; on another one it starts a new segment from its
+brief and notes, since reasoning state is provider-specific. With no route left it is cancelled with
+the reason, which its parent (or the user) reads. Error text is scrubbed of the key before it goes
+anywhere. Model calls per key are limited to four in flight.
+
+On the Claude API, requests to the models that take it carry the server-side refusal fallback
+(`fallbacks: "default"`), dropped for a model or account that refuses it.
+
 ## 7. The sandbox: Linux primitives only
 
 The sandbox needs no Docker, bubblewrap or gVisor: only the kernel, libc (through `ctypes`) and
@@ -379,27 +410,47 @@ distributions without AppArmor.
 ## 9. Surfaces
 
 - **MCP** (for the user's interactive Claude):
-  - `agent_run(action=request|status|tree|log|result|cancel, …)`. `request` creates the run and
-    returns the approval URL. Nothing runs before approval.
-  - `agent_keys()`: the registered providers, without key material.
-- **Pages** (the approval page of `docs/kernel.md`):
-  - `/agents/keys`;
-  - `/agents/runs/<id>/approve`, which shows the goal, providers and models, slots, tickets,
-    depth, budgets and pruning, and writes the grant, slots and tickets as `user`;
-  - `/agents/runs`, the live tree, usage and cancel.
-- **CLI:** `refhandbook runner`, `refhandbook sandbox-check`, `refhandbook sandbox-exec` (internal);
-  `python -m refhandbook.agents.keys gen <dir>` makes the X25519 pair (the installer, once).
+  - `agent_run(action=request|status|tree|log|result|cancel, …)`. `request` creates the run with
+    the model's suggestion (limits, a model per role) and returns the approval URL. Nothing runs
+    before approval.
+  - `agent_keys()`: the registered keys, without key material.
+- **Pages** (behind the site sign-in, linked from /agents):
+  - `/agents/keys`: register (with the provider's model list as the check) and delete keys;
+  - `/agents/runs`: the runs, and a new run (goal and grant, approved as it is made);
+  - `/agents/runs/<id>`: for a requested run, the grant form (routes, limits, pruning, sandbox
+    policy, effort) prefilled from the suggestion, approve or reject; then the grant, the live tree
+    with usage, the shared notes, the result, and cancel. Every write is `user`, with the form token
+    and same-origin check of the approval page.
+- **CLI:** `refhandbook runner` (jobs and runs), `refhandbook sandbox-check`, `refhandbook
+  sandbox-exec` (internal); `python -m refhandbook.agents.keys gen <dir>` makes the X25519 pair
+  (the installer, once).
 
 ## 10. Build order
 
-| phase | content | tests |
-|---|---|---|
-| P0 | `sandbox.py` (launcher, Landlock, seccomp, cgroup, rlimit fallback), `sandbox-check` | escape attempts: write outside `/work`, network, `mount`, `ptrace`, fork bomb, memory hog, timeout kill |
-| P1 | Store in WAL, multi-process CAS; the `agents` package (types, slot, ticket, close rules) | every gate fires; forged slot; slot reuse; depth |
-| P2 | Provider adapters plus `fake`; context compiler with the four pruning levels | golden contexts per level; cache-stable prefix |
-| P3 | Runner: leases, scheduler, tools, spawn/split/clone/race/wait, budgets, resume after a kill | scripted multi-agent runs on `fake` |
-| P4 | Key sealing, `/agents` pages, `agent_run` / `agent_keys` tools, `ag-*` cards | page flows as in `test_remote.py` |
-| P5 | Deploy: runner unit, `install.sh` key pair, nginx routes | `sandbox-check` on the server |
+| phase | content | tests | state |
+|---|---|---|---|
+| P0 | `sandbox.py` (launcher, Landlock, seccomp, cgroup, rlimit fallback), `sandbox-check` | escape attempts: write outside `/work`, network, `mount`, `ptrace`, fork bomb, memory hog, timeout kill | built |
+| P1 | Store in WAL, multi-process CAS; the `agents` package (types, slot, ticket, close rules) | every gate fires; forged slot; slot reuse; depth | built |
+| P2 | Provider adapters plus `fake`; context compiler with the four pruning levels | golden contexts per level; cache-stable prefix | built (no golden-context tests) |
+| P3 | Runner: leases, scheduler, tools, spawn/split/clone/race/wait, budgets, resume after a kill | scripted multi-agent runs on `fake` | built |
+| P4 | Key sealing, `/agents` pages, `agent_run` / `agent_keys` tools, `ag-*` cards | page flows as in `test_remote.py` | built, without `ag-*` cards |
+| P5 | Deploy: runner unit, `install.sh` key pair, nginx routes | `sandbox-check` on the server | built |
+
+### Where the build differs
+
+- **Role procedures** are the crew's system prompts (`crew.COMMON`, `crew.ROLE_TEXT`), not `ag-*`
+  cards. Agents can still `lookup` and `open_entry` handbook cards.
+- **Join modes:** `wait(ids, all|any)` and `cancel(id)`. There is no `race` mode that cancels the
+  losers by itself: a parent waits for `any`, then cancels the rest.
+- **Handoff levels** are recorded on agents and packets; every handoff is by note ids (`refs`).
+  `digest` and `full` handoffs are not compiled differently yet.
+- **Workspaces:** agents work in `/work/runs/<run>/` of the user's one workspace, shared by the run,
+  under the grant's sandbox policy (its limits, cgroups and disk check apply per command); there is
+  no per-agent tree and no reflink clone of it.
+- **Context levels:** `trim` uses the provider's context editing (Anthropic) or elides old tool
+  output (OpenAI, Gemini, Chat Completions); `digest` asks for a checkpoint every 12 turns and
+  restarts the segment from it; `minimal` restarts every turn from the brief and a text rendering of
+  the last step.
 
 ## Open choices
 

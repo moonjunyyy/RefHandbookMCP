@@ -86,7 +86,8 @@ def main(argv: list[str] | None = None) -> int:
     cp.add_argument("--spec", help="JSON object: the record's spec (add, update)")
     cp.add_argument("--body-file", help="a file holding the body (a script's or a layer build's)")
     cp.add_argument("--why", default="")
-    rn = sub.add_parser("runner", help="run sandbox jobs: of --db, or of every store under --data-dir (remote)")
+    rn = sub.add_parser("runner", help="run sandbox jobs and agent runs: of --db, or of every store under "
+                                       "--data-dir (remote)")
     rn.add_argument("--data-dir", help="the remote server's data directory (RHB_DATA_DIR)")
     rn.add_argument("--once", action="store_true", help="start what is queued, wait for it, and exit")
     rn.add_argument("--workers", type=int, default=4)
@@ -431,15 +432,31 @@ def _cap(args: argparse.Namespace, hb: Handbook) -> int:
     return 0
 
 
+def _agent_keys(data_dir: Path):  # noqa: ANN202 — the runner's KeyStore, or None without the private key
+    from .agents import keys as K
+
+    try:
+        return K.KeyStore(data_dir / "agent-keys.db", private=K.load_private())
+    except (K.KeyError_, OSError, ValueError) as e:
+        logging.getLogger("refhandbook.runner").warning(
+            "agents cannot open API keys (%s): runs will stop at their first model call", e)
+        return None
+
+
 def _runner(args: argparse.Namespace) -> int:
-    """Run sandbox jobs. With --data-dir, every user's store (users/<uid>.db) that has a queued job
-    (a marker in users/<uid>.db.sandbox/queue/) is opened and its jobs started."""
+    """Run sandbox jobs and agent runs. With --data-dir, every user's store (users/<uid>.db) that has a
+    queued job (a marker in users/<uid>.db.sandbox/queue/) or an approved run (…sandbox/runs/) is
+    opened; its jobs start on the job pool, its runs on the crew (agents/crew.py)."""
     import signal
     import time
 
+    from .agents.crew import CrewService
     from .agents.workspace import Runner, Workspace
 
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     runners: dict[str, Runner] = {}
+    crews = CrewService(_agent_keys(Path(args.data_dir) if args.data_dir
+                                    else Path(args.db or default_db_path()).parent))
 
     def runner_for(db: str) -> Runner:
         r = runners.get(db)
@@ -450,7 +467,8 @@ def _runner(args: argparse.Namespace) -> int:
     def stores() -> list[str]:
         if args.data_dir:
             root = Path(args.data_dir) / "users"
-            out = {str(m.parent.parent)[: -len(".sandbox")] for m in root.glob("*.db.sandbox/queue/*")}
+            out = {str(m.parent.parent)[: -len(".sandbox")] for pattern in ("*.db.sandbox/queue/*", "*.db.sandbox/runs/*")
+                   for m in root.glob(pattern)}
             return sorted(out | set(runners))
         return [args.db or str(default_db_path())]
 
@@ -461,6 +479,8 @@ def _runner(args: argparse.Namespace) -> int:
         for db in stores():
             try:  # one store's trouble (a busy file, a bad row) never stops the others
                 r = runner_for(db)
+                if (Path(f"{db}.sandbox") / "runs").is_dir():
+                    crews.attach(db, r)
                 r.reap_lost()
                 r.poll()
                 with r.lock:  # the capability records' TTL reviews of this store
@@ -471,6 +491,7 @@ def _runner(args: argparse.Namespace) -> int:
         if args.once:
             break
         time.sleep(0.5)
+    crews.close()
     for r in runners.values():
         r.close()
     return 0
