@@ -13,8 +13,8 @@ from portal.main import create_app as create_portal
 from portal.invites import InviteStore
 from portal.requests import RequestStore
 from portal.sso import create_app, next_from_query, safe_next
-from conftest import SITE
-from test_app import FakeDirectory, FakeKAdmin, FakeKerberos
+from .conftest import SITE
+from .test_app import FakeDirectory, FakeKAdmin, FakeKerberos
 
 ISS = "https://www.m00nny.kr"
 

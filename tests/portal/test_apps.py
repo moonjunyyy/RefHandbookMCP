@@ -1,7 +1,7 @@
 """The apps the site hosts: generated routes (portal/site.py), each user's storage (portal/apps.py),
 and publishing their built files (portal/deploy.py)."""
 import pytest
-from conftest import SITE
+from .conftest import SITE
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi.testclient import TestClient
 

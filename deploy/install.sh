@@ -8,4 +8,4 @@
 # Paths are taken from where you run it (no cd here): `--app wordgen dist` means ./dist.
 set -eu
 REPO=$(cd "$(dirname "$0")/.." && pwd)
-PYTHONPATH="$REPO${PYTHONPATH:+:$PYTHONPATH}" exec python3 -m portal.deploy "$@"
+PYTHONPATH="$REPO/src${PYTHONPATH:+:$PYTHONPATH}" exec python3 -m portal.deploy "$@"

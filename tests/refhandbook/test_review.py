@@ -12,7 +12,7 @@ from refhandbook.kernel.graph import Forbidden
 from refhandbook.kernel.packages import research as rs_pkg
 from refhandbook.research import ResearchError
 
-from test_research import tok
+from .test_research import tok
 
 RULE = {"id": "rv_says_drops", "phase": "check", "severity": "block", "message": "{R}: says 'drops'",
         "body": 'rv_says_drops(R) :- rs_row(Self, X, R, "H"), content(X, C), match(C, "drops").'}

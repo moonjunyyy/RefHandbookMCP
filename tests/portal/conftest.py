@@ -8,4 +8,4 @@ os.environ.setdefault("PORTAL_REALM", "M00NNY.KR")
 
 # The repository's site file, copied alone: a host's deploy/site.local.toml must not change the tests.
 SITE = Path(tempfile.mkdtemp(prefix="site-")) / "site.toml"
-shutil.copy(Path(__file__).parent.parent / "deploy" / "site.toml", SITE)
+shutil.copy(Path(__file__).resolve().parents[2] / "deploy" / "site.toml", SITE)

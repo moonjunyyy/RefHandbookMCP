@@ -7,11 +7,11 @@ from pathlib import Path
 
 import pytest
 
-from conftest import SITE
+from .conftest import SITE
 from portal import deploy, facts as facts_mod
 from portal.facts import facts, krb5_default_realm
 
-REPO = Path(__file__).parent.parent
+REPO = Path(__file__).resolve().parents[2]
 
 
 @pytest.fixture
@@ -104,7 +104,7 @@ def test_install_makes_secrets_once_and_moves_an_old_layout(fresh, tmp_path, cap
     assert len(sso_secret) > 40 and "PORTAL_REALM=M00NNY.KR" in sso_env.read_text()  # filled in, the rest kept
     assert (sso_env.stat().st_mode & 0o777) == 0o640
     assert (root / "etc/nginx/sites-enabled/www.m00nny.kr.conf").is_symlink()
-    assert (root / "opt/m00nny-portal/portal/deploy.py").exists() and not (root / "opt/m00nny-portal/.git").exists()
+    assert (root / "opt/m00nny-portal/src/portal/deploy.py").exists() and not (root / "opt/m00nny-portal/.git").exists()
     assert not retired.exists() and ["systemctl", "disable", "--now", "m00nny-dav-homes.timer"] in sh.calls
     assert ["systemctl", "restart", "m00nny-portal.service", "m00nny-sso.service", "m00nny-apps.service"] in sh.calls
     out = capsys.readouterr().out

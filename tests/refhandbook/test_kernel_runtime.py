@@ -11,7 +11,7 @@ from refhandbook.kernel import migrate, runtime, verify
 from refhandbook.kernel.packages import research as rs_pkg
 from refhandbook.research import Research, ResearchError
 
-from test_research import tok
+from .test_research import tok
 
 
 def legacy_store(path, ledgers=("geo",)):

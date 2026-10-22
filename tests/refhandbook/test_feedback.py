@@ -11,7 +11,7 @@ import pytest
 from refhandbook import Handbook, research
 from refhandbook.research import Research, ResearchError
 
-from test_research import Turn
+from .test_research import Turn
 
 
 @pytest.fixture

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import SITE
+from .conftest import SITE
 from portal import site
 from portal.facts import facts
 

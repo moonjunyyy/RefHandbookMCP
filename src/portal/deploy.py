@@ -42,7 +42,7 @@ from pathlib import Path
 from . import site as site_mod
 from .facts import Facts, facts, local_file
 
-REPO = Path(__file__).resolve().parents[1]
+REPO = Path(__file__).resolve().parents[2]  # src/portal/deploy.py
 TEMPLATES = REPO / "deploy" / "templates"
 SERVICES = ("portal", "sso", "apps")  # roles that run as their own user
 # What earlier versions installed, by role: the one list of old names, for the move to derived ones.

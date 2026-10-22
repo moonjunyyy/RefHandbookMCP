@@ -2,7 +2,7 @@
 name = "refhandbookmcp"
 version = "0.10.0"
 description = "A quick reference handbook for agents, served over MCP (refhandbook), and the site around it: a self-service and admin portal for OpenLDAP + MIT Kerberos (kldap backend), one sign-in, and hosted apps (portal)."
-readme = "refhandbookmcp/README.md"
+readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
     # refhandbook
@@ -39,12 +39,10 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 # two packages, one distribution: their templates, static files and seed data come along
-packages = ["refhandbookmcp/src/refhandbook", "portal"]
+packages = ["src/portal", "src/refhandbook"]
 
 [tool.pytest.ini_options]
-# Two suites, each with its own conftest (both import as "conftest"), so run them apart:
-#   uv run pytest                        the portal (tests/)
-#   uv run pytest refhandbookmcp/tests   refhandbook
+# tests/portal and tests/refhandbook are packages, so their conftests do not collide: one run does both
 testpaths = ["tests"]
 # ldap3 2.9.1 (its latest release) imports pyasn1's tagMap/typeMap, which pyasn1 keeps as deprecated
 # aliases. Harmless while they exist; the LDAP tests fail loudly if a pyasn1 upgrade removes them.

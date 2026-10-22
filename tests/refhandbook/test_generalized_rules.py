@@ -5,7 +5,7 @@ import pytest
 
 from refhandbook.research import ResearchError
 
-from test_research import DOC_V1, Turn, rs, seed_claim  # noqa: F401 (rs is a fixture)
+from .test_research import DOC_V1, Turn, rs, seed_claim  # noqa: F401 (rs is a fixture)
 
 
 @pytest.fixture

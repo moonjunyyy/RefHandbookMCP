@@ -5,7 +5,7 @@ import copy
 
 import pytest
 
-from conftest import fresh_graph, projected
+from .conftest import fresh_graph, projected
 from refhandbook import Handbook, research
 from refhandbook.kernel import evaluate, findings, migrate
 from refhandbook.kernel.packages.research import RULES
