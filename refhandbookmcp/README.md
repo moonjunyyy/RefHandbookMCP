@@ -262,9 +262,9 @@ refused, and an `ldap://` directory off this host is refused without StartTLS.
 **Install** on a server whose directory already serves POSIX accounts through `nslcd`:
 
 ```bash
-sudo ./deploy/install.sh   # 1st run: writes /etc/refhandbook/env, LDAP lines taken from /etc/nslcd.conf
+sudo ./deploy/install-refhandbook.sh   # 1st run: writes /etc/refhandbook/env, LDAP lines taken from /etc/nslcd.conf
 sudoedit /etc/refhandbook/env   # set RHB_PUBLIC_URL; optionally RHB_LDAP_GROUP_FILTER
-sudo ./deploy/install.sh   # 2nd run: venv, systemd unit, health check
+sudo ./deploy/install-refhandbook.sh   # 2nd run: venv, systemd unit, health check
 ```
 
 The code, its venv and its Python belong to root (`/opt/refhandbook`, `/opt/refhandbook-venv`,

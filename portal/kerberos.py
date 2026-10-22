@@ -142,17 +142,24 @@ class KAdmin:
 
     def create_principal(self, principal: str, dn: str, password: str, alias: str | None,
                          needchange: bool = True) -> None:
-        """needchange: the password is a one-time one (an admin's); False when the user chose it."""
+        """needchange: the password is a one-time one (an admin's); False when the user chose it.
+
+        No flags on addprinc: given any (+needchange), kadmin creates the principal with those alone
+        instead of the realm's default_principal_flags, so it lost +requires_preauth, and with it the
+        site sign-in (the KDC refuses a ticket for the HTTP service, which requires preauth: "NO
+        PREAUTH") and the protection against offline guessing of the password (AS-REP roasting).
+        +needchange is added afterwards with modprinc, which keeps the defaults."""
         policy = f"-policy {self.s.kadmin_policy} " if self.s.kadmin_policy else ""
-        flag = "+needchange " if needchange else ""
         # -x dn= attaches the principal to the existing LDAP user entry (kldap backend).
-        self._run(f'addprinc {policy}{flag}-x "dn={dn}" {principal}', (password, password))
-        if alias:
-            try:
+        self._run(f'addprinc {policy}-x "dn={dn}" {principal}', (password, password))
+        try:
+            if needchange:
+                self._run(f"modprinc +needchange {principal}")
+            if alias:
                 self._run(f"add_alias {alias} {principal}")
-            except KerberosError:
-                self.delete_principal(principal)  # only ever deletes the principal created just above
-                raise
+        except KerberosError:
+            self.delete_principal(principal)  # only ever deletes the principal created just above
+            raise
 
     def delete_principal(self, principal: str) -> None:
         self._run(f"delprinc -force {principal}")

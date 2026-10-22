@@ -12,9 +12,12 @@ def project_version() -> str:
         from importlib.metadata import version
 
         return version("refhandbookmcp")
-    except Exception:  # running from a source tree without an install
-        text = (Path(__file__).resolve().parents[2] / "pyproject.toml").read_text()
-        return re.search(r'^version = "([^"]+)"', text, re.M).group(1)  # type: ignore[union-attr]
+    except Exception:  # running from a source tree without an install: the nearest pyproject.toml up
+        for d in Path(__file__).resolve().parents:
+            if (d / "pyproject.toml").is_file():
+                text = (d / "pyproject.toml").read_text()
+                return re.search(r'^version = "([^"]+)"', text, re.M).group(1)  # type: ignore[union-attr]
+        raise
 
 
 def plugin_json(url: str, version: str | None = None) -> dict:

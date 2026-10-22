@@ -49,7 +49,7 @@ SERVICES = ("portal", "sso", "apps")  # roles that run as their own user
 LEGACY = {"portal": "ldap-portal"}
 # Units of services the site no longer runs ({unit} = a derived name): stopped and removed.
 RETIRED = ("dav-homes.service", "dav-homes.timer", "{name}-dav-homes.service", "{name}-dav-homes.timer")
-SKIP = {".git", ".venv", "__pycache__", ".pytest_cache", "ldap_portal.egg-info"}
+SKIP = {".git", ".venv", "__pycache__", ".pytest_cache", "ldap_portal.egg-info", "node_modules", "dist"}  # (apps publish their builds with --app)
 
 Run = Callable[[list[str]], int]
 

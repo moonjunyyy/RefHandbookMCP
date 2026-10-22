@@ -391,3 +391,19 @@ def test_kerberos_error_codes_as_gssapi_reports_them():
     assert _kpasswd_message("Password for a/user@R: \r\nkpasswd: Cannot contact any KDC for realm 'R'", "x") \
         == "kpasswd: Cannot contact any KDC for realm 'R'"
     assert _kpasswd_message("", "fallback") == "fallback"
+
+
+def test_a_new_principal_keeps_the_realms_default_flags(monkeypatch, tmp_path):
+    """addprinc with +needchange would take that flag alone, without the realm's +requires_preauth (and
+    the site sign-in then fails with NO PREAUTH): the flag is added afterwards with modprinc."""
+    from portal.kerberos import KAdmin
+    s = Settings(session_secret="x" * 40, audit_log=str(tmp_path / "a.log"), kadmin_policy="users")
+    ka, queries = KAdmin(s), []
+    monkeypatch.setattr(ka, "_run", lambda q, passwords=(): queries.append(q) or "")
+    ka.create_principal("han/user@M00NNY.KR", "uid=han,ou=Users,dc=m00nny,dc=kr", "pw", "han@M00NNY.KR")
+    assert queries[0] == 'addprinc -policy users -x "dn=uid=han,ou=Users,dc=m00nny,dc=kr" han/user@M00NNY.KR'
+    assert "+" not in queries[0]  # no flags: the realm's defaults apply
+    assert queries[1:] == ["modprinc +needchange han/user@M00NNY.KR", "add_alias han@M00NNY.KR han/user@M00NNY.KR"]
+    queries.clear()
+    ka.create_principal("inv/user@M00NNY.KR", "uid=inv,ou=Users,dc=m00nny,dc=kr", "pw", None, needchange=False)
+    assert len(queries) == 1 and "+" not in queries[0]  # a password the user chose: nothing to add

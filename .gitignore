@@ -1,15 +1,12 @@
-<<<<<<< HEAD
 __pycache__/
 *.pyc
 *.egg-info/
 .venv/
 .pytest_cache/
-# host-specific [site] keys (portal/facts.py: local_file)
-deploy/site.local.toml
-dist
-=======
+dist/
+node_modules/
+# macOS sync artifacts
 ._*
 .DS_Store
-*.pyc
-dist/
->>>>>>> 7502c55 (git ignore update)
+# host-specific [site] keys (portal/facts.py: local_file)
+deploy/site.local.toml
