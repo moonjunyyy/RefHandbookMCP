@@ -14,7 +14,7 @@ kadmin keytab: it is the most exposed piece, so it gets the least. Run it as its
 """
 import time
 from pathlib import Path
-from urllib.parse import unquote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
 
 from fastapi import FastAPI, Request
 from fastapi.responses import RedirectResponse, Response
@@ -161,7 +161,9 @@ def create_app(settings: Settings | None = None, kerberos=None, signing_key=None
             request.session["expired_uid"] = raw_uid
             request.session["expired_next"] = nxt
             flash(request, "info", "비밀번호를 먼저 바꿔야 합니다 (임시 비밀번호이거나 만료됨).")
-            return redirect(f"{SIGNIN}/expired")
+            # the name rides along in the address too: the page fills it in even when the session
+            # cookie did not come back (an old cookie of the same name, a blocked one)
+            return redirect(f"{SIGNIN}/expired?uid={quote(raw_uid)}")
         if uid is None:
             msg = ("사용자명 또는 비밀번호가 맞지 않습니다." if result is LoginResult.BAD
                    else "비활성화되었거나 잠긴 계정입니다.")
@@ -186,7 +188,8 @@ def create_app(settings: Settings | None = None, kerberos=None, signing_key=None
 
     @app.get(f"{SIGNIN}/expired")
     async def expired_page(request: Request):
-        return render(request, "sso_expired.html", uid=request.session.get("expired_uid", ""))
+        uid = request.session.get("expired_uid") or request.query_params.get("uid", "")[:64]
+        return render(request, "sso_expired.html", uid=uid)
 
     @app.post(f"{SIGNIN}/expired")
     async def expired_change(request: Request):

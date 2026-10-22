@@ -86,7 +86,11 @@ def test_wrong_password_expired_and_logout(sso):
     assert r.status_code == 401 and "맞지 않습니다" in r.text
     k.expired.add("alice")
     c, r = sign_in(app, nxt="/login?req=abc")
-    assert r.headers["location"] == "/auth/expired"
+    assert r.headers["location"] == "/auth/expired?uid=alice"
+    assert 'name="uid" value="alice"' in c.get("/auth/expired").text  # from the session
+    fresh = TestClient(app)  # no session cookie came back: the address still names the user
+    assert 'name="uid" value="alice"' in fresh.get("/auth/expired?uid=alice").text
+    assert 'value="&lt;x&gt;"' in fresh.get("/auth/expired?uid=<x>").text  # escaped, as any value
     c.post("/auth/expired", data={"uid": "alice", "old": "alice-password-1", "new": "fresh-password-22",
                                   "confirm": "fresh-password-22", "csrf": csrf(c, "/auth/expired")})
     assert k.passwords["alice"] == "fresh-password-22"
