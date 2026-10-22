@@ -207,6 +207,8 @@ def test_consent_page_and_deny(client):
     assert f"/auth/login?switch=1&amp;next=/login?req={req}" in page.text
     assert "/auth/static/style.css" in page.text  # the site's look, from the site's stylesheet
     assert "form-action 'self' https://claude.ai" in page.headers["content-security-policy"]
+    # under no-referrer the browser would send Origin: null with 허용, which the POST refuses as foreign
+    assert page.headers["referrer-policy"] == "same-origin"
     d = client.post("/login", data={"req": req, "action": "deny"}, follow_redirects=False)  # cancel needs no token
     assert d.status_code == 303 and "error=access_denied" in d.headers["location"]
     assert client.get("/login", params={"req": req}, headers=as_user(client.key)).status_code == 400  # consumed

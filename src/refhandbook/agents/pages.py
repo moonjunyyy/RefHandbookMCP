@@ -60,7 +60,7 @@ def install(m: Any, *, stores: Callable[[str], Handbook], uid_of: Callable[[str]
     key = _key(data_dir)
 
     def _html(body: str, status: int = 200) -> HTMLResponse:
-        return page("에이전트 · 샌드박스", body, login_url=login_url, status=status, referrer="same-origin")
+        return page("에이전트 · 샌드박스", body, login_url=login_url, status=status)
 
     origin = "{0.scheme}://{0.netloc}".format(urlparse(public_url))
 
