@@ -370,20 +370,6 @@ class Research:
                 | {"sessions": lg["turn"], "pending": pend,
                    "open_sessions": [{"id": o["id"], "role": o["role"], "seq": o["seq"]} for o in live]})
 
-    def prompt(self, ledger: str, label: str = "") -> str:
-        """Hook support: count one user prompt and say how the reply starts. `label` is the client's
-        id for this conversation: begin takes it, so this conversation's sessions are known as its."""
-        import time
-        with self.db:
-            self.db.execute("UPDATE rl_ledgers SET prompts = prompts + 1 WHERE id = ?", (ledger,))
-            # a hook is not a model write: keep the digest valid for the reader
-            self.db.execute("UPDATE rl_ledgers SET token = ? WHERE id = ?", (self._digest(ledger), ledger))
-            if self.k is not None and label:
-                self.k.set_meta(f"prompt:{ledger}:{label}", repr(time.time()))
-        lab = f", label={label!r}" if label else ""
-        return (f"[research cycle active on {ledger!r}] First action: research_begin(ledger={ledger!r}{lab}); "
-                "one session per message: research_end before the reply ends.")
-
     def _column(self, sql: str, *params: Any) -> list[Any]:
         return [r[0] for r in self.db.execute(sql, params)]
 
@@ -642,28 +628,6 @@ class Research:
                 continue
             out.append((kind, ref, src, self._blocker_text(ledger, kind, ref, src)))
         out += [("check", e, "", f"CHECK {e}") for e in self.check(ledger)[0]]
-        return out
-
-    def unfinished(self, ledger: str, label: str = "") -> list[str]:
-        """For the stop hook: a chat session is one exchange (the user's message and the reply), so a
-        reply may not end with its session open, nor without a session for the last message. Whose
-        session is whose comes from the label the prompt hook gave (the client's conversation id):
-        another conversation's sessions, and agents', are not this reply's. Without a label the hook
-        cannot tell, and judges nothing."""
-        if self.k is None or not label:
-            return []
-        out = []
-        for s in sessions.open_sessions(self.k.g, ledger):
-            if s["role"] != "chat" or s["label"] != label:
-                continue
-            left = [text for *_, text in self.blockers(ledger, s["seq"], "", "chat")]
-            out.append(f"session {s['seq']} is still open: " + ("; ".join(left) + "; then " if left else "")
-                       + "research_end")
-        last = float(self.k.meta(f"prompt:{ledger}:{label}") or 0)
-        if last and not out and not self.db.execute(
-                "SELECT 1 FROM k_sessions WHERE scope = ? AND role = 'chat' AND label = ? AND active >= ?",
-                (ledger, label, last)).fetchone():
-            out.append("no research session for the last message: research_begin, register it, research_end")
         return out
 
     def _blocker_text(self, ledger: str, kind: str, ref: str, src: str) -> str:
@@ -1816,24 +1780,3 @@ def _load_cards(hb: Handbook, digest: str, data: dict[str, Any]) -> str:
     with hb.db:
         hb.db.execute("INSERT OR REPLACE INTO rl_meta VALUES ('cards', ?)", (digest,))
     return f"loaded {len(bundled)} research cards"
-
-
-def abnormal_index() -> str:
-    """The abnormal rows of the research skill's index, generated from the X pages so the skill's
-    memory items are the cards' memory items (one source)."""
-    _, data = load_pages()
-    rows = ["| signal | ◆ memory item | card |", "|---|---|---|"]
-    for e in sorted((e for e in data["entries"] if re.fullmatch(r"rs-x\d", e["id"])), key=lambda e: e["id"]):
-        signal = re.sub(r";?\s+-\s+", "; ", e["condition"].split("signal:", 1)[-1]).replace(":;", ":").strip()
-        memory = next(i["text"] for i in e["items"] if i["phase"] == "memory")
-        rows.append(f"| {signal} | **{e['id'][3:].upper()}** — {memory} | `{e['id']}` |")
-    return "\n".join(rows)
-
-
-def sync_skill_index(skill_md: str) -> str:
-    """Return skill_md with its generated abnormal index replaced by the pages' current one."""
-    begin, end = "<!-- BEGIN GENERATED: refhandbook research-index -->\n", "<!-- END GENERATED -->"
-    if begin not in skill_md or end not in skill_md:
-        raise ResearchError("the skill has no generated index markers")
-    head, rest = skill_md.split(begin, 1)
-    return head + begin + abnormal_index() + "\n" + end + rest.split(end, 1)[1]

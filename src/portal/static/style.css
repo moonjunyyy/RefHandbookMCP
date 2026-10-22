@@ -124,3 +124,6 @@ h2.section { font: 600 .72rem var(--mono); letter-spacing: .14em; text-transform
 .card.service .links a::after { content: " →"; }
 code.address { display: block; padding: 7px 9px; background: var(--soft); border-radius: 6px;
                overflow-wrap: anywhere; user-select: all; }
+pre { margin: 6px 0; padding: 8px 10px; background: var(--soft); border-radius: 6px; white-space: pre-wrap;
+      font: .85em/1.5 var(--mono); overflow-wrap: anywhere; }
+input.short { display: inline-block; width: 6rem; }

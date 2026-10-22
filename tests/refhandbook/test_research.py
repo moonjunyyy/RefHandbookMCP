@@ -442,10 +442,10 @@ def test_research_tools_over_mcp(monkeypatch):
     research_api.bind(hb)
 
     async def call(name, **arguments):
-        result = await server.mcp.call_tool(name, arguments)
+        result = await server.make().call_tool(name, arguments)
         return result.content[0].text
 
-    tools = {t.name: t for t in asyncio.run(server.mcp.list_tools())}
+    tools = {t.name: t for t in asyncio.run(server.make().list_tools())}
     assert {"research_begin", "research_end", "research_push", "research_next", "research_explore", "research_doc"} <= set(tools)
     assert tools["research_show"].annotations.read_only_hint is True
     assert tools["research_add"].annotations.idempotent_hint is False
@@ -464,16 +464,14 @@ def test_research_tools_over_mcp(monkeypatch):
     assert "rs-" not in asyncio.run(call("lookup", situation="what if we drop this assumption"))  # default: handbook only
 
 
-def test_cli_fallback_runs_the_same_tools(tmp_path):
+def test_the_cli_runs_the_same_research_tools(tmp_path):
     import subprocess
     import sys
-    from pathlib import Path
 
-    script = Path(__file__).resolve().parents[1] / "scripts" / "research.py"
     db = str(tmp_path / "r.db")
 
     def run(*args):
-        p = subprocess.run([sys.executable, "-I", str(script), "--db", db, *args], capture_output=True, text=True)
+        p = subprocess.run([sys.executable, "-I", "-m", "refhandbook", "--db", db, *args], capture_output=True, text=True)
         return p.returncode, p.stdout + p.stderr
 
     assert run("research", "research_ledgers", '{"action": "init", "ledger": "c", "question": "q"}')[0] == 0
@@ -486,22 +484,14 @@ def test_cli_fallback_runs_the_same_tools(tmp_path):
     assert code == 0 and "Research N4 — Documents" in out
 
 
-def test_skill_index_is_generated_from_the_pages():
-    from pathlib import Path
-
-    skill = (Path(__file__).resolve().parents[1] / "skills" / "research" / "SKILL.md").read_text()
-    assert research.sync_skill_index(skill) == skill, "run: refhandbook research-index --write skills/research/SKILL.md"
-
-
-def test_tool_calls_written_in_cards_and_skill_match_the_tools():
+def test_tool_calls_written_in_cards_match_the_tools():
     import inspect
     from pathlib import Path
 
     from refhandbook import research_api
 
-    root = Path(__file__).resolve().parents[1]
     sigs = {n: set(inspect.signature(f).parameters) for n, f in research_api.TOOLS.items()}
-    files = list((root / "src" / "refhandbook" / "research_pages").glob("*.md")) + [root / "skills" / "research" / "SKILL.md"]
+    files = list((Path(research.__file__).parent / "research_pages").glob("*.md"))
     for f in files:
         text = f.read_text()
         for name in re.findall(r"`(research_\w+)", text):
@@ -587,58 +577,26 @@ def test_unverified_recall_is_allowed(rs):
 def test_cli_show_loads_cards_on_a_fresh_database(tmp_path):
     import subprocess
     import sys
-    from pathlib import Path
 
-    script = Path(__file__).resolve().parents[1] / "scripts" / "research.py"
-    p = subprocess.run([sys.executable, "-I", str(script), "--db", str(tmp_path / "f.db"), "show", "rs-n1"],
+    p = subprocess.run([sys.executable, "-I", "-m", "refhandbook", "--db", str(tmp_path / "f.db"), "show", "rs-n1"],
                        capture_output=True, text=True)
     assert p.returncode == 0 and "Research N1" in p.stdout
 
 
-def test_stop_hook_judges_only_this_conversations_session(rs):
-    assert rs.unfinished("geo", "cc:me") == []
-    assert "label='cc:me'" in rs.prompt("geo", "cc:me")
-    assert rs.unfinished("geo", "cc:me") == ["no research session for the last message: research_begin, register it, research_end"]
-    assert rs.unfinished("geo", "") == []  # without the conversation's id the hook cannot tell whose is whose
-    tok(rs.begin("geo", role="agent"))
-    other = tok(rs.begin("geo", label="cc:other"))  # another conversation, mid-work: not this reply's
-    rs.add("geo", other, "U", "theirs", "user", "active")
-    assert rs.unfinished("geo", "cc:me")[0].startswith("no research session")
-    mine = tok(rs.begin("geo", label="cc:me"))
-    left = rs.unfinished("geo", "cc:me")
-    assert len(left) == 1 and left[0].startswith("session 3 is still open: NO DIRECTIVE")
-    rs.add("geo", mine, "U", "q", "user", "active")
-    rs.push("geo", mine, "await", "USER", "U2")
-    rs.set("geo", mine, "U2", "status", "answered")
-    rs.end("geo", mine)
-    assert rs.unfinished("geo", "cc:me") == []
-    st = rs.status("geo")
-    assert sorted(s["role"] for s in st["open_sessions"]) == ["agent", "chat"] and st["sessions"] == 3
-
-
-def test_skills_only_point_at_the_cards_and_no_card_teaches_an_old_name():
-    """The procedure lives in the cards (served live); a skill file a client caches only points at
-    them, so nothing stale in it can outvote a card. Old tool names appear only in the table of
+def test_no_card_teaches_an_old_name():
+    """The procedure lives in the cards (served live). Old tool names appear only in the table of
     replacements, which follows the code's own list."""
     from pathlib import Path
 
     from refhandbook.cap_api import DEPRECATED_TOOLS
 
-    root = Path(__file__).resolve().parents[1]
     hb = Handbook(":memory:")
     research.ensure_cards(hb)
-    ids = set(hb._column("SELECT id FROM entries"))
     old = {k.replace("research_review_rules", "research_review` with `rules") for k in DEPRECATED_TOOLS}
-    for skill in (root / "skills").glob("*/SKILL.md"):
-        text = skill.read_text()
-        for cid in re.findall(r"rs-[a-z0-9-]+", text):
-            assert cid in ids or cid == "rs-dom-", (skill, cid)
-        assert not [o for o in DEPRECATED_TOOLS if o in text and o != "research_review_rules"], skill
-        assert "§" not in text.split("## Index")[0]  # no rules kept here: they are cards
     table = hb.get_entry("rs-ref-old-names")["body"]
     for o in old:
         assert f"`{o}`" in table, o
-    for page in (root / "src/refhandbook/research_pages").glob("*.md"):
+    for page in (Path(research.__file__).parent / "research_pages").glob("*.md"):
         if page.name not in ("REF-SANDBOX.md", "REF-OLD-NAMES.md"):
             text = page.read_text()
             assert not [o for o in DEPRECATED_TOOLS if o in text and o != "research_review_rules"], page

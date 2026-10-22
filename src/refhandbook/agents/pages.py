@@ -33,17 +33,9 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, RedirectResponse, Response
 
 from ..kernel import proposals
+from ..page import page
 from ..store import Handbook, HandbookError
 from .workspace import Workspace
-
-CSS = """body{font:15px/1.5 system-ui,sans-serif;max-width:60rem;margin:2rem auto;padding:0 1rem;color:#222;background:#fff}
-h1{font-size:1.4rem}h2{font-size:1.1rem;margin-top:2rem;border-bottom:1px solid #ddd}
-table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid #eee;padding:.4rem;vertical-align:top;text-align:left}
-pre{background:#f6f6f6;padding:.5rem;white-space:pre-wrap;margin:.3rem 0;font-size:13px}
-form.inline{display:inline}button{padding:.25rem .8rem;margin:.1rem}input,textarea{font:inherit;width:100%;box-sizing:border-box}
-.small{width:6rem}.note{color:#555;font-size:13px}.ok{background:#e8f6e8;padding:.5rem}.err{background:#fde8e8;padding:.5rem}
-@media (prefers-color-scheme:dark){body{background:#151515;color:#ddd}pre{background:#222}td,th{border-color:#333}}"""
-
 
 def _key(data_dir: Path) -> bytes:
     p = Path(data_dir) / "agents-pages.key"
@@ -57,10 +49,14 @@ def _key(data_dir: Path) -> bytes:
 
 
 def install(m: Any, *, stores: Callable[[str], Handbook], uid_of: Callable[[str], str | None], data_dir: Path,
-            public_url: str, lock: Any, login_url: str = "/auth/login",
+            public_url: str, lock: Any, login_url: str,
             allowed: Callable[[str], bool] = lambda uid: True) -> None:
-    """Register the /agents routes on the MCP server `m` (remote.build, SSO mode only)."""
+    """Register the /agents routes on the MCP server `m` (remote.build)."""
     key = _key(data_dir)
+
+    def _html(body: str, status: int = 200) -> HTMLResponse:
+        return page("에이전트 · 샌드박스", body, login_url=login_url, status=status, referrer="same-origin")
+
     origin = "{0.scheme}://{0.netloc}".format(urlparse(public_url))
 
     def csrf(uid: str) -> str:
@@ -91,10 +87,10 @@ def install(m: Any, *, stores: Callable[[str], Handbook], uid_of: Callable[[str]
     async def post(request: Request, action: Callable[[Workspace, dict[str, str]], str]) -> Response:
         uid = who(request)
         if uid is None:
-            return _html("<p class=err>로그인이 필요합니다.</p>", 401)
+            return _html("<p class='flash error'>로그인이 필요합니다.</p>", 401)
         form = {k: str(v)[:20_000] for k, v in (await request.form()).items()}
         if not same_origin(request) or not hmac.compare_digest(form.get("csrf", ""), csrf(uid)):
-            return _html("<p class=err>요청을 확인할 수 없습니다. 페이지를 새로 열어 다시 시도하세요.</p>", 403)
+            return _html("<p class='flash error'>요청을 확인할 수 없습니다. 페이지를 새로 열어 다시 시도하세요.</p>", 403)
         try:
             done = await locked(lambda: action(Workspace(stores(uid)), form))
             return RedirectResponse(f"/agents?ok={quote(done)}", status_code=303)
@@ -172,26 +168,18 @@ def _mounts(text: str) -> list[dict[str, Any]]:
     return out
 
 
-def _html(body: str, status: int = 200) -> HTMLResponse:
-    page = (f"<!doctype html><html lang=ko><meta charset=utf-8><meta name=viewport content='width=device-width'>"
-            f"<title>에이전트 · 샌드박스</title><style>{CSS}</style><body>{body}</body></html>")
-    return HTMLResponse(page, status_code=status, headers={
-        "Cache-Control": "no-store", "X-Frame-Options": "DENY", "Referrer-Policy": "same-origin",
-        "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'"})
-
-
 def _e(x: Any) -> str:
     return html.escape(str(x))
 
 
 def _overview(ws: Workspace, uid: str, token: str, q: Any) -> str:
     g = ws.g
-    out = [f"<h1>에이전트 · 샌드박스</h1><p class=note><b>{_e(uid)}</b> · 여기서 하는 승인과 정책은 "
+    out = [f"<h1>에이전트 · 샌드박스</h1><p class='muted small'><b>{_e(uid)}</b> · 여기서 하는 승인과 정책은 "
            "모델이 대신할 수 없는, 사용자의 결정입니다.</p>"]
     if q.get("ok"):
-        out.append(f"<p class=ok>{_e(q['ok'])}</p>")
+        out.append(f"<p class='flash ok'>{_e(q['ok'])}</p>")
     if q.get("err"):
-        out.append(f"<p class=err>{_e(q['err'])}</p>")
+        out.append(f"<p class='flash error'>{_e(q['err'])}</p>")
     hidden = f"<input type=hidden name=csrf value='{token}'>"
     caps = ws.caps
 
@@ -199,7 +187,7 @@ def _overview(ws: Workspace, uid: str, token: str, q: Any) -> str:
     waiting = [r for r in caps.list() if r["attrs"].get("pending")]
     out.append(f"<h2>승인 대기 중인 권한 ({len(waiting)})</h2>")
     if not waiting:
-        out.append("<p class=note>모델이 요청한 권한 확장이 없습니다. 좁히는 변경과 스크립트는 승인 없이 바로 적용됩니다.</p>")
+        out.append("<p class='muted small'>모델이 요청한 권한 확장이 없습니다. 좁히는 변경과 스크립트는 승인 없이 바로 적용됩니다.</p>")
     for r in waiting:
         a = r["attrs"]
         k = caps.kind(a["kind"])
@@ -209,7 +197,7 @@ def _overview(ws: Workspace, uid: str, token: str, q: Any) -> str:
         ident = (f"<input type=hidden name=kind value='{_e(a['kind'])}'><input type=hidden name=name value='{_e(a['name'])}'>"
                  f"<input type=hidden name=version value='{a['pending']}'>")
         out.append(
-            f"<p><b>{_e(a['kind'])} {_e(a['name'])}</b> v{a['pending']} <span class=note>(작성: {_e(ver['author'])}"
+            f"<p><b>{_e(a['kind'])} {_e(a['name'])}</b> v{a['pending']} <span class='muted small'>(작성: {_e(ver['author'])}"
             f"{', 현재 v' + str(a['version']) if a.get('version') else ', 아직 적용된 버전 없음'})</span><br>"
             f"넓어지는 것: <b>{_e('; '.join(why) or '-')}</b>{'<br>' + _e(ver['note']) if ver['note'] else ''}</p>"
             f"<pre>{_e(json.dumps(ver['spec'], ensure_ascii=False, indent=1, sort_keys=True))}</pre>"
@@ -221,13 +209,13 @@ def _overview(ws: Workspace, uid: str, token: str, q: Any) -> str:
     rules = proposals.open_proposals(g)
     out.append(f"<h2>제안된 규칙 ({len(rules)})</h2>")
     if not rules:
-        out.append("<p class=note>열린 제안이 없습니다. 제안은 경고로만 돌다가, 여기서 승인하면 막는 규칙이 됩니다.</p>")
+        out.append("<p class='muted small'>열린 제안이 없습니다. 제안은 경고로만 돌다가, 여기서 승인하면 막는 규칙이 됩니다.</p>")
     for r in rules:
-        retires = "".join(f"<p class=note>승인하면 은퇴하는 규칙 <b>{_e(o['id'])}</b>: {_e(o.get('message', ''))}</p>"
+        retires = "".join(f"<p class='muted small'>승인하면 은퇴하는 규칙 <b>{_e(o['id'])}</b>: {_e(o.get('message', ''))}</p>"
                           f"<pre>{_e(o.get('body', ''))}</pre>" for o in r["replaces"])
         out.append(
-            f"<p><b>{_e(r['id'])}</b> <span class=note>[{_e(r['phase'])}, 승인하면 {_e(r['severity'])}] "
-            f"승인 해시 {r['approval']}</span><br>{_e(r['message'])}<br><span class=note>{_e(r['why'])}</span></p>"
+            f"<p><b>{_e(r['id'])}</b> <span class='muted small'>[{_e(r['phase'])}, 승인하면 {_e(r['severity'])}] "
+            f"승인 해시 {r['approval']}</span><br>{_e(r['message'])}<br><span class='muted small'>{_e(r['why'])}</span></p>"
             f"<pre>{_e(r['body'])}</pre>{retires}"
             f"<form class=inline method=post action='/agents/approve'>{hidden}<input type=hidden name=rule value='{_e(r['id'])}'>"
             f"<input type=hidden name=seen value='{r['approval']}'>"
@@ -236,12 +224,12 @@ def _overview(ws: Workspace, uid: str, token: str, q: Any) -> str:
             "<button>거절</button></form>")
 
     # policies
-    out.append("<h2>샌드박스 정책</h2><p class=note>정책이 곧 샌드박스입니다: 보이는 명령, 네트워크, 한도. "
+    out.append("<h2>샌드박스 정책</h2><p class='muted small'>정책이 곧 샌드박스입니다: 보이는 명령, 네트워크, 한도. "
                "한 번 허용하면 그 안의 스크립트와 실행은 다시 묻지 않습니다.</p>")
     for name in ws.policies() + [""]:
         a = ws.policy(name)["attrs"] if name else ws.policy("default")["attrs"]
         p = ws.policy(name) if name else None
-        title = f"{_e(name)} <span class=note>(작성: {_e(p['author'])})</span>" if p else "새 정책"
+        title = f"{_e(name)} <span class='muted small'>(작성: {_e(p['author'])})</span>" if p else "새 정책"
         out.append(
             f"<h3>{title}</h3><form method=post action='/agents/policy'>{hidden}"
             + (f"<input type=hidden name=name value='{_e(name)}'>" if name else
@@ -252,15 +240,15 @@ def _overview(ws: Workspace, uid: str, token: str, q: Any) -> str:
             f"<label>마운트 (한 줄에 하나: 원본 대상 [rw]; 원본은 서버가 허용한 디렉터리 아래, {{user}} 사용 가능) "
             f"<textarea name=mounts rows=2>{_e(chr(10).join(m['source'] + ' ' + m['target'] + (' rw' if m['rw'] else '') for m in a.get('mounts') or []))}</textarea></label>"
             f"<label><input type=checkbox name=network {'checked' if a['network'] else ''} style='width:auto'> 네트워크</label> "
-            f"<label>포트 <input class=small name=ports value='{_e('any' if a.get('ports') in (None, 'any') else ' '.join(map(str, a.get('ports') or [])))}'></label> "
-            + " ".join(f"<label>{lab} <input class=small name={k} value='{_e(a.get(k, ''))}'></label>"
+            f"<label>포트 <input class=short name=ports value='{_e('any' if a.get('ports') in (None, 'any') else ' '.join(map(str, a.get('ports') or [])))}'></label> "
+            + " ".join(f"<label>{lab} <input class=short name={k} value='{_e(a.get(k, ''))}'></label>"
                        for k, lab in (("timeout", "시간(초)"), ("memory_mb", "메모리MB"), ("cpus", "CPU"),
                                       ("disk_mb", "디스크MB"), ("tmp_mb", "tmpMB"), ("concurrent", "동시")))
             + "<br><button>저장</button></form>")
 
     # every record (read-only): what is in force, what a review deprecated
     recs = caps.list()
-    out.append(f"<h2>기능 기록 ({len(recs)})</h2><p class=note>스크립트·정책·레이어·규칙·카드·별칭. 각 기록은 버전이 남고, "
+    out.append(f"<h2>기능 기록 ({len(recs)})</h2><p class='muted small'>스크립트·정책·레이어·규칙·카드·별칭. 각 기록은 버전이 남고, "
                "검토 기한이 지나면 스스로 점검해 갱신되거나 폐기 예정이 됩니다.</p><table><tr><th>종류</th><th>이름</th>"
                "<th>버전</th><th>상태</th><th>작성</th><th>검토/사유</th><th>설명</th></tr>")
     for r in recs:

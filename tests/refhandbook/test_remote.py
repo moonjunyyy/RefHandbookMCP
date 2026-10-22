@@ -1,4 +1,5 @@
-"""Remote mode: OAuth sign-in against LDAP, per-user stores, the MCP endpoint over HTTP."""
+"""The handbook server: OAuth with consent after the site sign-in, per-user stores, the MCP endpoint
+over HTTP, and the approval page."""
 
 from __future__ import annotations
 
@@ -6,43 +7,72 @@ import base64
 import hashlib
 import json
 import secrets
+import time
 from urllib.parse import parse_qs, urlparse
 
+import jwt
 import pytest
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from starlette.testclient import TestClient
 
 from refhandbook import remote, research_api, server
 
 BASE = "http://localhost:8765"
+ISS = "https://www.m00nny.kr"
 CALLBACK = "https://claude.ai/api/mcp/auth_callback"
 
 
-class FakeDirectory:
-    """uid → password; the LDAP class is tested separately against ldap3's mock server."""
+class FakeAccounts:
+    """The account policy (NSS + group) in remote.Accounts; here a set of uids."""
 
-    def __init__(self, users: dict[str, str]):
-        self.users = users
+    def __init__(self, uids):
+        self.present = set(uids)
 
-    def authenticate(self, username: str, password: str) -> str | None:
-        u = username.strip().lower()
-        return u if password and self.users.get(u) == password else None
+    def exists(self, uid):
+        return uid in self.present
+
+
+@pytest.fixture
+def key():
+    return Ed25519PrivateKey.generate()
 
 
 @pytest.fixture
 def cfg(tmp_path):
-    return remote.Config(public_url=BASE, data_dir=tmp_path / "data")
+    return remote.Config(public_url=BASE, data_dir=tmp_path / "data", sso_public_key_file="(given)", sso_issuer=ISS)
 
 
 @pytest.fixture
-def client(cfg):
-    m = remote.build(cfg, FakeDirectory({"moon": "pw-moon", "kim": "pw-kim"}))
+def accounts():
+    return FakeAccounts({"moon", "kim"})
+
+
+@pytest.fixture
+def built(cfg, accounts, key):
+    m = remote.build(cfg, accounts, remote.SsoTokens(cfg, key.public_key()))
+    m.key = key  # type: ignore[attr-defined]
     try:
-        with TestClient(m.http_app(), base_url=BASE) as c:
-            c.provider = m.provider  # type: ignore[attr-defined]
-            yield c
-    finally:  # later tests use the local (stdio) binding
+        yield m
+    finally:  # the stores are bound per server
         server._user_store = None
         research_api.use_resolver(None)
+
+
+@pytest.fixture
+def client(built):
+    with TestClient(built.http_app(), base_url=BASE) as c:
+        c.provider, c.key = built.provider, built.key  # type: ignore[attr-defined]
+        yield c
+
+
+def site_token(key, uid="moon", aud="refhandbook", ttl=60):
+    """What the site sign-in (portal.sso) mints for this app, and nginx passes in X-Auth-Token."""
+    now = int(time.time())
+    return jwt.encode({"iss": ISS, "aud": aud, "sub": uid, "iat": now, "exp": now + ttl}, key, algorithm="EdDSA")
+
+
+def as_user(key, uid="moon"):
+    return {"X-Auth-Token": site_token(key, uid), "Origin": BASE}
 
 
 def pkce() -> tuple[str, str]:
@@ -68,13 +98,15 @@ def start(c, client_id, challenge, state="st-1"):
     return parse_qs(loc.query)["req"][0]
 
 
-def sign_in(c, user="moon", password=None):
-    """Full flow; returns (token response, client_id)."""
+def allow(c, req, uid="moon"):
+    return c.post("/login", data={"req": req, "action": "allow"}, headers=as_user(c.key, uid), follow_redirects=False)
+
+
+def sign_in(c, user="moon"):
+    """The full flow, signed in to the site as `user`; returns (token response, client_id)."""
     cid = register(c).json()["client_id"]
     verifier, challenge = pkce()
-    req = start(c, cid, challenge)
-    r = c.post("/login", data={"req": req, "username": user, "password": password or f"pw-{user}", "action": "allow"},
-               follow_redirects=False)
+    r = allow(c, start(c, cid, challenge), user)
     assert r.status_code == 303, r.text
     q = parse_qs(urlparse(r.headers["location"]).query)
     assert q["state"] == ["st-1"]
@@ -137,7 +169,7 @@ def test_registration_refuses_foreign_redirects(client):
     assert register(client, "http://localhost:53682/callback").status_code == 201  # Claude Code's loopback
 
 
-# ── sign-in ──────────────────────────────────────────────────────────────
+# ── consent after the site sign-in ───────────────────────────────────────
 
 
 def test_full_flow_and_per_user_isolation(client, cfg):
@@ -165,37 +197,57 @@ def test_full_flow_and_per_user_isolation(client, cfg):
     assert (cfg.data_dir / "users" / "moon.db").exists() and (cfg.data_dir / "users" / "kim.db").exists()
 
 
-def test_wrong_password_lockout_and_deny(client):
+def test_consent_page_and_deny(client):
+    cid = register(client).json()["client_id"]
+    req = start(client, cid, pkce()[1])
+    r = client.get("/login", params={"req": req}, follow_redirects=False)  # not signed in to the site
+    assert r.status_code == 303 and r.headers["location"] == f"/auth/login?next=/login?req={req}"
+    page = client.get("/login", params={"req": req}, headers=as_user(client.key))
+    assert page.status_code == 200 and "<b>moon</b>" in page.text and "허용" in page.text and "password" not in page.text
+    assert f"/auth/login?switch=1&amp;next=/login?req={req}" in page.text
+    assert "/auth/static/style.css" in page.text  # the site's look, from the site's stylesheet
+    assert "form-action 'self' https://claude.ai" in page.headers["content-security-policy"]
+    d = client.post("/login", data={"req": req, "action": "deny"}, follow_redirects=False)  # cancel needs no token
+    assert d.status_code == 303 and "error=access_denied" in d.headers["location"]
+    assert client.get("/login", params={"req": req}, headers=as_user(client.key)).status_code == 400  # consumed
+
+
+def test_consent_refuses_bad_tokens_foreign_posts_and_accounts(client):
+    cid = register(client).json()["client_id"]
+    req = start(client, cid, pkce()[1])
+    other = Ed25519PrivateKey.generate()
+    for bad in (site_token(client.key, aud="account"), site_token(other), site_token(client.key, ttl=-60), "junk"):
+        r = client.post("/login", data={"req": req, "action": "allow"},
+                        headers={"X-Auth-Token": bad, "X-Remote-User": "moon", "Origin": BASE}, follow_redirects=False)
+        assert r.status_code == 303 and r.headers["location"].startswith("/auth/login")
+    r = client.post("/login", data={"req": req, "action": "allow"},
+                    headers={**as_user(client.key), "Origin": "https://evil.example"}, follow_redirects=False)
+    assert r.status_code == 403  # a POST from another site, even with a valid token
+    client.provider.directory.present.discard("kim")
+    r = allow(client, req, "kim")
+    assert r.status_code == 403 and "쓸 수 없습니다" in r.text  # signed in, but not allowed here
+    assert remote.SsoTokens(client.provider.cfg, client.key.public_key()).uid(site_token(client.key, "\u212aim")) is None
+
+
+def test_enter_submits_allow_not_cancel(client):
+    """Pressing Enter submits with the form's first submit button (HTML implicit submission): it must
+    be allow, or every Enter sends access_denied back to the client."""
+    import re as _re
+
     cid = register(client).json()["client_id"]
     _, challenge = pkce()
-    req = start(client, cid, challenge)
-    page = client.get("/login", params={"req": req})
-    assert page.status_code == 200 and "Claude" in page.text
-    assert "form-action 'self' https://claude.ai" in page.headers["content-security-policy"]
-    bad = client.post("/login", data={"req": req, "username": "moon", "password": "nope", "action": "allow"})
-    assert bad.status_code == 401 and "맞지 않습니다" in bad.text
-    empty = client.post("/login", data={"req": req, "username": "moon", "password": "", "action": "allow"})
-    assert empty.status_code == 401
-    # deny sends the browser back with access_denied
-    d = client.post("/login", data={"req": req, "action": "deny"}, follow_redirects=False)
-    assert d.status_code == 303 and "error=access_denied" in d.headers["location"]
-    assert client.get("/login", params={"req": req}).status_code == 400  # request consumed
-
-    # five failures lock the user, even with a fresh request and the right password
-    for _ in range(5):
-        req = start(client, cid, challenge)
-        client.post("/login", data={"req": req, "username": "kim", "password": "x", "action": "allow"})
-    req = start(client, cid, challenge)
-    locked = client.post("/login", data={"req": req, "username": "kim", "password": "pw-kim", "action": "allow"})
-    assert locked.status_code == 429
+    page = client.get("/login", params={"req": start(client, cid, challenge)}, headers=as_user(client.key)).text
+    first = _re.search(r'<button[^>]*name="action"[^>]*value="(\w+)"', page)
+    assert first and first.group(1) == "allow"
+    req = start(client, cid, challenge)  # a submit without an action value (some clients) is not a cancel
+    r = client.post("/login", data={"req": req}, headers=as_user(client.key), follow_redirects=False)
+    assert r.status_code == 400 and "access_denied" not in r.headers.get("location", "")
 
 
 def test_code_single_use_refresh_rotation_revoke(client):
     cid = register(client).json()["client_id"]
     verifier, challenge = pkce()
-    req = start(client, cid, challenge)
-    r = client.post("/login", data={"req": req, "username": "moon", "password": "pw-moon", "action": "allow"},
-                    follow_redirects=False)
+    r = allow(client, start(client, cid, challenge))
     code = parse_qs(urlparse(r.headers["location"]).query)["code"][0]
     form = {"grant_type": "authorization_code", "code": code, "redirect_uri": CALLBACK, "client_id": cid,
             "code_verifier": verifier}
@@ -238,182 +290,73 @@ def test_wrong_resource_refused(client):
     assert "location" not in r.headers or "/login" not in r.headers["location"]
 
 
-# ── LDAP ─────────────────────────────────────────────────────────────────
+# ── configuration ───────────────────────────────────────────────────────
 
 
 @pytest.fixture
-def ldap_server():
-    from ldap3 import MOCK_SYNC, OFFLINE_SLAPD_2_4, Connection, Server
-
-    s = Server("mock", get_info=OFFLINE_SLAPD_2_4)
-    c = Connection(s, client_strategy=MOCK_SYNC)
-    add = c.strategy.add_entry
-    add("cn=svc,dc=ex,dc=org", {"objectClass": ["person"], "sn": "svc", "userPassword": "svcpw"})
-    for uid, pw, n in (("moon", "pw1", 1000), ("kim", "pw2", 1001)):
-        add(f"uid={uid},ou=people,dc=ex,dc=org", {
-            "objectClass": ["posixAccount", "inetOrgPerson"], "uid": uid, "cn": uid, "sn": uid,
-            "userPassword": pw, "uidNumber": n, "gidNumber": n, "homeDirectory": f"/home/{uid}"})
-    add("cn=research,ou=groups,dc=ex,dc=org", {"objectClass": ["posixGroup"], "cn": "research",
-                                                "gidNumber": 2000, "memberUid": ["moon"]})
-    return s
+def site_env(monkeypatch, tmp_path):
+    monkeypatch.setenv("RHB_PUBLIC_URL", ISS)
+    monkeypatch.setenv("RHB_SSO_PUBLIC_KEY_FILE", str(tmp_path / "sso-public.pem"))
+    monkeypatch.setenv("RHB_DATA_DIR", str(tmp_path / "data"))
+    return monkeypatch
 
 
-def ldap_cfg(tmp_path, **kw):
-    return remote.Config(public_url=BASE, data_dir=tmp_path, ldap_user_base="ou=people,dc=ex,dc=org", **kw)
-
-
-def test_ldap_search_then_bind(tmp_path, ldap_server):
-    from ldap3 import MOCK_SYNC
-
-    a = remote.LdapAuthenticator(ldap_cfg(tmp_path, ldap_bind_dn="cn=svc,dc=ex,dc=org", ldap_bind_password="svcpw"),
-                                 ldap_server, client_strategy=MOCK_SYNC)
-    assert a.authenticate("Moon", "pw1") == "moon"
-    assert a.authenticate("moon", "wrong") is None
-    assert a.authenticate("moon", "") is None  # never an anonymous bind
-    assert a.authenticate("nobody", "pw1") is None
-    assert a.authenticate("moon)(uid=*", "pw1") is None  # not a POSIX name: refused before the filter
-
-
-def test_ldap_anonymous_search_template_and_group(tmp_path, ldap_server):
-    from ldap3 import MOCK_SYNC
-
-    anon = remote.LdapAuthenticator(ldap_cfg(tmp_path), ldap_server, client_strategy=MOCK_SYNC)
-    assert anon.authenticate("kim", "pw2") == "kim"
-    tmpl = remote.LdapAuthenticator(ldap_cfg(tmp_path, ldap_user_dn="uid={uid},ou=people,dc=ex,dc=org"),
-                                    ldap_server, client_strategy=MOCK_SYNC)
-    assert tmpl.authenticate("kim", "pw2") == "kim"
-    group = remote.LdapAuthenticator(
-        ldap_cfg(tmp_path, ldap_group_base="ou=groups,dc=ex,dc=org",
-                 ldap_group_filter="(&(objectClass=posixGroup)(cn=research)(memberUid={uid}))"),
-        ldap_server, client_strategy=MOCK_SYNC)
-    assert group.authenticate("moon", "pw1") == "moon"
-    assert group.authenticate("kim", "pw2") is None  # right password, not in the group
-
-
-# ── configuration and packaging ──────────────────────────────────────────
-
-
-def test_a_note_after_a_url_setting_is_refused_at_start(monkeypatch):
+def test_a_note_after_a_url_setting_is_refused_at_start(site_env):
     """systemd keeps "https://x   (default: …)" as the whole value; the token check would then fail
     on every request with only "Invalid issuer" to show for it."""
-    monkeypatch.setenv("RHB_PUBLIC_URL", "https://www.m00nny.kr")
-    monkeypatch.setenv("RHB_SSO_ISSUER", "https://www.m00nny.kr      (default: RHB_PUBLIC_URL)")
+    site_env.setenv("RHB_SSO_ISSUER", f"{ISS}      (default: RHB_PUBLIC_URL)")
     with pytest.raises(SystemExit, match="RHB_SSO_ISSUER"):
         remote.Config.from_env()
-    monkeypatch.setenv("RHB_SSO_ISSUER", "https://www.m00nny.kr")
-    assert remote.Config.from_env().sso_issuer == "https://www.m00nny.kr"
-    monkeypatch.delenv("RHB_SSO_ISSUER")
-    assert remote.Config.from_env().sso_issuer == "https://www.m00nny.kr"  # the public URL
+    site_env.setenv("RHB_SSO_ISSUER", ISS)
+    assert remote.Config.from_env().sso_issuer == ISS
+    site_env.delenv("RHB_SSO_ISSUER")
+    assert remote.Config.from_env().sso_issuer == ISS  # the public URL
 
 
-def test_config_and_redirects(monkeypatch, tmp_path):
-    monkeypatch.setenv("RHB_PUBLIC_URL", "http://hb.example.org")
-    with pytest.raises(SystemExit):
-        remote.Config.from_env()
-    monkeypatch.setenv("RHB_PUBLIC_URL", "https://hb.example.org/sub")
-    with pytest.raises(SystemExit):
-        remote.Config.from_env()
-    pw = tmp_path / "pw"
-    pw.write_text("s3cret\n")
-    monkeypatch.setenv("RHB_PUBLIC_URL", "https://hb.example.org/")
-    monkeypatch.setenv("RHB_LDAP_BIND_PASSWORD_FILE", str(pw))
+def test_config_needs_the_site_and_takes_the_units_state_directory(site_env, tmp_path):
     c = remote.Config.from_env()
-    assert c.public_url == "https://hb.example.org" and c.resource_url == "https://hb.example.org/mcp"
-    assert c.ldap_bind_password == "s3cret"
-    allow = remote.DEFAULT_REDIRECTS
-    assert remote.redirect_allowed("http://localhost:4312/callback", allow)
-    assert remote.redirect_allowed(CALLBACK, allow)
-    assert not remote.redirect_allowed("https://claude.ai.evil.example/api/mcp/auth_callback", allow)
-    assert not remote.redirect_allowed("http://localhost.evil.example:80/cb", allow)
+    assert c.public_url == ISS and c.resource_url == ISS + "/mcp" and c.data_dir == tmp_path / "data"
+    site_env.delenv("RHB_DATA_DIR")
+    site_env.setenv("STATE_DIRECTORY", str(tmp_path / "state"))  # systemd's StateDirectory=
+    assert remote.Config.from_env().data_dir == tmp_path / "state"
+    site_env.delenv("STATE_DIRECTORY")
+    with pytest.raises(SystemExit, match="RHB_DATA_DIR"):
+        remote.Config.from_env()
+    site_env.setenv("RHB_DATA_DIR", str(tmp_path / "data"))
+    site_env.delenv("RHB_SSO_PUBLIC_KEY_FILE")
+    with pytest.raises(SystemExit, match="RHB_SSO_PUBLIC_KEY_FILE"):
+        remote.Config.from_env()  # no default: the installer passes the site's key
+    site_env.setenv("RHB_SSO_PUBLIC_KEY_FILE", "/k.pem")
+    for bad in ("http://hb.example.org", "https://hb.example.org/sub"):
+        site_env.setenv("RHB_PUBLIC_URL", bad)
+        with pytest.raises(SystemExit):
+            remote.Config.from_env()
 
 
-def test_plugin_json_cli(tmp_path, capsys):
-    from refhandbook import cli
-
-    out = tmp_path / "plugin.json"
-    assert cli.main(["plugin-json", "https://hb.example.org/mcp", "--write", str(out)]) == 0
-    pj = json.loads(out.read_text())
-    assert pj["mcpServers"] == {"refhandbook": {"type": "http", "url": "https://hb.example.org/mcp"}}
-    assert "command" not in json.dumps(pj)
-
-
-def test_nslcd_translation():
-    conf = """# /etc/nslcd.conf
-uid nslcd
-gid nslcd
-uri ldap://ldap.ex.org ldap://ldap2.ex.org
-base dc=ex,dc=org
-base passwd ou=people,dc=ex,dc=org
-base group ou=groups,dc=ex,dc=org
-binddn cn=nslcd,dc=ex,dc=org
-bindpw hunter2
-ssl start_tls
-tls_reqcert demand
-tls_cacertfile /etc/ssl/certs/ldap-ca.pem
-"""
-    from refhandbook.nslcd import env_from_nslcd
-
-    lines, notes = env_from_nslcd(conf)
-    env = dict(line.split("=", 1) for line in lines)
-    assert env["RHB_LDAP_URI"] == "ldap://ldap.ex.org"
-    assert env["RHB_LDAP_STARTTLS"] == "1"
-    assert env["RHB_LDAP_USER_BASE"] == "ou=people,dc=ex,dc=org"
-    assert env["RHB_LDAP_GROUP_BASE"] == "ou=groups,dc=ex,dc=org"
-    assert env["RHB_LDAP_USER_FILTER"] == "(&(objectClass=posixAccount)(uid={uid}))"
-    assert env["RHB_LDAP_CA_FILE"] == "/etc/ssl/certs/ldap-ca.pem"
-    assert "hunter2" not in "\n".join(lines + notes)
-    anon, n2 = env_from_nslcd("uri ldapi:///\nbase dc=ex,dc=org\n")
-    assert "RHB_LDAP_BIND_DN" not in "\n".join(anon) and any("anonymously" in n for n in n2)
+def test_redirects_are_matched_strictly():
+    allow_ = remote.DEFAULT_REDIRECTS
+    assert remote.redirect_allowed("http://localhost:4312/callback", allow_)
+    assert remote.redirect_allowed(CALLBACK, allow_)
+    for bad in ("https://claude.ai.evil.example/api/mcp/auth_callback", "http://localhost.evil.example:80/cb",
+                "http://evil.example\\@localhost/", "http://user@localhost:5000/cb", "http://localhost:5000/cb#frag",
+                "javascript://localhost:5000/"):
+        assert not remote.redirect_allowed(bad, allow_), bad
 
 
 def test_env_file(tmp_path, monkeypatch):
     from refhandbook import cli
 
     f = tmp_path / "env"
-    f.write_text("# c\nRHB_LDAP_USER_FILTER=(&(objectClass=posixAccount)(uid={uid}))\nRHB_X='a b'\nRHB_X=later\n")
+    f.write_text("# c\nRHB_Y=(&(objectClass=posixAccount)(uid={uid}))\nRHB_X='a b'\nRHB_X=later\n")
     monkeypatch.delenv("RHB_X", raising=False)
     cli.load_env_file(str(f))
     import os
 
-    assert os.environ["RHB_LDAP_USER_FILTER"] == "(&(objectClass=posixAccount)(uid={uid}))"
-    assert os.environ["RHB_X"] == "later"
+    assert os.environ["RHB_Y"] == "(&(objectClass=posixAccount)(uid={uid}))" and os.environ["RHB_X"] == "later"
+    monkeypatch.delenv("RHB_Y")
 
 
-# ── review regressions ───────────────────────────────────────────────────
-
-
-class SlowDirectory(FakeDirectory):
-    """Counts password checks; each takes a while, so concurrent posts overlap."""
-
-    def __init__(self, users, delay=0.2):
-        super().__init__(users)
-        self.calls = 0
-        self.delay = delay
-        self.present = set(users)
-        self.down = False
-
-    def authenticate(self, username, password):
-        import time
-
-        self.calls += 1
-        time.sleep(self.delay)
-        return super().authenticate(username, password)
-
-    def exists(self, uid):
-        if self.down:
-            raise remote.DirectoryUnavailable("down")
-        return uid in self.present
-
-
-@pytest.fixture
-def slow(cfg):
-    d = SlowDirectory({"moon": "pw-moon", "kim": "pw-kim"})
-    m = remote.build(cfg, d)
-    try:
-        yield m, d
-    finally:
-        server._user_store = None
-        research_api.use_resolver(None)
+# ── tokens over time ─────────────────────────────────────────────────────
 
 
 def _async_client(m, peer="127.0.0.1"):
@@ -436,59 +379,6 @@ async def _client_id(c):
     return r.json()["client_id"]
 
 
-def test_concurrent_posts_cannot_bypass_lockout(slow):
-    import asyncio
-
-    m, d = slow
-
-    async def run():
-        async with _async_client(m) as c:
-            cid = await _client_id(c)
-            _, ch = pkce()
-            one = await _new_req(c, cid, ch)
-            burst = [c.post("/login", data={"req": one, "username": "moon", "password": f"guess{i}", "action": "allow"})
-                     for i in range(40)]
-            await asyncio.gather(*burst)
-            per_request = d.calls
-            reqs = [await _new_req(c, cid, ch) for _ in range(40)]
-            d.calls = 0
-            await asyncio.gather(*[c.post("/login", data={"req": r, "username": "kim", "password": f"g{i}",
-                                                          "action": "allow"}) for i, r in enumerate(reqs)])
-            return per_request, d.calls
-
-    per_request, across = asyncio.run(run())
-    assert per_request <= 5, per_request  # one sign-in request: at most five checks
-    assert across <= 5, across  # many requests, one (uid, address): at most five checks
-
-
-def test_lockout_is_per_address_and_ignores_junk_names(slow):
-    import asyncio
-
-    m, d = slow
-    d.delay = 0
-
-    async def run():
-        async with _async_client(m) as c:
-            cid = await _client_id(c)
-            verifier, ch = pkce()
-            for i in range(5):
-                await c.post("/login", data={"req": await _new_req(c, cid, ch), "username": "kim", "password": "x",
-                                             "action": "allow"}, headers={"X-Forwarded-For": "203.0.113.9"})
-            locked = await c.post("/login", data={"req": await _new_req(c, cid, ch), "username": "kim",
-                                                  "password": "pw-kim", "action": "allow"},
-                                  headers={"X-Forwarded-For": "203.0.113.9"})
-            other = await c.post("/login", data={"req": await _new_req(c, cid, ch), "username": "kim",
-                                                 "password": "pw-kim", "action": "allow"},
-                                 headers={"X-Forwarded-For": "198.51.100.7"})
-            await c.post("/login", data={"req": await _new_req(c, cid, ch), "username": "x" * 500_000,
-                                         "password": "p", "action": "allow"})
-            return locked.status_code, other.status_code
-
-    locked, other = asyncio.run(run())
-    assert locked == 429 and other == 303
-    assert all(len(k[0]) <= 64 for k in m.provider.failures)  # junk names are never keys
-
-
 def _signed_in(m):
     import asyncio
 
@@ -496,8 +386,8 @@ def _signed_in(m):
         async with _async_client(m) as c:
             cid = await _client_id(c)
             verifier, ch = pkce()
-            r = await c.post("/login", data={"req": await _new_req(c, cid, ch), "username": "moon",
-                                             "password": "pw-moon", "action": "allow"})
+            r = await c.post("/login", data={"req": await _new_req(c, cid, ch), "action": "allow"},
+                             headers=as_user(m.key))
             code = parse_qs(urlparse(r.headers["location"]).query)["code"][0]
             t = await c.post("/token", data={"grant_type": "authorization_code", "code": code, "redirect_uri": CALLBACK,
                                              "client_id": cid, "code_verifier": verifier})
@@ -520,23 +410,18 @@ def _refresh(m, cid, rt):
     return _post(m, "/token", {"grant_type": "refresh_token", "refresh_token": rt, "client_id": cid})
 
 
-def test_refresh_rechecks_the_directory(slow):
-    m, d = slow
-    d.delay = 0
+def test_refresh_rechecks_the_account(built, accounts):
+    m = built
     cid, t = _signed_in(m)
-    d.down = True
-    assert _refresh(m, cid, t["refresh_token"]).status_code == 400  # cannot confirm: refused, not waved through
-    d.down = False
     n = _refresh(m, cid, t["refresh_token"])
     assert n.status_code == 200
-    d.present.discard("moon")  # account removed, or taken out of the group
+    accounts.present.discard("moon")  # account removed, or taken out of the group
     assert _refresh(m, cid, n.json()["refresh_token"]).status_code == 400
     assert m.provider.db.execute("SELECT count(*) FROM tokens WHERE subject='moon'").fetchone()[0] == 0
 
 
-def test_refresh_replay_revokes_family_and_session_ends(slow, cfg):
-    m, d = slow
-    d.delay = 0
+def test_refresh_replay_revokes_family_and_session_ends(built, cfg):
+    m = built
     cid, t = _signed_in(m)
     n = _refresh(m, cid, t["refresh_token"]).json()
     assert _refresh(m, cid, t["refresh_token"]).status_code == 400  # the old one comes back ...
@@ -547,29 +432,26 @@ def test_refresh_replay_revokes_family_and_session_ends(slow, cfg):
     assert _refresh(m, cid, t["refresh_token"]).status_code == 400  # absolute session lifetime
 
 
-def test_revoking_an_expired_access_token_kills_its_refresh(slow):
-    m, d = slow
-    d.delay = 0
+def test_revoking_an_expired_access_token_kills_its_refresh(built):
+    m = built
     cid, t = _signed_in(m)
     m.provider.db.execute("UPDATE tokens SET expires = 1 WHERE kind='access'")
     assert _post(m, "/revoke", {"token": t["access_token"], "client_id": cid, "client_secret": ""}).status_code == 200
     assert _refresh(m, cid, t["refresh_token"]).status_code == 400
 
 
-def test_double_submit_and_resource_and_cleanup(slow):
+def test_double_submit_and_resource_and_cleanup(built):
     import asyncio
-    import time
 
-    m, d = slow
-    d.delay = 0.1
+    m = built
 
     async def run():
         async with _async_client(m) as c:
             cid = await _client_id(c)
             _, ch = pkce()
             req = await _new_req(c, cid, ch)
-            both = await asyncio.gather(*[c.post("/login", data={"req": req, "username": "moon", "password": "pw-moon",
-                                                                 "action": "allow"}) for _ in range(2)])
+            both = await asyncio.gather(*[c.post("/login", data={"req": req, "action": "allow"},
+                                                 headers=as_user(m.key)) for _ in range(2)])
             evil = await c.get("/authorize", params={
                 "response_type": "code", "client_id": cid, "redirect_uri": CALLBACK, "state": "s",
                 "code_challenge": ch, "code_challenge_method": "S256",
@@ -586,318 +468,6 @@ def test_double_submit_and_resource_and_cleanup(slow):
     assert p.db.execute("SELECT count(*) FROM clients WHERE signed_in=1").fetchone()[0] == 1  # kept
 
 
-def test_redirect_and_unicode_hardening(tmp_path, ldap_server, monkeypatch):
-    from ldap3 import MOCK_SYNC
-
-    allow = remote.DEFAULT_REDIRECTS
-    assert not remote.redirect_allowed("http://evil.example\\@localhost/", allow)
-    assert not remote.redirect_allowed("http://user@localhost:5000/cb", allow)
-    assert not remote.redirect_allowed("http://localhost:5000/cb#frag", allow)
-    assert not remote.redirect_allowed("javascript://localhost:5000/", allow)
-    a = remote.LdapAuthenticator(ldap_cfg(tmp_path), ldap_server, client_strategy=MOCK_SYNC)
-    assert a.authenticate("Kim", "pw2") is None  # Kelvin sign lowers to 'k'
-    monkeypatch.setenv("RHB_PUBLIC_URL", "https://hb.example.org")
-    monkeypatch.setenv("RHB_LDAP_URI", "ldap://ldap.example.org")
-    assert remote.Config.from_env().auth == "pam"  # the default does not use LDAP for passwords
-    monkeypatch.setenv("RHB_AUTH", "ldap")
-    with pytest.raises(SystemExit):
-        remote.Config.from_env()  # passwords would cross the network in clear
-    monkeypatch.setenv("RHB_LDAP_STARTTLS", "1")
-    assert remote.Config.from_env().ldap_starttls
-
-
-def test_ldap_exists(tmp_path, ldap_server):
-    from ldap3 import MOCK_SYNC
-
-    g = remote.LdapAuthenticator(
-        ldap_cfg(tmp_path, ldap_group_base="ou=groups,dc=ex,dc=org",
-                 ldap_group_filter="(&(objectClass=posixGroup)(cn=research)(memberUid={uid}))"),
-        ldap_server, client_strategy=MOCK_SYNC)
-    assert g.exists("moon") is True
-    assert g.exists("kim") is False  # present, not in the group
-    assert g.exists("nobody") is False
-
-
-def test_client_address_through_proxies(monkeypatch):
-    lan = ("127.0.0.1", "::1", "192.168.0.1")
-    # router (192.168.0.1) terminates TLS and forwards straight to the app
-    assert remote.client_address("192.168.0.1", "203.0.113.5", lan) == "203.0.113.5"
-    # router -> nginx on the server -> app: nginx appends the router's address
-    assert remote.client_address("127.0.0.1", "203.0.113.5, 192.168.0.1", lan) == "203.0.113.5"
-    # a client cannot pick its own address by sending X-Forwarded-For
-    assert remote.client_address("192.168.0.1", "1.2.3.4, 203.0.113.5", lan) == "203.0.113.5"
-    # an untrusted peer's header is ignored
-    assert remote.client_address("198.51.100.9", "1.2.3.4", lan) == "198.51.100.9"
-    # the router sends no header: every sign-in looks like the router
-    assert remote.client_address("192.168.0.1", "", lan) == "192.168.0.1"
-    monkeypatch.setenv("RHB_PUBLIC_URL", "https://hb.example.org")
-    monkeypatch.setenv("RHB_TRUSTED_PROXIES", "127.0.0.1, 192.168.0.0/24")
-    monkeypatch.setenv("RHB_ALLOWED_HOSTS", "hb.example.org:443")
-    c = remote.Config.from_env()
-    assert c.trusted_proxies == ("127.0.0.1", "192.168.0.0/24") and c.extra_hosts == ("hb.example.org:443",)
-    monkeypatch.setenv("RHB_TRUSTED_PROXIES", "192.168.0.300")
-    with pytest.raises(ValueError):
-        remote.Config.from_env()
-
-
-# ── PAM (real libpam, pam_unix, a throwaway account; root only) ─────────
-
-
-@pytest.fixture
-def pam_account(tmp_path):
-    import os
-    import shutil
-    import subprocess
-    from pathlib import Path
-
-    if os.geteuid() != 0 or not Path("/etc/pam.d").is_dir() or not shutil.which("useradd"):
-        pytest.skip("needs root, PAM and useradd")
-    user, group, service = "rhbpamtest", "rhbpamgrp", "refhandbook-test"
-    subprocess.run(["userdel", user], capture_output=True)
-    subprocess.run(["groupdel", group], capture_output=True)
-    subprocess.run(["groupadd", group], check=True)
-    subprocess.run(["useradd", "--no-create-home", "--shell", "/usr/sbin/nologin", user], check=True)
-    subprocess.run(["chpasswd"], input=f"{user}:s3cret-Pw\n", text=True, check=True)
-    svc = Path("/etc/pam.d") / service
-    svc.write_text("auth required pam_unix.so\naccount required pam_unix.so\n")
-    try:
-        yield user, group, service
-    finally:
-        svc.unlink(missing_ok=True)
-        subprocess.run(["userdel", user], capture_output=True)
-        subprocess.run(["groupdel", group], capture_output=True)
-
-
-def test_pam_authenticator(pam_account, tmp_path):
-    import subprocess
-
-    user, group, service = pam_account
-    a = remote.PamAuthenticator(remote.Config(public_url=BASE, data_dir=tmp_path, pam_service=service))
-    assert a.authenticate(user, "s3cret-Pw") == user
-    assert a.authenticate(user.upper(), "s3cret-Pw") == user  # canonical name from NSS
-    assert a.authenticate(user, "wrong") is None
-    assert a.authenticate(user, "") is None
-    assert a.authenticate("nosuchuser", "s3cret-Pw") is None
-    assert a.exists(user) and not a.exists("nosuchuser")
-
-    g = remote.PamAuthenticator(remote.Config(public_url=BASE, data_dir=tmp_path, pam_service=service,
-                                              require_group=group))
-    assert g.authenticate(user, "s3cret-Pw") is None and not g.exists(user)  # right password, not in the group
-    subprocess.run(["usermod", "-aG", group, user], check=True)
-    assert g.authenticate(user, "s3cret-Pw") == user and g.exists(user)
-
-
-def test_enter_submits_login_not_cancel(client):
-    """Pressing Enter submits with the form's first submit button (HTML implicit submission):
-    it must be the login button, or every Enter sends access_denied back to the client."""
-    import re as _re
-
-    cid = register(client).json()["client_id"]
-    _, challenge = pkce()
-    page = client.get("/login", params={"req": start(client, cid, challenge)}).text
-    first = _re.search(r'<button[^>]*name="action"[^>]*value="(\w+)"', page)
-    assert first and first.group(1) == "allow"
-    # a submit without an action value (some clients) is not taken as a cancel
-    req = start(client, cid, challenge)
-    r = client.post("/login", data={"req": req, "username": "moon", "password": "pw-moon"}, follow_redirects=False)
-    assert r.status_code == 400 and "access_denied" not in r.headers.get("location", "")
-
-
-# ── account portal links and passwords that must be changed first ────────
-
-
-class ChangeFirstDirectory(FakeDirectory):
-    """'otp-*' passwords are right but one-time: PAM asks for a new one."""
-
-    def authenticate(self, username, password):
-        if password.startswith("otp-"):
-            raise remote.PasswordChangeRequired(username)
-        return super().authenticate(username, password)
-
-
-@pytest.fixture
-def portal_client(tmp_path):
-    cfg = remote.Config(public_url=BASE, data_dir=tmp_path / "data", account_url="/account")
-    m = remote.build(cfg, ChangeFirstDirectory({"moon": "pw-moon"}))
-    try:
-        with TestClient(m.http_app(), base_url=BASE) as c:
-            c.provider = m.provider  # type: ignore[attr-defined]
-            yield c
-    finally:
-        server._user_store = None
-        research_api.use_resolver(None)
-
-
-def test_login_page_links_to_account_portal(portal_client, client):
-    cid = register(portal_client).json()["client_id"]
-    page = portal_client.get("/login", params={"req": start(portal_client, cid, pkce()[1])}).text
-    assert 'href="/account/request"' in page and 'href="/account/expired"' in page
-    cid = register(client).json()["client_id"]  # no RHB_ACCOUNT_URL: no links
-    assert "/request" not in client.get("/login", params={"req": start(client, cid, pkce()[1])}).text
-
-
-def test_password_change_required(portal_client):
-    cid = register(portal_client).json()["client_id"]
-    for _ in range(6):  # a right but one-time password is not a failure: no lockout
-        req = start(portal_client, cid, pkce()[1])
-        r = portal_client.post("/login", data={"req": req, "username": "moon", "password": "otp-1", "action": "allow"},
-                               follow_redirects=False)
-        assert r.status_code == 403 and "변경해야" in r.text and 'href="/account/expired"' in r.text
-    sign_in(portal_client)  # the real password still works
-
-
-def test_account_url_config(monkeypatch, tmp_path):
-    monkeypatch.setenv("RHB_PUBLIC_URL", BASE)
-    monkeypatch.setenv("RHB_DATA_DIR", str(tmp_path))
-    for ok, want in (("/account/", "/account"), ("https://portal.example.org", "https://portal.example.org")):
-        monkeypatch.setenv("RHB_ACCOUNT_URL", ok)
-        assert remote.Config.from_env().account_url == want
-    for bad in ("javascript:alert(1)", "//evil.example", "http://portal.example.org", "account"):
-        monkeypatch.setenv("RHB_ACCOUNT_URL", bad)
-        with pytest.raises(SystemExit):
-            remote.Config.from_env()
-
-
-def test_answer_prompt():
-    assert remote.answer_prompt(True, "Password: ") == "password"
-    assert remote.answer_prompt(True, "Password for moon/user@M00NNY.KR: ") == "password"
-    for prompt in ("Enter new password: ", "New password: ", "Retype new password: ", "Enter it again: ",
-                   "Current Password: (then) Repeat password"):
-        assert remote.answer_prompt(True, prompt) == "refuse"
-    assert remote.answer_prompt(False, "login: ") == "blank"
-
-
-def test_pam_authenticator_classifies(tmp_path):
-    import getpass
-
-    me = getpass.getuser()  # an account NSS knows; the PAM transaction itself is faked
-    results = {}
-
-    def fake(service, user, password):
-        return results[password]
-
-    a = remote.PamAuthenticator(remote.Config(public_url=BASE, data_dir=tmp_path), transaction=fake)
-    results.update({"ok": (0, ["Password: "], False), "bad": (7, ["Password: "], False),
-                    "asked": (12, ["Password: ", "You are required to change your password immediately (administrator enforced)"], False),
-                    "deferred": (12, ["Password: "], False), "said": (7, ["Password expired. You must change it now."], False),
-                    "refused": (19, ["Password: "], True), "down": (9, [], False)})
-    assert a.authenticate(me, "ok") == me
-    assert a.authenticate(me, "bad") is None
-    for pw in ("asked", "deferred", "said", "refused"):
-        with pytest.raises(remote.PasswordChangeRequired):
-            a.authenticate(me, pw)
-    with pytest.raises(remote.DirectoryUnavailable):
-        a.authenticate(me, "down")
-
-
-def test_pam_transaction_real_libpam():
-    """The ctypes conversation against the host's libpam: a wrong password for our own account
-    (an unknown service falls back to /etc/pam.d/other). The prompt is answered, nothing changes."""
-    import getpass
-    from pathlib import Path
-
-    if not Path("/etc/pam.d/other").exists():
-        pytest.skip("no PAM 'other' service")
-    code, messages, asked_new = remote.pam_transaction("refhandbook-no-such-service", getpass.getuser(),
-                                                       "not-the-password-" + secrets.token_hex(4))
-    assert code != 0 and not asked_new
-    assert messages  # the conversation was called
-
-
-def test_pam_expired_password(pam_account, tmp_path):
-    """pam_unix reports an expired password from the account phase (chage -d 0)."""
-    import subprocess
-
-    user, group, service = pam_account
-    subprocess.run(["chage", "-d", "0", user], check=True)
-    a = remote.PamAuthenticator(remote.Config(public_url=BASE, data_dir=tmp_path, pam_service=service))
-    with pytest.raises(remote.PasswordChangeRequired):
-        a.authenticate(user, "s3cret-Pw")
-    assert a.authenticate(user, "wrong") is None
-
-
-# ── RHB_AUTH=sso: the site sign-in vouches for the user ─────────────────
-
-
-class Accounts:
-    def __init__(self, allowed):
-        self.allowed = allowed
-
-    def authenticate(self, username, password):
-        return None
-
-    def exists(self, uid):
-        return uid in self.allowed
-
-
-@pytest.fixture
-def sso(tmp_path):
-    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-
-    key = Ed25519PrivateKey.generate()
-    cfg = remote.Config(public_url=BASE, data_dir=tmp_path / "data", auth="sso", sso_issuer="https://www.m00nny.kr")
-    m = remote.build(cfg, Accounts({"moon"}), remote.SsoTokens(cfg, key.public_key()))
-    try:
-        with TestClient(m.http_app(), base_url=BASE) as c:
-            yield c, key
-    finally:
-        server._user_store = None
-        research_api.use_resolver(None)
-
-
-def sso_token(key, uid="moon", aud="refhandbook", ttl=60):
-    import time
-
-    import jwt
-
-    now = int(time.time())
-    return jwt.encode({"iss": "https://www.m00nny.kr", "aud": aud, "sub": uid, "iat": now, "exp": now + ttl},
-                      key, algorithm="EdDSA")
-
-
-def test_sso_consent_flow(sso):
-    c, key = sso
-    cid = register(c).json()["client_id"]
-    verifier, challenge = pkce()
-    req = start(c, cid, challenge)
-    r = c.get("/login", params={"req": req}, follow_redirects=False)  # not signed in to the site
-    assert r.status_code == 303 and r.headers["location"] == f"/auth/login?next=/login?req={req}"
-    tok = {"X-Auth-Token": sso_token(key)}
-    page = c.get("/login", params={"req": req}, headers=tok).text
-    assert "<b>moon</b>" in page and 'name="password"' not in page and "허용" in page
-    assert f"/auth/login?switch=1&amp;next=/login?req={req}" in page
-    # a POST from another site is refused even with a valid token
-    r = c.post("/login", data={"req": req, "action": "allow"}, headers={**tok, "Origin": "https://evil.example"},
-               follow_redirects=False)
-    assert r.status_code == 403
-    r = c.post("/login", data={"req": req, "action": "allow"}, headers={**tok, "Origin": BASE}, follow_redirects=False)
-    assert r.status_code == 303
-    q = parse_qs(urlparse(r.headers["location"]).query)
-    t = c.post("/token", data={"grant_type": "authorization_code", "code": q["code"][0], "redirect_uri": CALLBACK,
-                               "client_id": cid, "code_verifier": verifier, "resource": BASE + "/mcp"})
-    assert t.status_code == 200
-    sid = mcp_session(c, t.json()["access_token"])
-    assert sid
-
-
-def test_sso_refuses_bad_tokens_and_accounts(sso):
-    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-
-    c, key = sso
-    cid = register(c).json()["client_id"]
-    req = start(c, cid, pkce()[1])
-    other = Ed25519PrivateKey.generate()
-    for bad in (sso_token(key, aud="account"), sso_token(other), sso_token(key, ttl=-60), "junk"):
-        r = c.post("/login", data={"req": req, "action": "allow"}, headers={"X-Auth-Token": bad,
-                   "X-Remote-User": "moon"}, follow_redirects=False)
-        assert r.status_code == 303 and r.headers["location"].startswith("/auth/login")
-    r = c.post("/login", data={"req": req, "action": "allow"}, headers={"X-Auth-Token": sso_token(key, uid="kim")},
-               follow_redirects=False)
-    assert r.status_code == 403 and "쓸 수 없습니다" in r.text  # signed in, but not allowed here
-    r = c.post("/login", data={"req": req, "action": "deny"}, follow_redirects=False)  # cancel needs no token
-    assert "error=access_denied" in r.headers["location"]
-
-
 # ── the approval page (/agents): the user's channel, behind the site sign-in ──
 
 
@@ -907,21 +477,21 @@ def _csrf(page):
     return re.search(r"name=csrf value='([0-9a-f]+)'", page).group(1)
 
 
-def test_the_approval_page_needs_the_site_sign_in_and_an_allowed_account(sso):
-    c, key = sso
+def test_the_approval_page_needs_the_site_sign_in_and_an_allowed_account(client):
+    c, key = client, client.key
     r = c.get("/agents", follow_redirects=False)
     assert r.status_code == 303 and r.headers["location"] == "/auth/login?next=/agents"
-    r = c.get("/agents", headers={"X-Auth-Token": sso_token(key, uid="kim")}, follow_redirects=False)
+    r = c.get("/agents", headers={"X-Auth-Token": site_token(key, uid="nobody")}, follow_redirects=False)
     assert r.status_code == 303  # signed in, but not an account of this server
-    page = c.get("/agents", headers={"X-Auth-Token": sso_token(key)}).text
+    page = c.get("/agents", headers={"X-Auth-Token": site_token(key)}).text
     assert "<b>moon</b>" in page and "제안된 규칙 (0)" in page and "default" in page
 
 
-def test_a_proposal_is_approved_only_by_the_user_on_the_page(sso):
+def test_a_proposal_is_approved_only_by_the_user_on_the_page(client):
     from refhandbook.kernel import proposals, runtime
 
-    c, key = sso
-    tok = {"X-Auth-Token": sso_token(key)}
+    c, key = client, client.key
+    tok = {"X-Auth-Token": site_token(key)}
     g = runtime.attach(server._user_store("moon")).g
     with g.tx():
         g.define_rule("rv_page", "check", 'rv_page(R) :- rs_row(Self, X, R, "H").', actor="model",
@@ -941,11 +511,11 @@ def test_a_proposal_is_approved_only_by_the_user_on_the_page(sso):
     assert g.get_rule("rv_page")["authority"] == "sealed"
 
 
-def test_a_policy_is_granted_on_the_page(sso):
+def test_a_policy_is_granted_on_the_page(client):
     from refhandbook.agents.workspace import Workspace
 
-    c, key = sso
-    tok = {"X-Auth-Token": sso_token(key), "Origin": BASE}
+    c, key = client, client.key
+    tok = {"X-Auth-Token": site_token(key), "Origin": BASE}
     page = c.get("/agents", headers=tok).text
     r = c.post("/agents/policy", data={"name": "net", "commands": "sh cat", "network": "on", "timeout": "30",
                                        "csrf": _csrf(page)}, headers=tok, follow_redirects=False)
@@ -958,11 +528,11 @@ def test_a_policy_is_granted_on_the_page(sso):
     assert "err=" in r.headers["location"]
 
 
-def test_a_grant_the_model_asked_for_is_approved_on_the_page(sso):
+def test_a_grant_the_model_asked_for_is_approved_on_the_page(client):
     from refhandbook.agents.workspace import Workspace
 
-    c, key = sso
-    tok = {"X-Auth-Token": sso_token(key), "Origin": BASE}
+    c, key = client, client.key
+    tok = {"X-Auth-Token": site_token(key), "Origin": BASE}
     w = Workspace(server._user_store("moon"))
     w.caps.add("policy", "wider", spec={"network": True, "commands": ["sh", "cat"]}, actor="model")
     page = c.get("/agents", headers=tok).text

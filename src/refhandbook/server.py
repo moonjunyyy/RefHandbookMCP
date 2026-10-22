@@ -30,17 +30,10 @@ works the plan objects with `research_next` / `research_push` / `research_done`,
 role="agent"); a CONFLICT names objects to re-read, nothing else is shared.
 Computation runs in the user's sandbox with `cap` (scripts, policies, layers, egress, rules, cards:
 versioned records you keep current), `run`, `job` and `files`: open_entry("rs-ref-sandbox") says how,
-including how packages and the network are reached. The cards are current; a skill may be older.
+including how packages and the network are reached. The cards are current.
 A tool result that begins DEPRECATED names its replacement: switch now. Never ask the user to
 approve a run."""
 
-def _version() -> str:
-    from .manifest import project_version
-
-    return project_version()
-
-
-mcp = MCPServer("refhandbook", instructions=INSTRUCTIONS, version=_version())
 
 READ = ToolAnnotations(read_only_hint=True, open_world_hint=False)
 WRITE = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False)
@@ -71,20 +64,24 @@ TOOLS: list[tuple[Callable[..., Any], ToolAnnotations]] = []
 
 
 def tool(annotations: ToolAnnotations) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
-    """Register a tool on the local (stdio) server and record it, so the remote server
-    (remote.build) registers the same set."""
+    """Record a tool; make() registers every recorded tool on a server."""
 
     def deco(fn: Callable[..., Any]) -> Callable[..., Any]:
         TOOLS.append((fn, annotations))
-        mcp.tool(annotations=annotations)(_serialized(fn))
         return fn
 
     return deco
 
 
-def install(server: MCPServer) -> None:
+def make(**settings: Any) -> MCPServer:
+    """An MCP server with every tool registered. remote.build passes the OAuth settings; tests use it
+    bare to call the tools as a client would."""
+    from . import version
+
+    server = MCPServer("refhandbook", instructions=INSTRUCTIONS, version=version(), **settings)
     for fn, annotations in TOOLS:
         server.tool(annotations=annotations)(_serialized(fn))
+    return server
 
 
 _handbook: Handbook | None = None
@@ -245,7 +242,7 @@ def audit() -> str:
 
 
 # ── research ledger: the run state of the research cards ───────────────────
-# The functions live in research_api (no MCP import), so the CLI fallback runs the same code.
+# The functions live in research_api (no MCP import), so the server's CLI runs the same code.
 
 for _fn in research_api.READ_TOOLS:
     tool(READ)(_fn)

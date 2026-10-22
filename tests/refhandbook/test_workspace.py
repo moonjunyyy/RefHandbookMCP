@@ -249,11 +249,11 @@ def test_through_the_server_a_waiting_run_does_not_hold_up_other_calls(tmp_path,
     monkeypatch.setattr(server, "_handbook", hb)
     cap_api.configure(server.handbook, server._CALLS)
     cap_api._spaces.clear()
-    tools = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    tools = {t.name for t in asyncio.run(server.make().list_tools())}
     assert {"cap", "run", "job", "files", "sandbox_script", "sandbox_run"} <= tools
 
     async def call(tool, **arguments):
-        return (await server.mcp.call_tool(tool, arguments)).content[0].text
+        return (await server.make().call_tool(tool, arguments)).content[0].text
 
     asyncio.run(call("cap", action="add", kind="script", name="slow", body="sleep 2; echo done-slow\n"))
     done = {}

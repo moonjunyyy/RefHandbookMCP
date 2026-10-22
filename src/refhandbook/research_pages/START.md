@@ -7,9 +7,9 @@ PARTS: START-CARDS, START-LOOP, START-PRECEDENCE, START-SESSIONS, START-TOOLS, S
 
 Opened first, once per conversation, before card N1.
 
-The research skill only points here: the cards on the server are the procedure
-and they are current (the skill file a client holds may be older), so when the
-skill and a card disagree, the card wins. This card is an index of their parts:
+The cards on the server are the procedure, and they are current: when anything
+else you remember disagrees with a card, the card wins. This card is an index of
+their parts:
 
 - START-CARDS — card ids, how to find a card, the parts every card has, judgment when none fits
 - START-LOOP — work is object → objects: the session loop, the reply, the ▶/◀ transcript

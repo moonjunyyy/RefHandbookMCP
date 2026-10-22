@@ -136,7 +136,7 @@ def test_tools_keep_their_signatures_through_the_signal_wrapper():
 def test_the_server_offers_research_review():
     from refhandbook import server
 
-    tools = {t.name: t for t in asyncio.run(server.mcp.list_tools())}
+    tools = {t.name: t for t in asyncio.run(server.make().list_tools())}
     assert {"ledger", "action", "session", "why", "rules"} <= set(tools["research_review"].input_schema["properties"])
 
 

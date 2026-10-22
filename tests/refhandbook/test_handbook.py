@@ -134,10 +134,10 @@ def test_mcp_tools(hb, monkeypatch):
     monkeypatch.setattr(server, "_handbook", hb)
 
     async def call(name, **arguments):
-        result = await server.mcp.call_tool(name, arguments)
+        result = await server.make().call_tool(name, arguments)
         return result.content[0].text
 
-    tools = asyncio.run(server.mcp.list_tools())
+    tools = asyncio.run(server.make().list_tools())
     assert {t.name for t in tools} >= {"lookup", "open_entry", "save_entry", "relate", "traverse", "audit"}
     assert next(t for t in tools if t.name == "lookup").annotations.read_only_hint is True
     assert "[rebase-conflict]" in asyncio.run(call("lookup", situation="rebase in progress"))
@@ -184,5 +184,5 @@ def test_opening_a_compound_card_says_split_first(monkeypatch):
     hb = Handbook(":memory:")
     monkeypatch.setattr(server, "_handbook", hb)
     hb.save_entry(title="Legacy", condition="c", items=[{"text": f"s{n}"} for n in range(12)])
-    out = asyncio.run(server.mcp.call_tool("open_entry", {"id": "legacy"})).content[0].text
+    out = asyncio.run(server.make().call_tool("open_entry", {"id": "legacy"})).content[0].text
     assert out.startswith("SPLIT BEFORE USE") and "rs-split" in out

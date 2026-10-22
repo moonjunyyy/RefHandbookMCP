@@ -22,9 +22,9 @@ def device_note(tags: list[str] | str | None, running: str | None = None) -> str
     if not marked:
         return ""
     if running is None:
-        from .manifest import project_version
+        from . import version
 
-        running = project_version()
+        running = version()
     if running in marked:
         return ""
     return (f"DEVICE {', '.join(marked)}: written for that version; this server runs {running}. "

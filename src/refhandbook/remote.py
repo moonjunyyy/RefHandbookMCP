@@ -1,25 +1,22 @@
-"""Remote mode: the handbook over Streamable HTTP, one database per directory user.
+"""The handbook over Streamable HTTP, one database per site user, behind the site sign-in.
 
 Claude connects as an OAuth client (dynamic client registration + PKCE). This server is its own
-authorization server: /authorize sends the browser to /login, which checks the password against
-the LDAP directory and then issues a one-time code. Access tokens carry the directory uid as
-`subject`, and every tool call opens that user's database (DATA_DIR/users/<uid>.db).
+authorization server: /authorize sends the browser to /login, which nginx puts behind the site
+sign-in (portal.sso); the site's token names the user, and /login only asks to allow the client
+before it issues a one-time code. Access tokens carry the uid as `subject`, and every tool call
+opens that user's database (DATA_DIR/users/<uid>.db).
 
-Configuration comes from the environment (see deploy/refhandbook.env.example).
+The installer renders the settings (RHB_*) into the unit from the site's facts (deploy/templates).
 """
-
 from __future__ import annotations
 
 import hashlib
-import ipaddress
 import html
-import json
 import logging
 import os
 import re
 import secrets
 import sqlite3
-import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -43,6 +40,7 @@ from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, PlainTextResponse, RedirectResponse, Response
 
+from .page import page
 from .store import Handbook
 
 log = logging.getLogger("refhandbook.remote")
@@ -75,58 +73,27 @@ def _url_env(name: str, default: str | None = None) -> str | None:
     return v
 
 
-def _secret(name: str) -> str | None:
-    """NAME_FILE (a file holding the secret) wins over NAME."""
-    path = _env(name + "_FILE")
-    if path:
-        return Path(path).read_text().strip()
-    return _env(name)
+def _list(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    v = _env(name)
+    return default if v is None else tuple(x.strip() for x in v.split(",") if x.strip())
 
 
-@dataclass
+@dataclass(frozen=True)
 class Config:
-    public_url: str  # https://hb.example.org, no trailing slash
+    public_url: str  # https://www.example.org, no trailing slash: the site
     data_dir: Path
+    sso_public_key_file: str  # the site sign-in's token key (portal.tokens), public half
+    sso_issuer: str = ""  # default: public_url
+    sso_audience: str = "refhandbook"  # the audience nginx asks the sign-in to mint for this app
+    login_url: str = "/auth/login"  # the site sign-in page, for a browser without its cookie
     host: str = "127.0.0.1"
     port: int = 8765
-    # How passwords are checked: "pam" (the system's login stack, /etc/pam.d/<pam_service>) or
-    # "ldap" (a simple bind as the user; needs the password in the directory or {SASL} pass-through),
-    # or "sso": no password here; the site sign-in (nginx auth_request) vouches for the user with a
-    # signed token in X-Auth-Token, checked against sso_public_key_file.
-    auth: str = "pam"
-    pam_service: str = "refhandbook"
-    require_group: str | None = None  # pam: a POSIX group (through NSS) the user must belong to
-    ldap_uri: str = "ldap://localhost"
-    ldap_starttls: bool = False
-    ldap_ca_file: str | None = None
-    ldap_user_base: str = ""
-    ldap_user_filter: str = "(&(objectClass=posixAccount)(uid={uid}))"
-    ldap_user_dn: str | None = None  # template, e.g. uid={uid},ou=people,dc=example,dc=org (skips the search)
-    ldap_bind_dn: str | None = None  # service account for the search; anonymous when unset
-    ldap_bind_password: str | None = None
-    ldap_group_base: str | None = None
-    ldap_group_filter: str | None = None  # e.g. (&(objectClass=posixGroup)(cn=research)(memberUid={uid}))
+    require_group: str | None = None  # a POSIX group (through NSS) the user must belong to
     redirect_allow: tuple[str, ...] = DEFAULT_REDIRECTS
     access_ttl: int = 3600
     refresh_ttl: int = 30 * 86400
-    session_ttl: int = 90 * 86400  # absolute: a sign-in's tokens end this long after the password was checked
-    max_failures: int = 5  # per (uid, client address), and per sign-in request
-    max_failures_per_user: int = 50  # per uid across addresses
-    lock_seconds: int = 900
-    # Reverse proxies in front of this server (addresses or CIDRs): the client address for the
-    # sign-in lockout is read from X-Forwarded-For through them. A router that terminates TLS and
-    # forwards plain HTTP goes here too.
-    trusted_proxies: tuple[str, ...] = ("127.0.0.1", "::1")
+    session_ttl: int = 90 * 86400  # absolute: a grant's tokens end this long after it
     extra_hosts: tuple[str, ...] = ()  # Host headers accepted besides the public host and loopback
-    # The account portal (ldap-portal): the sign-in page links to <this>/request (사용 신청) and
-    # <this>/expired (one-time and expired passwords). A path ("/account") is on this host.
-    account_url: str | None = None
-    # RHB_AUTH=sso: the site sign-in's public key, the issuer and audience its tokens carry, and
-    # where to send a browser that has not signed in yet.
-    sso_public_key_file: str = "/etc/m00nny-sso/sso-public.pem"
-    sso_issuer: str = ""  # default: public_url
-    sso_audience: str = "refhandbook"
-    login_url: str = "/auth/login"
 
     @property
     def resource_url(self) -> str:
@@ -136,98 +103,37 @@ class Config:
     def from_env(cls) -> Config:
         public = _url_env("RHB_PUBLIC_URL")
         if not public:
-            raise SystemExit("RHB_PUBLIC_URL is required, e.g. https://hb.example.org")
+            raise SystemExit("RHB_PUBLIC_URL is required (the site's origin, e.g. https://www.example.org)")
         public = public.rstrip("/")
         p = urlparse(public)
         if p.scheme != "https" and p.hostname not in ("localhost", "127.0.0.1"):
             raise SystemExit("RHB_PUBLIC_URL must be https (Claude only connects to https servers)")
         if p.path not in ("", "/"):
-            raise SystemExit("RHB_PUBLIC_URL must be a bare origin (use a subdomain, not a path)")
+            raise SystemExit("RHB_PUBLIC_URL must be a bare origin, without a path")
+        key = _url_env("RHB_SSO_PUBLIC_KEY_FILE")
+        if not key:
+            raise SystemExit("RHB_SSO_PUBLIC_KEY_FILE is required (the site sign-in's sso-public.pem)")
+        # systemd's StateDirectory=, unless set: the unit owns its data
+        data = _env("RHB_DATA_DIR") or (os.environ.get("STATE_DIRECTORY", "").split(":")[0] or None)
+        if not data:
+            raise SystemExit("RHB_DATA_DIR is required outside a unit with StateDirectory=")
         allow = _env("RHB_REDIRECT_ALLOW")
-        uri = _env("RHB_LDAP_URI", "ldap://localhost") or ""
-        starttls = _env("RHB_LDAP_STARTTLS", "0") in ("1", "true", "yes")
-        host = urlparse(uri).hostname or ""
-        auth = (_env("RHB_AUTH", "pam") or "pam").lower()
-        if auth not in ("pam", "ldap", "sso"):
-            raise SystemExit(f"RHB_AUTH must be pam, ldap or sso, not {auth!r}")
-        if auth == "ldap" and uri.startswith("ldap://") and not starttls and host not in ("localhost", "127.0.0.1", "::1") \
-                and _env("RHB_LDAP_ALLOW_CLEARTEXT", "0") not in ("1", "true", "yes"):
-            raise SystemExit(f"{uri} without StartTLS would send passwords in clear: set RHB_LDAP_STARTTLS=1, "
-                             "use ldaps://, or set RHB_LDAP_ALLOW_CLEARTEXT=1")
         return cls(
-            auth=auth,
-            pam_service=_env("RHB_PAM_SERVICE", "refhandbook"),  # type: ignore[arg-type]
-            require_group=_env("RHB_REQUIRE_GROUP"),
             public_url=public,
-            data_dir=Path(_env("RHB_DATA_DIR", str(Path.home() / ".refhandbook" / "remote"))),  # type: ignore[arg-type]
-            host=_env("RHB_HOST", "127.0.0.1"),  # type: ignore[arg-type]
-            port=int(_env("RHB_PORT", "8765")),  # type: ignore[arg-type]
-            ldap_uri=uri,
-            ldap_starttls=starttls,
-            ldap_ca_file=_env("RHB_LDAP_CA_FILE"),
-            ldap_user_base=_env("RHB_LDAP_USER_BASE", ""),  # type: ignore[arg-type]
-            ldap_user_filter=_env("RHB_LDAP_USER_FILTER", cls.ldap_user_filter),  # type: ignore[arg-type]
-            ldap_user_dn=_env("RHB_LDAP_USER_DN"),
-            ldap_bind_dn=_env("RHB_LDAP_BIND_DN"),
-            ldap_bind_password=_secret("RHB_LDAP_BIND_PASSWORD"),
-            ldap_group_base=_env("RHB_LDAP_GROUP_BASE"),
-            ldap_group_filter=_env("RHB_LDAP_GROUP_FILTER"),
-            redirect_allow=tuple(s.strip() for s in allow.split(",") if s.strip()) if allow else DEFAULT_REDIRECTS,
-            access_ttl=int(_env("RHB_ACCESS_TTL", "3600")),  # type: ignore[arg-type]
-            refresh_ttl=int(_env("RHB_REFRESH_TTL", str(30 * 86400))),  # type: ignore[arg-type]
-            session_ttl=int(_env("RHB_SESSION_TTL", str(90 * 86400))),  # type: ignore[arg-type]
-            trusted_proxies=_list("RHB_TRUSTED_PROXIES", ("127.0.0.1", "::1")),
-            extra_hosts=_list("RHB_ALLOWED_HOSTS", ()),
-            account_url=_account_url(_env("RHB_ACCOUNT_URL")),
-            sso_public_key_file=_env("RHB_SSO_PUBLIC_KEY_FILE", cls.sso_public_key_file),  # type: ignore[arg-type]
+            data_dir=Path(data),
+            sso_public_key_file=key,
             sso_issuer=_url_env("RHB_SSO_ISSUER", public),  # type: ignore[arg-type]
             sso_audience=_env("RHB_SSO_AUDIENCE", cls.sso_audience),  # type: ignore[arg-type]
             login_url=_url_env("RHB_LOGIN_URL", cls.login_url),  # type: ignore[arg-type]
+            host=_env("RHB_HOST", cls.host),  # type: ignore[arg-type]
+            port=int(_env("RHB_PORT", str(cls.port))),  # type: ignore[arg-type]
+            require_group=_env("RHB_REQUIRE_GROUP"),
+            redirect_allow=tuple(s.strip() for s in allow.split(",") if s.strip()) if allow else DEFAULT_REDIRECTS,
+            access_ttl=int(_env("RHB_ACCESS_TTL", str(cls.access_ttl))),  # type: ignore[arg-type]
+            refresh_ttl=int(_env("RHB_REFRESH_TTL", str(cls.refresh_ttl))),  # type: ignore[arg-type]
+            session_ttl=int(_env("RHB_SESSION_TTL", str(cls.session_ttl))),  # type: ignore[arg-type]
+            extra_hosts=_list("RHB_ALLOWED_HOSTS", ()),
         )
-
-
-def _account_url(v: str | None) -> str | None:
-    if v is None:
-        return None
-    v = v.rstrip("/")
-    p = urlparse(v)
-    if v.startswith("/") and not v.startswith("//") and not p.netloc:
-        return v
-    if p.scheme == "https" and p.netloc and not (p.username or p.password or p.query or p.fragment):
-        return v
-    raise SystemExit("RHB_ACCOUNT_URL must be https://host[/path] or a path on this host such as /account")
-
-
-def _list(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
-    v = _env(name)
-    if v is None:
-        return default
-    items = tuple(x.strip() for x in v.split(",") if x.strip())
-    for x in items if name == "RHB_TRUSTED_PROXIES" else ():
-        ipaddress.ip_network(x, strict=False)  # fail at start on a typo, not at the first sign-in
-    return items
-
-
-def client_address(peer: str, forwarded_for: str, trusted: tuple[str, ...]) -> str:
-    """The first address from the right of peer + X-Forwarded-For that is not a trusted proxy.
-
-    Each proxy appends the address it received from, so walking right to left past our own
-    proxies reaches the client; anything left of that was written by the client and is ignored.
-    """
-    nets = [ipaddress.ip_network(t, strict=False) for t in trusted]
-
-    def is_trusted(addr: str) -> bool:
-        try:
-            ip = ipaddress.ip_address(addr)
-        except ValueError:
-            return False
-        return any(ip in n for n in nets)
-
-    chain = [a.strip() for a in forwarded_for.split(",") if a.strip()] + [peer]
-    for addr in reversed(chain):
-        if not is_trusted(addr):
-            return addr[:64]
-    return peer
 
 
 def redirect_allowed(uri: str, patterns: tuple[str, ...]) -> bool:
@@ -259,251 +165,16 @@ def ascii_lower(name: str) -> str | None:
     return name.lower() if name.isascii() else None
 
 
-# ── directory ────────────────────────────────────────────────────────────
+# ── accounts and the site's tokens ───────────────────────────────────────
 
 
-class DirectoryUnavailable(Exception):
-    """The LDAP server could not be reached or refused the service bind."""
+class Accounts:
+    """Who may use the handbook. The site sign-in checks passwords; here only the account policy
+    remains: the name resolves through NSS (which also gives the canonical name), and is in
+    require_group if one is set. Checked before a grant and on every refresh."""
 
-
-class PasswordChangeRequired(Exception):
-    """The password is right, but it is expired or one-time (+needchange) and must be changed first."""
-
-
-class LdapAuthenticator:
-    """Checks a uid/password pair by binding to the directory as that user.
-
-    `authenticate` returns the canonical uid (the entry's own `uid` value) or None. An empty
-    password is always refused: an LDAP simple bind with an empty password is an anonymous bind
-    and succeeds. `exists` re-checks an account (and the group) without its password; refresh
-    tokens are only renewed while it holds.
-    """
-
-    def __init__(self, cfg: Config, server: object | None = None, **connection_kwargs: object):
+    def __init__(self, cfg: Config):
         self.cfg = cfg
-        self._server = server
-        self._kw = connection_kwargs  # tests pass client_strategy=MOCK_SYNC
-
-    def _server_obj(self):  # noqa: ANN202
-        if self._server is not None:
-            return self._server
-        import ssl
-
-        from ldap3 import Server, Tls
-
-        tls = None
-        if self.cfg.ldap_starttls or self.cfg.ldap_uri.startswith("ldaps://"):
-            tls = Tls(validate=ssl.CERT_REQUIRED, ca_certs_file=self.cfg.ldap_ca_file)
-        return Server(self.cfg.ldap_uri, tls=tls, connect_timeout=5)
-
-    def _conn(self, user: str | None, password: str | None):  # noqa: ANN202
-        from ldap3 import Connection
-
-        conn = Connection(self._server_obj(), user=user, password=password, receive_timeout=10, **self._kw)
-        conn.open()
-        if self.cfg.ldap_starttls:
-            conn.start_tls()
-        return conn
-
-    def _service(self):  # noqa: ANN202
-        svc = self._conn(self.cfg.ldap_bind_dn, self.cfg.ldap_bind_password)
-        if not svc.bind():
-            raise DirectoryUnavailable(f"service bind refused: {svc.result.get('description')}")
-        return svc
-
-    def _find(self, conn, uid: str) -> tuple[str, str] | None:  # noqa: ANN001
-        """(dn, canonical uid) of the one entry for uid, read through conn; None if not exactly one."""
-        from ldap3 import BASE, SUBTREE
-        from ldap3.utils.conv import escape_filter_chars
-        from ldap3.utils.dn import escape_rdn
-
-        cfg = self.cfg
-        if cfg.ldap_user_dn:
-            conn.search(cfg.ldap_user_dn.format(uid=escape_rdn(uid)), "(objectClass=*)", BASE, attributes=["uid"])
-        else:
-            conn.search(cfg.ldap_user_base, cfg.ldap_user_filter.format(uid=escape_filter_chars(uid)),
-                        SUBTREE, attributes=["uid"], size_limit=2)
-        entries = list(conn.entries)
-        if len(entries) != 1:
-            return None
-        e = entries[0]
-        canonical = uid
-        if "uid" in e.entry_attributes and e["uid"].values:
-            got = ascii_lower(str(e["uid"].values[0]))
-            if got is None or not UID_RE.match(got):
-                return None
-            canonical = got
-        return e.entry_dn, canonical
-
-    def _in_group(self, conn, uid: str, dn: str) -> bool:  # noqa: ANN001
-        from ldap3 import SUBTREE
-        from ldap3.utils.conv import escape_filter_chars
-
-        cfg = self.cfg
-        if not cfg.ldap_group_filter:
-            return True
-        gfilter = cfg.ldap_group_filter.format(uid=escape_filter_chars(uid), dn=escape_filter_chars(dn))
-        conn.search(cfg.ldap_group_base or cfg.ldap_user_base, gfilter, SUBTREE, attributes=["cn"], size_limit=1)
-        return bool(conn.entries)
-
-    def authenticate(self, username: str, password: str) -> str | None:
-        from ldap3.core.exceptions import LDAPException
-        from ldap3.utils.dn import escape_rdn
-
-        uid = ascii_lower(username.strip())
-        if not password or uid is None or not UID_RE.match(uid):
-            return None
-        cfg = self.cfg
-        try:
-            if cfg.ldap_user_dn:
-                dn = cfg.ldap_user_dn.format(uid=escape_rdn(uid))
-            else:
-                svc = self._service()
-                found = self._find(svc, uid)
-                svc.unbind()
-                if found is None:
-                    return None
-                dn = found[0]
-            conn = self._conn(dn, password)
-            if not conn.bind():
-                return None
-            canonical = self._find_canonical(conn, dn, uid)
-            if canonical is None:
-                return None
-            if not self._in_group(conn, canonical, dn):
-                log.info("login refused for %s: not in the required group", canonical)
-                return None
-            conn.unbind()
-            return canonical
-        except DirectoryUnavailable:
-            raise
-        except LDAPException as e:
-            raise DirectoryUnavailable(str(e)) from e
-
-    def _find_canonical(self, conn, dn: str, uid: str) -> str | None:  # noqa: ANN001
-        from ldap3 import BASE
-
-        conn.search(dn, "(objectClass=*)", BASE, attributes=["uid"])
-        if not conn.entries:
-            return uid
-        e = conn.entries[0]
-        if "uid" in e.entry_attributes and e["uid"].values:
-            got = ascii_lower(str(e["uid"].values[0]))
-            return got if got is not None and UID_RE.match(got) else None
-        return uid
-
-    def exists(self, uid: str) -> bool:
-        """The account is still there and still in the required group (service or anonymous bind)."""
-        from ldap3.core.exceptions import LDAPException
-
-        try:
-            svc = self._service()
-            found = self._find(svc, uid)
-            ok = found is not None and found[1] == uid and self._in_group(svc, uid, found[0])
-            svc.unbind()
-            return ok
-        except DirectoryUnavailable:
-            raise
-        except LDAPException as e:
-            raise DirectoryUnavailable(str(e)) from e
-
-
-# A password prompt that asks for a new password, not the current one (pam_krb5, pam_unix, pam_sss).
-NEW_PASSWORD_PROMPT = re.compile(r"\bnew\b|again|retype|re-?enter|confirm|repeat", re.IGNORECASE)
-PASSWORD_EXPIRED_TEXT = re.compile(r"expired|must change|change your password|password change required", re.IGNORECASE)
-
-
-def answer_prompt(echo_off: bool, text: str) -> str:
-    """What the sign-in conversation does with one PAM prompt: 'password', 'refuse' or 'blank'.
-
-    python-pam's own conversation answers every password prompt with the password, so a module
-    that wants to change an expired password (pam_krb5 does this inside pam_authenticate) would be
-    given the old password as the new one. Here a new-password prompt ends the conversation instead.
-    """
-    if not echo_off:
-        return "blank"  # username prompts and the like: PAM already has the name from pam_start
-    return "refuse" if NEW_PASSWORD_PROMPT.search(text) else "password"
-
-
-def pam_transaction(service: str, user: str, password: str) -> tuple[int, list[str], bool]:
-    """pam_authenticate, then pam_acct_mgmt, with the conversation above.
-
-    Returns (PAM code, every message PAM showed, whether a new password was asked for). Uses the
-    libpam bindings python-pam loads; no session is opened and no credentials are set.
-    """
-    from ctypes import POINTER, byref, c_char, cast, memmove, sizeof
-
-    from pam import __internals as pi
-
-    pi.PamAuthenticator._ensure_libs()
-    lib = pi.PamAuthenticator
-    secret = password.encode()
-    messages: list[str] = []
-    asked_new = False
-
-    @pi.conv_func
-    def conv(n, msgs, p_response, _appdata):  # noqa: ANN001, ANN202
-        nonlocal asked_new
-        plan = []
-        for i in range(n):
-            m = msgs[i].contents
-            text = (m.msg or b"").decode("utf-8", "replace")
-            messages.append(text)
-            plan.append(answer_prompt(m.msg_style == pi.PAM_PROMPT_ECHO_OFF, text))
-        if "refuse" in plan:
-            asked_new = True
-            return pi.PAM_CONV_ERR  # nothing allocated yet, so nothing for PAM to free
-        addr = lib.calloc(n, sizeof(pi.PamResponse))
-        if not addr:
-            return pi.PAM_BUF_ERR
-        resp = cast(addr, POINTER(pi.PamResponse))
-        for i, what in enumerate(plan):
-            if what == "password":
-                dst = lib.calloc(len(secret) + 1, sizeof(c_char))  # PAM frees each answer
-                memmove(dst, secret, len(secret))
-                resp[i].resp = dst
-            resp[i].resp_retcode = 0
-        p_response[0] = resp
-        return pi.PAM_SUCCESS
-
-    handle = pi.PamHandle()
-    pc = pi.PamConv(conv, None)
-    code = lib.pam_start(service.encode(), user.encode(), byref(pc), byref(handle))
-    if code != pi.PAM_SUCCESS:
-        return code, messages, False
-    try:
-        code = lib.pam_authenticate(handle, 0)
-        if code == pi.PAM_SUCCESS:
-            code = lib.pam_acct_mgmt(handle, 0)
-    finally:
-        lib.pam_end(handle, code)
-    return code, messages, asked_new
-
-
-class PamAuthenticator:
-    """Checks the password through PAM, the way a system login does.
-
-    /etc/pam.d/<service> includes common-auth, so whatever the host uses for logins (pam_krb5,
-    pam_sss, pam_ldap through nslcd, ...) decides the password. Its account phase is pam_permit:
-    pam_unix's account check needs root (a setuid/setgid shadow helper) and would refuse every
-    directory account from this non-root service. The account policy is ours instead: the name must
-    resolve through NSS (which also gives the canonical name) and be in RHB_REQUIRE_GROUP if set.
-    No session is opened and no credentials (ticket caches) are kept.
-
-    A password that must be changed first (expired, or an admin's one-time password) raises
-    PasswordChangeRequired: the stack asked for a new password, said so, or returned
-    PAM_NEW_AUTHTOK_REQD / PAM_AUTHTOK_EXPIRED. The password is never changed from here.
-    """
-
-    PAM_AUTHINFO_UNAVAIL = 9  # the backing service (KDC, directory) could not be reached
-    PAM_SYSTEM_ERR = 4
-    PAM_NEW_AUTHTOK_REQD = 12
-    PAM_AUTHTOK_EXPIRED = 27
-
-    def __init__(self, cfg: Config, transaction=pam_transaction):  # noqa: ANN001
-        self.cfg = cfg
-        self._transaction = transaction  # tests pass a fake
-        self._lock = threading.Lock()  # PAM modules are not all safe to run concurrently
 
     def _in_group(self, name: str) -> bool:
         import grp
@@ -530,68 +201,31 @@ class PamAuthenticator:
         except KeyError:
             return None
 
-    def authenticate(self, username: str, password: str) -> str | None:
-        name = self._account(username)
-        if not password or name is None or not UID_RE.match(name) or "\x00" in password:
-            return None
-        with self._lock:
-            code, messages, asked_new = self._transaction(self.cfg.pam_service, name, password)
-        if asked_new or code in (self.PAM_NEW_AUTHTOK_REQD, self.PAM_AUTHTOK_EXPIRED) \
-                or any(PASSWORD_EXPIRED_TEXT.search(m) for m in messages):
-            log.info("PAM: %s must change the password first (code %s)", name, code)
-            raise PasswordChangeRequired(name)
-        if code != 0:
-            if code in (self.PAM_AUTHINFO_UNAVAIL, self.PAM_SYSTEM_ERR):
-                raise DirectoryUnavailable(f"PAM error {code}")
-            log.info("PAM refused %s (code %s)", name, code)
-            return None
-        if not self._in_group(name):
-            log.info("login refused for %s: not in group %s", name, self.cfg.require_group)
-            return None
-        return name
-
     def exists(self, uid: str) -> bool:
         return self._account(uid) == uid and self._in_group(uid)
 
 
-class SsoAccounts(PamAuthenticator):
-    """RHB_AUTH=sso: the site sign-in checks passwords; here only the account policy remains, the
-    same as with PAM (the name resolves through NSS, RHB_REQUIRE_GROUP), checked before a grant and
-    on every refresh."""
-
-    def authenticate(self, username: str, password: str) -> str | None:
-        return None  # no passwords here
-
-
 class SsoTokens:
-    """Verifies the site sign-in's X-Auth-Token (an EdDSA JWT from the SSO's /auth/check)."""
+    """The site sign-in's X-Auth-Token (an EdDSA JWT minted by portal.sso for this app's audience),
+    checked with portal.tokens: one implementation for every backend of the site."""
 
     def __init__(self, cfg: Config, public_key: object | None = None):
-        from cryptography.hazmat.primitives.serialization import load_pem_public_key
+        from portal import tokens
 
         self.cfg = cfg
-        self.key = public_key or load_pem_public_key(Path(cfg.sso_public_key_file).read_bytes())
+        self._tokens = tokens
+        self.key = public_key or tokens.load_public_key(cfg.sso_public_key_file)
 
     def uid(self, token: str) -> str | None:
-        import jwt
-
         if not token:
             return None
         try:
-            claims = jwt.decode(token, self.key, algorithms=["EdDSA"], audience=self.cfg.sso_audience,
-                                issuer=self.cfg.sso_issuer or self.cfg.public_url, leeway=5,
-                                options={"require": ["exp", "iat", "sub", "aud", "iss"]})
-        except jwt.PyJWTError as e:
+            sub = self._tokens.verify(self.key, token, self.cfg.sso_issuer or self.cfg.public_url, self.cfg.sso_audience)
+        except self._tokens.TokenError as e:
             log.info("SSO token refused: %s", e)
             return None
-        uid = ascii_lower(str(claims["sub"]))
+        uid = ascii_lower(sub)
         return uid if uid and UID_RE.match(uid) else None
-
-
-def make_authenticator(cfg: Config) -> object:
-    if cfg.auth == "sso":
-        return SsoAccounts(cfg)
-    return PamAuthenticator(cfg) if cfg.auth == "pam" else LdapAuthenticator(cfg)
 
 
 # ── OAuth authorization server ───────────────────────────────────────────
@@ -614,7 +248,6 @@ CREATE INDEX IF NOT EXISTS tokens_pair ON tokens(pair);
 """
 
 MAX_PENDING = 5000
-MAX_FAILURE_KEYS = 10000
 
 
 def _h(secret: str) -> str:
@@ -630,12 +263,11 @@ class SQLiteOAuthProvider:
 
     def __init__(self, cfg: Config, directory: object | None = None):
         self.cfg = cfg
-        self.directory = directory  # has exists(uid) -> bool; refreshes re-check the account through it
+        self.directory = directory  # Accounts: refreshes re-check the account through it
         cfg.data_dir.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(str(cfg.data_dir / "auth.db"), check_same_thread=False, isolation_level=None)
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript(AUTH_SCHEMA)
-        self.failures: dict[tuple[str, str], list[float]] = {}
 
     def _sweep(self) -> None:
         now = time.time()
@@ -686,48 +318,8 @@ class SQLiteOAuthProvider:
     def drop_pending(self, rid: str) -> None:
         self.db.execute("DELETE FROM pending WHERE id=?", (rid,))
 
-    def reserve_attempt(self, rid: str) -> bool:
-        """Count a password attempt on this sign-in request before checking it; False once used up."""
-        cur = self.db.execute("UPDATE pending SET attempts=attempts+1 WHERE id=? AND attempts<?",
-                              (rid, self.cfg.max_failures))
-        return cur.rowcount == 1
-
-    # lockout: per (uid, client address), plus a higher ceiling per uid across addresses
-    def _recent(self, key: tuple[str, str], now: float) -> list[float]:
-        recent = [t for t in self.failures.get(key, []) if now - t < self.cfg.lock_seconds]
-        if recent:
-            self.failures[key] = recent
-        else:
-            self.failures.pop(key, None)
-        return recent
-
-    def locked(self, uid: str, addr: str) -> bool:
-        now = time.time()
-        if len(self._recent((uid, addr), now)) >= self.cfg.max_failures:
-            return True
-        return len(self._recent((uid, "*"), now)) >= self.cfg.max_failures_per_user
-
-    def note_failure(self, uid: str, addr: str) -> float:
-        """Record a failure now (before the check finishes); returns a stamp to retract on success."""
-        if len(self.failures) > MAX_FAILURE_KEYS:
-            now = time.time()
-            for key in list(self.failures):
-                self._recent(key, now)
-            while len(self.failures) > MAX_FAILURE_KEYS:
-                self.failures.pop(next(iter(self.failures)))
-        stamp = time.time()
-        self.failures.setdefault((uid, addr), []).append(stamp)
-        self.failures.setdefault((uid, "*"), []).append(stamp)
-        return stamp
-
-    def retract_failure(self, uid: str, addr: str, stamp: float) -> None:
-        for key in ((uid, addr), (uid, "*")):
-            lst = self.failures.get(key, [])
-            if stamp in lst:
-                lst.remove(stamp)
-
     async def grant(self, rid: str, subject: str) -> str:
-        """Called by /login after the password check: issue a code, return the client redirect."""
+        """Called by /login once the user allowed the client: issue a code, return the client redirect."""
         got = self.pending(rid)
         if got is None:
             raise AuthorizeError("access_denied", "sign-in request expired")
@@ -806,11 +398,7 @@ class SQLiteOAuthProvider:
     async def exchange_refresh_token(self, client: OAuthClientInformationFull, refresh_token: RefreshToken, scopes: list[str]) -> OAuthToken:
         subject = refresh_token.subject or ""
         if self.directory is not None and hasattr(self.directory, "exists"):
-            try:
-                ok = await anyio.to_thread.run_sync(self.directory.exists, subject)  # await: directory I/O
-            except DirectoryUnavailable as e:
-                log.error("directory unavailable during refresh: %s", e)
-                raise TokenError("invalid_grant", "cannot confirm the account now; sign in again later") from e
+            ok = await anyio.to_thread.run_sync(self.directory.exists, subject)  # await: NSS may ask the directory
             if not ok:
                 row = self.db.execute("SELECT family FROM tokens WHERE hash=?", (_h(refresh_token.token),)).fetchone()
                 if row:
@@ -867,70 +455,22 @@ class UserStores:
 
 # ── login page ───────────────────────────────────────────────────────────
 
-PAGE = """<!doctype html><html lang="ko"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>refhandbook 로그인</title>
-<style>
-:root{{--bg:#f6f5f2;--fg:#1d1d1b;--mute:#6b6a66;--card:#fff;--line:#d9d7d0;--acc:#2f5d50;--err:#a33}}
-@media (prefers-color-scheme:dark){{:root{{--bg:#161615;--fg:#ecebe6;--mute:#9a9892;--card:#20201e;--line:#3a3935;--acc:#7fb8a4;--err:#e88}}}}
-body{{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,sans-serif;display:grid;place-items:center;min-height:100vh}}
-main{{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:28px;width:min(360px,calc(100vw - 32px));box-sizing:border-box}}
-h1{{font-size:20px;margin:0 0 4px}} p{{color:var(--mute);margin:0 0 18px;font-size:14px}}
-label{{display:block;font-size:13px;margin:12px 0 4px}}
-input{{width:100%;box-sizing:border-box;padding:10px;border:1px solid var(--line);border-radius:8px;background:transparent;color:var(--fg);font-size:16px}}
-.row{{display:flex;flex-direction:row-reverse;gap:8px;margin-top:20px}} button{{flex:1;padding:10px;border-radius:8px;border:1px solid var(--acc);font-size:15px;cursor:pointer}}
-.go{{background:var(--acc);color:var(--card)}} .no{{background:transparent;color:var(--fg);border-color:var(--line)}}
-.err{{color:var(--err);font-size:14px;margin:0 0 8px}} .err a{{color:inherit}}
-.who{{margin:12px 0 0;font-size:14px}} .who a{{color:var(--acc);font-size:13px}}
-.links{{margin:18px 0 0;font-size:13px;color:var(--mute);text-align:center}} .links a{{color:var(--acc)}}
-</style></head><body><main>
-<h1>refhandbook</h1>
-<p><b>{client}</b>이(가) 연구 원장 접근을 요청합니다.<br>돌아갈 곳: {dest}</p>
-{error}
-<form method="post" action="login">
-<input type="hidden" name="req" value="{req}">
-{fields}
-<div class="row"><button class="go" type="submit" name="action" value="allow">{allow}</button>
-<button class="no" type="submit" name="action" value="deny" formnovalidate>취소</button></div>
-</form>{links}</main></body></html>"""
-
-
-def _account_links(account: str | None) -> str:
-    if not account:
-        return ""
-    a = html.escape(account)
-    return (f'<p class="links"><a href="{a}/request" target="_blank" rel="noopener">계정이 없나요? 사용 신청</a>'
-            f' · <a href="{a}/expired" target="_blank" rel="noopener">임시·만료 비밀번호 변경</a></p>')
-
-
-PASSWORD_FIELDS = """<label for="u">디렉터리 사용자명</label><input id="u" name="username" autocomplete="username" required autofocus>
-<label for="p">비밀번호</label><input id="p" name="password" type="password" autocomplete="current-password" required>"""
-
-
-def _sso_fields(uid: str, switch_url: str) -> str:
-    return (f'<p class="who"><b>{html.escape(uid)}</b>(으)로 연결합니다. '
-            f'<a href="{html.escape(switch_url)}">다른 계정으로</a></p>')
-
-
-def _page(req: str, client: str, dest: str, error: str = "", status: int = 200, back: str = "",
-          account: str | None = None, change_password: bool = False, sso_uid: str | None = None,
-          switch_url: str = "") -> HTMLResponse:
-    """`back` is the client's redirect origin: CSP form-action also governs the redirect after the POST.
-    `account` is the account portal (RHB_ACCOUNT_URL); `change_password` adds a link to its
-    password-change page after the error. With `sso_uid` the user is already signed in to the site:
-    the page only asks to allow the client, and has no password fields."""
-    err = html.escape(error)
-    if change_password and account:
-        err += f' <a href="{html.escape(account)}/expired" target="_blank" rel="noopener">비밀번호 변경하기</a>'
-    err = f'<p class="err">{err}</p>' if error else ""
-    fields = _sso_fields(sso_uid, switch_url) if sso_uid else PASSWORD_FIELDS
-    body = PAGE.format(req=html.escape(req), client=html.escape(client), dest=html.escape(dest), error=err,
-                       fields=fields, allow="허용" if sso_uid else "로그인",
-                       links="" if sso_uid else _account_links(account))
-    return HTMLResponse(body, status_code=status, headers={
-        "Cache-Control": "no-store", "X-Frame-Options": "DENY",
-        "Content-Security-Policy": f"default-src 'none'; style-src 'unsafe-inline'; form-action 'self' {back}; frame-ancestors 'none'",
-        "Referrer-Policy": "no-referrer",
-    })
+def _consent(req: str, client: str, dest: str, uid: str, cfg: Config, error: str = "", status: int = 200,
+             back: str = "") -> HTMLResponse:
+    """Allow `client` to act as `uid`? The user is signed in to the site already (nginx put /login
+    behind the sign-in). `back` is the client's redirect origin: CSP form-action also governs the
+    redirect after the POST."""
+    e = html.escape
+    switch = f"{cfg.login_url}?switch=1&next=/login?req={req}"
+    body = (f'<section class="card narrow"><h1>Claude 연결</h1>'
+            f'<p class="muted"><b>{e(client)}</b>이(가) 연구 원장 접근을 요청합니다.<br>돌아갈 곳: <code>{e(dest)}</code></p>'
+            + (f'<div class="flash error">{e(error)}</div>' if error else "")
+            + f'<form method="post" action="login"><input type="hidden" name="req" value="{e(req)}">'
+            f'<p><b>{e(uid)}</b>(으)로 연결합니다. <a href="{e(switch)}">다른 계정으로</a></p>'
+            '<button type="submit" name="action" value="allow">허용</button> '
+            '<button class="secondary" type="submit" name="action" value="deny" formnovalidate>취소</button>'
+            "</form></section>")
+    return page("refhandbook", body, login_url=cfg.login_url, status=status, form_action=f"'self' {back}".strip())
 
 
 def _origin(uri: str) -> str:
@@ -946,28 +486,25 @@ def _message(text: str, status: int) -> HTMLResponse:
 # ── server ───────────────────────────────────────────────────────────────
 
 
-def build(cfg: Config, authenticator: object | None = None, sso_tokens: SsoTokens | None = None) -> MCPServer:
-    """The remote server: every handbook tool, OAuth endpoints, /login, /healthz.
+def build(cfg: Config, accounts: Accounts | None = None, sso_tokens: SsoTokens | None = None) -> MCPServer:
+    """The server: every handbook tool, the OAuth endpoints, /login (consent after the site sign-in),
+    the approval page, /healthz.
 
     The result also carries `provider`, `http_app()` (the ASGI app with this server's host checks)
     and `serve()` (uvicorn on cfg.host:cfg.port).
     """
     from . import research_api, server
 
-    auth_fn = authenticator or make_authenticator(cfg)
-    if cfg.auth == "sso" and sso_tokens is None:
-        sso_tokens = SsoTokens(cfg)
-    provider = SQLiteOAuthProvider(cfg, auth_fn)
+    accounts = accounts or Accounts(cfg)
+    sso_tokens = sso_tokens or SsoTokens(cfg)
+    provider = SQLiteOAuthProvider(cfg, accounts)
     stores = UserStores(cfg.data_dir)
     server._user_store = stores
     os.environ.setdefault("RHB_RUNNER", "external")  # this unit may not create namespaces: the runner unit runs jobs
     research_api.use_resolver(server.handbook)
 
     public_host = urlparse(cfg.public_url).netloc
-    m = MCPServer(
-        "refhandbook",
-        instructions=server.INSTRUCTIONS,
-        version=server.mcp.version,
+    m = server.make(
         auth_server_provider=provider,
         auth=AuthSettings(
             issuer_url=cfg.public_url,  # type: ignore[arg-type]
@@ -983,7 +520,6 @@ def build(cfg: Config, authenticator: object | None = None, sso_tokens: SsoToken
         allowed_hosts=[public_host, "127.0.0.1:*", "localhost:*", *cfg.extra_hosts],
         allowed_origins=[cfg.public_url, "https://claude.ai", "https://claude.com"],
     )
-    server.install(m)
     m.provider = provider  # type: ignore[attr-defined]  (tests and the CLI reach the store through this)
     def http_app():  # noqa: ANN202
         # json_response: a POST is answered with one JSON body, not an event stream, so a proxy that
@@ -1002,89 +538,43 @@ def build(cfg: Config, authenticator: object | None = None, sso_tokens: SsoToken
 
     expired = "로그인 요청이 만료되었습니다. Claude에서 연결을 다시 시작하세요."
 
+    def request_of(rid: str):  # noqa: ANN202 — (client_id, AuthorizationParams) of a pending request, or None
+        got = provider.pending(rid)
+        if got is None:
+            return None
+        return got[0], got[1]
+
+    async def describe(client_id: str, params: AuthorizationParams) -> tuple[str, str, str]:
+        client = await provider.get_client(client_id)
+        name = client.client_name if client and client.client_name else client_id
+        return name, urlparse(str(params.redirect_uri)).netloc, _origin(str(params.redirect_uri))
+
     @m.custom_route("/login", methods=["GET"])
     async def login_form(request: Request) -> Response:
         rid = request.query_params.get("req", "")
-        got = provider.pending(rid)
+        got = request_of(rid)
         if got is None:
             return _message(expired, 400)
-        client = await provider.get_client(got[0])
-        name = (client.client_name if client and client.client_name else got[0])
-        dest, back = urlparse(str(got[1].redirect_uri)).netloc, _origin(str(got[1].redirect_uri))
-        if sso_tokens is not None:
-            uid = sso_tokens.uid(request.headers.get("x-auth-token", ""))
-            here = f"/login?req={rid}"
-            if uid is None:  # nginx normally sends the browser to the sign-in page before this
-                return RedirectResponse(f"{cfg.login_url}?next={here}", status_code=303)
-            return _page(rid, name, dest, back=back, sso_uid=uid,
-                         switch_url=f"{cfg.login_url}?switch=1&next={here}")
-        return _page(rid, name, dest, back=back, account=cfg.account_url)
-
-    def client_addr(request: Request) -> str:
-        peer = request.client.host if request.client else ""
-        return client_address(peer, request.headers.get("x-forwarded-for", ""), cfg.trusted_proxies)
+        name, dest, back = await describe(*got)
+        uid = sso_tokens.uid(request.headers.get("x-auth-token", ""))
+        if uid is None:  # nginx normally sends the browser to the sign-in page before this
+            return RedirectResponse(f"{cfg.login_url}?next=/login?req={rid}", status_code=303)
+        return _consent(rid, name, dest, uid, cfg, back=back)
 
     @m.custom_route("/login", methods=["POST"])
     async def login_submit(request: Request) -> Response:
+        """The site sign-in vouches for the user; this checks the token, that the POST came from this
+        page, and the account policy, then issues the code."""
         form = await request.form()
         rid = str(form.get("req", ""))[:64]
-        got = provider.pending(rid)
+        got = request_of(rid)
         if got is None:
             return _message(expired, 400)
-        client_id, params, _ = got
-        client = await provider.get_client(client_id)
-        name = (client.client_name if client and client.client_name else client_id)
-        dest = urlparse(str(params.redirect_uri)).netloc
-        back = _origin(str(params.redirect_uri))
+        client_id, params = got
+        name, dest, back = await describe(client_id, params)
         if form.get("action") == "deny":
-            log.info("sign-in cancelled by the user (client %s): access_denied sent back", client_id)
+            log.info("consent declined (client %s): access_denied sent back", client_id)
             return RedirectResponse(provider.deny(rid) or "/", status_code=303)
-        if form.get("action") != "allow":
-            return _page(rid, name, dest, "로그인 버튼으로 제출해 주세요.", 400, back=back, account=cfg.account_url)
-        if sso_tokens is not None:
-            return await sso_grant(request, rid, client_id, name, dest, back)
-        # Everything below up to the directory call runs without an await, so concurrent posts
-        # cannot all pass the checks before one of them is counted.
-        if not provider.reserve_attempt(rid):
-            provider.drop_pending(rid)
-            return _message("시도 횟수를 넘었습니다. Claude에서 연결을 다시 시작하세요.", 429)
-        user = ascii_lower(str(form.get("username", "")).strip()[:64])
-        password = str(form.get("password", ""))[:1024]
-        if not user or not UID_RE.match(user) or not password:
-            return _page(rid, name, dest, "사용자명 또는 비밀번호가 맞지 않습니다.", 401, back=back, account=cfg.account_url)
-        addr = client_addr(request)
-        if provider.locked(user, addr):
-            return _page(rid, name, dest, "잠시 잠겼습니다. 15분 뒤 다시 시도하세요.", 429, back=back, account=cfg.account_url)
-        stamp = provider.note_failure(user, addr)  # counted now, retracted on success
-        try:
-            uid = await anyio.to_thread.run_sync(auth_fn.authenticate, user, password)  # type: ignore[attr-defined]
-        except DirectoryUnavailable as e:
-            provider.retract_failure(user, addr, stamp)
-            log.error("directory unavailable: %s", e)
-            return _page(rid, name, dest, "디렉터리 서버에 연결할 수 없습니다.", 503, back=back, account=cfg.account_url)
-        except PasswordChangeRequired:
-            # The password was right, so this is not a failure; it just cannot be used yet.
-            provider.retract_failure(user, addr, stamp)
-            log.info("login for %s from %s needs a password change first", user, addr)
-            msg = ("비밀번호를 먼저 변경해야 합니다 (임시 비밀번호이거나 만료됨). 변경한 뒤 다시 로그인하세요."
-                   if cfg.account_url else
-                   "비밀번호를 먼저 변경해야 합니다 (임시 비밀번호이거나 만료됨). 관리자에게 변경 방법을 문의하세요.")
-            return _page(rid, name, dest, msg, 403, back=back, account=cfg.account_url, change_password=True)
-        if not uid:
-            log.info("login failed for %s from %s", user, addr)
-            return _page(rid, name, dest, "사용자명 또는 비밀번호가 맞지 않습니다.", 401, back=back, account=cfg.account_url)
-        provider.retract_failure(user, addr, stamp)
-        try:
-            target = await provider.grant(rid, uid)
-        except AuthorizeError:  # a concurrent submit already used this request
-            return _message(expired, 400)
-        log.info("login ok for %s from %s (client %s)", uid, addr, client_id)
-        return RedirectResponse(target, status_code=303)
-
-    async def sso_grant(request: Request, rid: str, client_id: str, name: str, dest: str, back: str) -> Response:
-        """RHB_AUTH=sso: the site sign-in vouches for the user; this server checks the token, that the
-        POST came from its own page, and its account policy, then issues the code."""
-        assert sso_tokens is not None
         origin = request.headers.get("origin")
         if origin is not None and origin.rstrip("/") != cfg.public_url:
             log.warning("consent POST from foreign origin %s refused", origin)
@@ -1092,28 +582,23 @@ def build(cfg: Config, authenticator: object | None = None, sso_tokens: SsoToken
         uid = sso_tokens.uid(request.headers.get("x-auth-token", ""))
         if uid is None:
             return RedirectResponse(f"{cfg.login_url}?next=/login?req={rid}", status_code=303)
-        try:
-            allowed = await anyio.to_thread.run_sync(auth_fn.exists, uid)  # type: ignore[attr-defined]
-        except DirectoryUnavailable as e:
-            log.error("directory unavailable: %s", e)
-            return _page(rid, name, dest, "디렉터리 서버에 연결할 수 없습니다.", 503, back=back, sso_uid=uid)
-        if not allowed:
+        if form.get("action") != "allow":
+            return _consent(rid, name, dest, uid, cfg, "허용 또는 취소 버튼으로 제출해 주세요.", 400, back=back)
+        if not await anyio.to_thread.run_sync(accounts.exists, uid):
             log.info("consent refused for %s: unknown here or not in the required group", uid)
-            return _page(rid, name, dest, "이 계정은 핸드북을 쓸 수 없습니다. 관리자에게 문의하세요.", 403,
-                         back=back, sso_uid=uid, switch_url=f"{cfg.login_url}?switch=1&next=/login?req={rid}")
+            return _consent(rid, name, dest, uid, cfg, "이 계정은 핸드북을 쓸 수 없습니다. 관리자에게 문의하세요.", 403,
+                            back=back)
         try:
             target = await provider.grant(rid, uid)
-        except AuthorizeError:
+        except AuthorizeError:  # a concurrent submit already used this request
             return _message(expired, 400)
-        log.info("consent given by %s (client %s, site sign-in)", uid, client_id)
+        log.info("consent given by %s (client %s)", uid, client_id)
         return RedirectResponse(target, status_code=303)
 
-    if sso_tokens is not None:  # the approval page lives behind the site sign-in only
-        from .agents import pages
+    from .agents import pages
 
-        pages.install(m, stores=stores, uid_of=sso_tokens.uid, data_dir=Path(cfg.data_dir),
-                      public_url=cfg.public_url, lock=server._CALLS, login_url=cfg.login_url or "/auth/login",
-                      allowed=auth_fn.exists)  # type: ignore[attr-defined]
+    pages.install(m, stores=stores, uid_of=sso_tokens.uid, data_dir=Path(cfg.data_dir),
+                  public_url=cfg.public_url, lock=server._CALLS, login_url=cfg.login_url, allowed=accounts.exists)
 
     @m.custom_route("/healthz", methods=["GET"])
     async def healthz(request: Request) -> Response:

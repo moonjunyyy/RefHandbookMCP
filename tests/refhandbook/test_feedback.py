@@ -4,7 +4,6 @@
 import json
 import subprocess
 import sys
-from pathlib import Path
 
 import pytest
 
@@ -103,7 +102,6 @@ def test_export_without_log_import_as_and_dry_run(rs):
 
 
 def test_cli_reads_arguments_from_a_file_and_data_from_a_file(tmp_path, rs):
-    script = Path(__file__).resolve().parents[1] / "scripts" / "research.py"
     db = str(tmp_path / "r.db")
     t = Turn(rs)
     t.begin(1)
@@ -112,11 +110,11 @@ def test_cli_reads_arguments_from_a_file_and_data_from_a_file(tmp_path, rs):
     big.write_text(json.dumps(rs.export("geo"), default=str))
     args = tmp_path / "args.json"
     args.write_text(json.dumps({"action": "import", "data_file": str(big), "to": "moved"}))
-    p = subprocess.run([sys.executable, "-I", str(script), "--db", db, "research", "research_ledgers", f"@{args}"],
+    p = subprocess.run([sys.executable, "-I", "-m", "refhandbook", "--db", db, "research", "research_ledgers", f"@{args}"],
                        capture_output=True, text=True)
     assert p.returncode == 0, p.stderr
     assert "imported ledger 'moved'" in p.stdout
-    p = subprocess.run([sys.executable, "-I", str(script), "--db", db, "research", "research_ledgers", "-"],
+    p = subprocess.run([sys.executable, "-I", "-m", "refhandbook", "--db", db, "research", "research_ledgers", "-"],
                        input='{"action": "list"}', capture_output=True, text=True)
     assert "moved" in p.stdout
 
