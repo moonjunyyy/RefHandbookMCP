@@ -65,6 +65,12 @@ SKIP = {".git", ".venv", "__pycache__", ".pytest_cache", "ldap_portal.egg-info",
 Run = Callable[[list[str]], int]
 
 
+# [site] keys the router's side takes (site.local.toml: they are this host's); unset, a placeholder
+ROUTER_KEYS = {"router_address": "<this host's address as the router reaches it>",
+               "router_cert": "<the certificate's fullchain.pem on the router>",
+               "router_key": "<its privkey.pem on the router>"}
+
+
 def _run(cmd: list[str]) -> int:
     print("+", " ".join(cmd))
     return subprocess.run(cmd).returncode
@@ -89,6 +95,7 @@ def rendered(f: Facts, site_file: Path) -> dict[str, tuple[str, int]]:
               "kdc_dn": _kdc_conf("ldap_kdc_dn") or "<ldap_kdc_dn of kdc.conf>",
               "kadmin_dn": _kdc_conf("ldap_kadmind_dn") or "<ldap_kadmind_dn of kdc.conf>",
               "portal_dn": "<the DN ldapwhoami prints for portal/service>"}
+    extra |= {k: f.extra.get(k, default) for k, default in ROUTER_KEYS.items()}
 
     def t(name: str) -> str:
         return f.substitute((TEMPLATES / name).read_text(), extra)
@@ -408,6 +415,9 @@ def install(site_file: Path, root: Path = Path("/"), sh: Run = _run, src: Path =
     if f.router:
         print(f"\nThe router's side, for its admin to merge (TLS ends there; this host serves plain HTTP on "
               f":{f.listen} to {', '.join(f.router)} only):\n  /etc/{f.name}/router/{f.domain}.conf")
+        unset = [k for k in ROUTER_KEYS if k not in f.extra]
+        if unset:
+            print(f"  still placeholders in it: set {', '.join(unset)} in [site] of {local_file(f.site_file)}")
     print(f"\nThe handbook's shared layers (Python, Node, Rust; uses the network once):\n"
           f"  sudo -u {f.user('handbook')} {venv}/bin/refhandbook layers build --data-dir /var/lib/{f.unit('handbook')}")
     todo = _keytabs(f, root)

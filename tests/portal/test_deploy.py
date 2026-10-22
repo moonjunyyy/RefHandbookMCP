@@ -158,8 +158,10 @@ def test_behind_a_router_nginx_serves_plain_http_to_it_alone(fresh, tmp_path):
     assert "real_ip_header X-Forwarded-For;" in site
     assert "geo $realip_remote_addr $m00nny_via_router {" in site and "if ($m00nny_via_router = 0) { return 403; }" in site
     assert "server_name m00nny.kr;\n    return 301 https://www.m00nny.kr$request_uri;" in site  # aliases still redirect
+    assert "absolute_redirect off;" in site  # its redirects keep the client's https and port, not :80
     router = files["/etc/m00nny/router/www.m00nny.kr.conf"][0]
-    assert "proxy_pass http://<this host>:80;" in router and "proxy_set_header X-Forwarded-For $remote_addr;" in router
+    assert "proxy_pass http://<this host's address as the router reaches it>:80;" in router  # unset: a placeholder
+    assert "proxy_set_header X-Forwarded-For $remote_addr;" in router
     assert "proxy_buffering off;" in router and "server_name www.m00nny.kr m00nny.kr;" in router
     assert not any("/router/" in p for p in deploy.rendered(facts(str(SITE)), SITE))  # TLS here: no router side
     assert "/etc/m00nny/site.local.toml" not in files
@@ -167,6 +169,26 @@ def test_behind_a_router_nginx_serves_plain_http_to_it_alone(fresh, tmp_path):
     facts.cache_clear()
     with pytest.raises(facts_mod.FactError, match="router"):
         facts(str(s))
+
+
+def test_the_routers_side_is_filled_in_from_the_hosts_keys(fresh, tmp_path):
+    s = tmp_path / "site.toml"
+    s.write_text(SITE.read_text())
+    (tmp_path / "site.local.toml").write_text(
+        '[site]\nrouter = "172.16.0.1"\nlisten = 8081\nrouter_address = "172.16.0.20"\n'
+        'router_cert = "/etc/acme/www.m00nny.kr/fullchain.cer"\nrouter_key = "/etc/acme/www.m00nny.kr/www.m00nny.kr.key"\n')
+    files = deploy.rendered(facts(str(s)), s)
+    router = files["/etc/m00nny/router/www.m00nny.kr.conf"][0]
+    assert "proxy_pass http://172.16.0.20:8081;" in router and "<" not in router.split("server {", 1)[1]
+    assert "ssl_certificate     /etc/acme/www.m00nny.kr/fullchain.cer;" in router
+    assert "ssl_certificate_key /etc/acme/www.m00nny.kr/www.m00nny.kr.key;" in router
+    assert "listen 8081;" in files["/etc/nginx/sites-available/www.m00nny.kr.conf"][0]
+
+
+def test_a_trailing_slash_redirect_keeps_the_query(fresh):
+    apps = deploy.rendered(facts(str(SITE)), SITE)["/etc/nginx/snippets/m00nny-apps.conf"][0]
+    assert "location = /account {\n    return 301 /account/$is_args$args;\n}" in apps
+    assert "return 301 /account/;" not in apps
 
 
 def test_the_hosts_own_keys_stay_beside_the_site_file(fresh, tmp_path):

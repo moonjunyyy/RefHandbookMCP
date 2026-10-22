@@ -337,10 +337,9 @@ def install(m: Any, *, stores: Callable[[str], Handbook], uid_of: Callable[[str]
 async def _check_key(provider: str, secret: str, fmt: str, base: str) -> tuple[list[str], str]:
     """Check a key once with the provider's model list: (models, "ok"); a refused key raises; a
     provider that cannot be reached now gives ([], "unchecked") (the runner finds out on use)."""
-    import httpx
-
     from . import keys as K
     from . import providers as P
+    from .http import Client, HttpError
 
     if provider not in K.PROVIDERS:
         raise K.KeyError_("제공자를 고르세요")
@@ -355,7 +354,7 @@ async def _check_key(provider: str, secret: str, fmt: str, base: str) -> tuple[l
     else:
         fmt, base = K.NATIVE_FORMAT[provider], ""
     try:
-        async with httpx.AsyncClient(timeout=15.0, follow_redirects=False) as http:
+        async with Client(timeout=15.0, workers=2) as http:
             models = await P.adapter(fmt, base).models(http, secret)
         return models, "ok"
     except P.ProviderError as e:
@@ -364,7 +363,7 @@ async def _check_key(provider: str, secret: str, fmt: str, base: str) -> tuple[l
         if e.status == 404:  # no model list on this server: the key is not refused
             return [], "unchecked"
         raise K.KeyError_(K.scrub(f"키를 확인하지 못했습니다: {e}", [secret])[:300]) from e
-    except (httpx.HTTPError, ValueError):
+    except (HttpError, ValueError):
         return [], "unchecked"
 
 

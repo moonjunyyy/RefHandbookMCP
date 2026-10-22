@@ -176,7 +176,7 @@ def _hosted(a: App, f) -> App:  # noqa: ANN001 — f: portal.facts.Facts
         root = a.static if isinstance(a.static, str) else f"{f.apps_root}/{a.id}"
         if not root.startswith("/") or any(c in root for c in "{};\n "):
             raise SiteError(f"app {a.id}: static is true or an absolute directory, not {root!r}")
-        routes += [Route(path=base, match="exact", auth="public", nginx=f"return 301 {base}/;"),
+        routes += [Route(path=base, match="exact", auth="public", nginx=f"return 301 {base}/$is_args$args;"),
                    Route(path=f"{base}/", nginx=f"alias {root.rstrip('/')}/;\nindex index.html;\n"
                                                 f"try_files $uri {base}/index.html;",
                          note="its built files")]

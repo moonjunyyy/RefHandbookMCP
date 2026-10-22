@@ -11,7 +11,8 @@
 # TLS: nginx holds the certificate (/etc/letsencrypt/live/<domain>) unless `router` names the
 # TLS-terminating proxy in front (an IP or CIDR, or a list): then nginx serves plain HTTP on
 # `listen` (80) to it alone, takes the client from its X-Forwarded-For, and the installer renders
-# the router's side into /etc/<name>/router/<domain>.conf.
+# the router's side into /etc/<name>/router/<domain>.conf; router_address (this host's address as the
+# router reaches it), router_cert and router_key (the certificate's paths on the router) fill it in.
 # Keys only this host should know (`router`, say) go in [site] of site.local.toml beside this file:
 # it is not in the repository, its keys win over these, and it is installed beside this one.
 # Services are named <name>-<role> (m00nny-portal, m00nny-sso): the unit, its
@@ -47,7 +48,7 @@ link = [{ label = "내 계정", href = "@@portal_root@@/" }]
   path = "@@portal_root@@"
   match = "exact"
   auth = "public"
-  nginx = "return 301 @@portal_root@@/;"
+  nginx = "return 301 @@portal_root@@/$is_args$args;"
   [[app.route]]
   path = "@@portal_root@@/"
   body = "16k"

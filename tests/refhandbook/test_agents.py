@@ -109,12 +109,14 @@ def test_the_chat_completions_adapter_round_trips_tool_calls():
     class Http:
         async def post(self, url, json, headers):  # noqa: A002
             sent.update(url=url, body=json, headers=headers)
-            import httpx
+            import json as jsonlib  # the parameter `json` is the request body here
 
-            return httpx.Response(200, json={"choices": [{"finish_reason": "tool_calls", "message": {
+            from refhandbook.agents.http import Response
+
+            return Response(200, {}, jsonlib.dumps({"choices": [{"finish_reason": "tool_calls", "message": {
                 "role": "assistant", "content": None, "reasoning_content": "hmm",
                 "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "note", "arguments": '{"text": "x"}'}}]}}],
-                "usage": {"prompt_tokens": 12, "completion_tokens": 3}})
+                "usage": {"prompt_tokens": 12, "completion_tokens": 3}}).encode())
 
     step = asyncio.run(a.step(Http(), "", "qwen3", "sys", C.TOOLS[:2], a.user("hi"), P.Options()))
     assert sent["url"] == "http://gpu.lan/v1/chat/completions" and "authorization" not in sent["headers"]
@@ -543,3 +545,77 @@ def test_an_agents_sh_runs_in_the_sandbox_in_its_runs_directory(tmp_path, ks, mo
     assert out[0].startswith("done, exit 0") and f"/work/runs/{hexid}\nhi\n{hexid}" in out[0], out
     assert out[1] == "hi"
     assert (crew.ws.work / "runs" / hexid / "a.txt").read_text() == "hi\n"
+
+
+# ── the HTTP client and what the installed code may import ───────────────
+
+
+def test_the_http_client_returns_every_status_and_follows_no_redirect():
+    import http.server
+    import socket
+
+    from refhandbook.agents.http import Client, HttpError
+
+    seen = []
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_POST(self):  # noqa: N802
+            body = self.rfile.read(int(self.headers["content-length"]))
+            seen.append((self.path, self.headers.get("x-api-key"), json.loads(body)))
+            if self.path == "/moved":
+                self.send_response(302)
+                self.send_header("location", "http://elsewhere.example/steal")
+                self.end_headers()
+                return
+            code = 429 if self.path == "/busy" else 200
+            self.send_response(code)
+            self.send_header("retry-after", "3")
+            self.end_headers()
+            self.wfile.write(json.dumps({"ok": self.path}).encode())
+
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{srv.server_address[1]}"
+
+    async def go():
+        async with Client(timeout=5) as c:
+            r = await c.post(base + "/v1", json={"q": "한"}, headers={"x-api-key": "k"})
+            busy = await c.post(base + "/busy", json={})
+            moved = await c.post(base + "/moved", json={}, headers={"x-api-key": "k"})
+            with socket.socket() as s:  # a port nobody listens on
+                s.bind(("127.0.0.1", 0))
+                dead = s.getsockname()[1]
+            with pytest.raises(HttpError):
+                await c.get(f"http://127.0.0.1:{dead}/")
+            return r, busy, moved
+
+    try:
+        r, busy, moved = asyncio.run(go())
+    finally:
+        srv.shutdown()
+    assert r.status_code == 200 and r.json() == {"ok": "/v1"} and seen[0] == ("/v1", "k", {"q": "한"})
+    assert busy.status_code == 429 and busy.headers["retry-after"] == "3"
+    assert moved.status_code == 302 and len(seen) == 3  # the key went nowhere else
+
+
+def test_the_installed_code_imports_without_the_dev_packages():
+    """The server installs with `uv sync --no-dev`: no module may need pytest or httpx (a dev
+    dependency here, absent on the server)."""
+    import pathlib
+    import subprocess
+    import sys
+
+    src = pathlib.Path(__file__).resolve().parents[2] / "src"
+    mods = sorted(".".join(p.relative_to(src).with_suffix("").parts).removesuffix(".__init__")
+                  for p in src.rglob("*.py") if not p.name.startswith("._")
+                  and not {"__pycache__", "recipes"} & set(p.parts))  # recipes are scripts the sandbox runs
+    code = ("import sys, importlib\n"
+            "for dev in ('httpx', 'pytest'): sys.modules[dev] = None\n"
+            f"for m in {mods!r}:\n"
+            "    if m.endswith('__main__'): continue\n"
+            "    importlib.import_module(m)\n")
+    r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, cwd=src)
+    assert r.returncode == 0, r.stderr[-2000:]

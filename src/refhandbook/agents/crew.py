@@ -44,12 +44,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import httpx
-
 from ..kernel.graph import KernelError
 from ..kernel.scopes import ScopeRefused
 from ..store import HandbookError
 from . import providers as P
+from .http import Client, HttpError
 from .keys import Key, KeyError_, KeyStore, scrub
 from .team import NOTE_KINDS, ROLES, Team, TeamError, render_note
 from .workspace import Workspace
@@ -237,7 +236,7 @@ class Crew:
 
     def __init__(self, ws: Workspace, lock: threading.RLock, keys: KeyStore | None, *,
                  runner: Any = None, adapter_for: Callable[[Key], P.Adapter] | None = None,
-                 http: httpx.AsyncClient | None = None):
+                 http: Client | None = None):
         self.ws, self.lock, self.keys, self.runner = ws, lock, keys, runner
         self.adapter_for = adapter_for or (lambda k: P.adapter(k.format, k.base_url))
         self.http = http
@@ -267,7 +266,7 @@ class Crew:
     async def tick(self) -> int:
         """One planning pass; returns how many agent tasks it started."""
         if self.http is None:
-            self.http = httpx.AsyncClient(timeout=httpx.Timeout(900.0, connect=20.0))
+            self.http = Client(timeout=900.0)
         for aid, t in list(self.tasks.items()):
             if t.done():
                 del self.tasks[aid]
@@ -589,7 +588,7 @@ class Crew:
                     if not e.retryable or attempt == 4:
                         break
                     await asyncio.sleep(min(60.0, e.retry_after or 2.0 * 2 ** attempt))
-                except httpx.HTTPError as e:
+                except HttpError as e:
                     err = scrub(f"{type(e).__name__}: {e}", [ctx.key.secret])
                     if attempt == 4:
                         break

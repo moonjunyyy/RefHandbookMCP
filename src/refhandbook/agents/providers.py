@@ -1,4 +1,4 @@
-"""Provider adapters over plain HTTP (httpx, already present through mcp), one per wire format:
+"""Provider adapters over plain HTTP (agents/http.py, on the standard library), one per wire format:
 Anthropic Messages, OpenAI Responses, OpenAI Chat Completions (what most OpenAI-compatible servers
 speak), Gemini generateContent; and a scripted `fake` for tests.
 
@@ -35,7 +35,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-import httpx
+from .http import Client, Response
 
 ANTHROPIC_URL = "https://api.anthropic.com/v1"
 OPENAI_URL = "https://api.openai.com/v1"
@@ -88,7 +88,7 @@ class ProviderError(Exception):
         self.status, self.retryable, self.retry_after, self.auth = status, retryable, retry_after, auth
 
 
-def _check(r: httpx.Response, who: str) -> dict[str, Any]:
+def _check(r: Response, who: str) -> dict[str, Any]:
     if r.status_code == 200:
         return r.json()
     try:
@@ -162,11 +162,11 @@ class Adapter:
     def results(self, results: list[tuple[ToolCall, str, bool]], extra: str | None = None) -> list[Any]:
         raise NotImplementedError
 
-    async def step(self, http: httpx.AsyncClient, key: str, model: str, system: str, tools: list[ToolSpec],
+    async def step(self, http: Client, key: str, model: str, system: str, tools: list[ToolSpec],
                    history: list[Any], opts: Options) -> Step:
         raise NotImplementedError
 
-    async def models(self, http: httpx.AsyncClient, key: str) -> list[str]:
+    async def models(self, http: Client, key: str) -> list[str]:
         raise NotImplementedError
 
 

@@ -18,6 +18,8 @@ derivation.
     portal_root   /account                where the account portal is served
     router        (none)                  a TLS-terminating proxy in front (IP or CIDR, or a list of
                                           them): nginx then serves plain HTTP on `listen` (80) to it
+    router_address, router_cert, router_key   the router's side (deploy.ROUTER_KEYS): this host's
+                                          address as the router reaches it, the certificate there
 
 Each service is named after the site and its role, and that name is everything systemd keys on:
 the unit, its system user, /etc/<unit>, /var/lib/<unit> and /var/log/<unit>.
