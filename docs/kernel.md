@@ -191,7 +191,7 @@ per-user id, but it needs a runner with CAP_SETUID and per-user ownership of the
 
 ## The approval page
 
-`/agents`, behind the site sign-in (RHB_AUTH=sso; nginx passes the SSO's X-Auth-Token for the
+`/agents`, behind the site sign-in (nginx passes the SSO's X-Auth-Token for the
 audience `refhandbook`): grants waiting (each capability version that widens what the model may do,
 with what it widens; approve or reject), rule proposals with the hash of what each says, policies
 (grant or change, with layers and mounts), every capability record and recent jobs. Forms carry a token bound to the signed-in uid

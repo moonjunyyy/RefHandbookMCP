@@ -1,6 +1,5 @@
 """The site's services from the site file (portal/site.py, deploy/site.toml)."""
 import re
-from pathlib import Path
 
 import pytest
 

@@ -119,7 +119,7 @@ def test_install_makes_secrets_once_and_moves_an_old_layout(fresh, tmp_path, cap
     assert ["systemctl", "restart", *(f"m00nny-{r}.service" for r in ("portal", "sso", "apps", "handbook", "runner"))] \
         in sh.calls
     # one virtualenv for both packages, from the lock
-    assert any(c[:1] == ["env"] and "sync" in c and "--frozen" in c and f"--project" in c for c in sh.calls)
+    assert any(c[:1] == ["env"] and "sync" in c and "--frozen" in c and "--project" in c for c in sh.calls)
     # the handbook moved to the derived names, with its users' data
     for old in ("refhandbook.service", "refhandbook-runner.service"):
         assert ["systemctl", "disable", "--now", old] in sh.calls and not (root / "etc/systemd/system" / old).exists()

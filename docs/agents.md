@@ -28,10 +28,10 @@ The philosophy is the one the handbook already follows:
 
 ```
                      internet
-                        │  TLS (nginx / Caddy)
+                        │  TLS (the site's nginx, or a router in front)
                         ▼
  ┌──────────────────────────────────────────┐      ┌─────────────────────────────────────────────┐
- │ refhandbook.service            (exists)   │      │ refhandbook-runner.service             (new) │
+ │ <name>-handbook.service                   │      │ <name>-runner.service                        │
  │  MCP tools, OAuth, /login                 │      │  scheduler (asyncio), one task per agent     │
  │  + agent_run tool (request/status/cancel) │      │  provider adapters: anthropic|openai|gemini  │
  │  + /agents pages: keys, approve, runs     │      │  context compiler (pruning)                  │
@@ -39,7 +39,7 @@ The philosophy is the one the handbook already follows:
  └───────────────┬──────────────────────────┘      │  spawns the sandbox  ─────────────┐          │
                  │                                 └──────────────┬────────────────────│──────────┘
                  │   both open users/<uid>.db (WAL), CAS writes   │                    ▼
-                 └──────────────► /var/lib/refhandbook ◄──────────┘     ┌─────────────────────────┐
+                 └──────────► /var/lib/<name>-handbook ◄──────────┘     ┌─────────────────────────┐
                                   users/<uid>.db                        │ sandbox (per tool call)  │
                                   runs/<uid>/<run>/…                    │ userns+mntns+pidns+netns │
                                   auth.db (+ api_keys, ciphertext)      │ Landlock, seccomp, cgroup│
@@ -66,10 +66,8 @@ The philosophy is the one the handbook already follows:
 The model never sees a key, the sandbox never holds one, and the internet-facing process cannot
 decrypt one.
 
-- **Registration** happens on the page `/agents/keys`, behind the same sign-in as `/login`:
-  - `RHB_AUTH=sso`: nginx `auth_request` vouches for the user;
-  - `pam` / `ldap`: each POST carries the directory password, as `/login` does, so there are
-    still no cookies or sessions.
+- **Registration** happens on the page `/agents/keys`, behind the site sign-in as `/login` is
+  (nginx `auth_request` vouches for the user with the sign-in's token).
 
   The page takes a provider, a label and the key. It checks the key once with the provider's
   model-list call, encrypts it, and drops the plaintext.
@@ -77,9 +75,10 @@ decrypt one.
   `pyjwt[crypto]`): an ephemeral X25519 key, then HKDF-SHA256, then AES-256-GCM.
   - The associated data is `uid | provider | label`, so a row moved to another user or provider
     fails to decrypt.
-  - The web process has only `/etc/refhandbook/agent-keys.pub`.
+  - The installer makes the pair once in `/etc/<name>-handbook/` (`python -m
+    refhandbook.agents.keys gen <dir>`). The web process has only `agent-keys.pub`.
   - The runner receives the private key through systemd `LoadCredential=`. The root file is
-    `/etc/refhandbook/agent-keys` (0400), and no other unit can read the credential.
+    `/etc/<name>-handbook/agent-keys` (0400), and no other unit can read the credential.
 - **Storage:** an `api_keys` table in `auth.db` holding uid, provider, label, ephemeral public key,
   nonce, ciphertext, a fingerprint (`sk-…abcd`), created, last_used, and status.
 - **Use:** the runner decrypts a key per call and keeps it only in local variables. Any exception
@@ -346,18 +345,19 @@ Launch sequence (the child process, before `execve`):
 On this development machine (WSL 6.18, Python 3.14.7), userns works, the Landlock ABI is 7, and
 cgroup v2 offers `cpuset cpu io memory pids`.
 
-### Runner unit (deploy/refhandbook-runner.service)
+### Runner unit (deploy/templates/runner.service)
 
-It differs from `refhandbook.service` in these lines:
+It differs from the handbook's unit (deploy/templates/handbook.service) in these lines:
 
 ```
-ExecStart=/opt/refhandbook-venv/bin/refhandbook runner --data-dir /var/lib/refhandbook
+ExecStart=<code>/.venv/bin/refhandbook runner --data-dir /var/lib/<name>-handbook
+LoadCredential=agent-keys:/etc/<name>-handbook/agent-keys
 Delegate=yes                                   # cgroup subtree for per-job limits
 RestrictNamespaces=user mnt pid net ipc uts cgroup
 SystemCallFilter=@system-service @mount @sandbox unshare pivot_root sethostname   # the launcher's, before its own seccomp
 SystemCallErrorNumber=EPERM
 RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_INET AF_INET6
-ReadWritePaths=/var/lib/refhandbook            # no ProtectKernelTunables: it blocks the sandbox's /proc
+StateDirectory=<name>-handbook                 # the handbook's data; no ProtectKernelTunables: it blocks the sandbox's /proc
 ```
 
 The unit uses kernel primitives and systemd only: no LSM profile, so it runs the same on WSL2 and on
@@ -387,8 +387,8 @@ distributions without AppArmor.
   - `/agents/runs/<id>/approve`, which shows the goal, providers and models, slots, tickets,
     depth, budgets and pruning, and writes the grant, slots and tickets as `user`;
   - `/agents/runs`, the live tree, usage and cancel.
-- **CLI:** `refhandbook runner`, `refhandbook sandbox-check`, `refhandbook sandbox-exec` (internal),
-  and `refhandbook agent-keys gen` (makes the X25519 pair for `install.sh`).
+- **CLI:** `refhandbook runner`, `refhandbook sandbox-check`, `refhandbook sandbox-exec` (internal);
+  `python -m refhandbook.agents.keys gen <dir>` makes the X25519 pair (the installer, once).
 
 ## 10. Build order
 

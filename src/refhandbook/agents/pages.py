@@ -1,6 +1,6 @@
 """The approval page: /agents, the user's channel (docs/kernel.md "Reviewing the rules", docs/agents.md §9).
 
-Behind the site sign-in only (RHB_AUTH=sso): nginx asks the SSO, which mints an X-Auth-Token for the
+Behind the site sign-in: nginx asks the SSO, which mints an X-Auth-Token for the
 audience `refhandbook`, and every request here verifies it. What the page writes is written as
 `user`: it is the one place, besides the server's terminal, where a model's proposal becomes a rule
 that blocks and where a sandbox policy is granted. Forms carry a token bound to the signed-in uid

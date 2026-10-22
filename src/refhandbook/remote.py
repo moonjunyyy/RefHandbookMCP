@@ -40,6 +40,8 @@ from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, PlainTextResponse, RedirectResponse, Response
 
+from portal.facts import SIGNIN
+
 from .page import page
 from .store import Handbook
 
@@ -85,7 +87,7 @@ class Config:
     sso_public_key_file: str  # the site sign-in's token key (portal.tokens), public half
     sso_issuer: str = ""  # default: public_url
     sso_audience: str = "refhandbook"  # the audience nginx asks the sign-in to mint for this app
-    login_url: str = "/auth/login"  # the site sign-in page, for a browser without its cookie
+    login_url: str = SIGNIN + "/login"  # the site sign-in page, for a browser without its cookie
     host: str = "127.0.0.1"
     port: int = 0  # RHB_PORT: the installer renders the handbook role's port (portal/facts.py ROLES)
     require_group: str | None = None  # a POSIX group (through NSS) the user must belong to

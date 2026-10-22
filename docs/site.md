@@ -1,7 +1,9 @@
-# ldap-portal
+# The site: account portal, sign-in, hosted apps (src/portal)
 
 Self-service and admin web portal for a Kerberos realm: OpenLDAP (`ldaps://ldap.<realm>`)
-with MIT Kerberos 1.22 storing principals in LDAP (kldap).
+with MIT Kerberos 1.22 storing principals in LDAP (kldap); the site-wide sign-in in front of every
+service; and the installer that renders and installs the whole site, the handbook included
+(docs/handbook.md).
 
 - **Every user**: sign in with their Kerberos password, edit display name, email and login shell,
   change their password, and set a new one when it has expired.
@@ -83,19 +85,22 @@ sudo deploy/install.sh             # install or update
 | site name | `example` | `name` |
 | domain | `www.example.org` | `domain` |
 | LDAP | `ldaps://ldap.example.org`, `dc=example,dc=org`, `ou=Users,…`, `ou=Groups,…` | `ldap_uri`, `base_dn`, `users_ou`, `groups_ou` |
-| services | `example-portal` (:8080), `example-sso` (:8090) | `ports` |
+| services | `example-portal` (:8080), `-sso` (:8090), `-apps` (:8100), `-handbook` (:8765), `-runner` (`facts.ROLES`) | `ports` |
 | TLS | nginx, with `/etc/letsencrypt/live/<domain>` | `router` (and `listen`), below |
 | each service's | system user, `/etc/<unit>`, `/var/lib/<unit>`, `/var/log/<unit>` | |
-| code | `/opt/example-portal` (with its `.venv`) | `code` |
+| code | `/opt/example-site` (both packages, with its `.venv`) | `code` |
+| portal path | `/account` | `portal_root` |
 
-What the installer does: creates the two service users; copies the code and builds its virtualenv;
-installs `deploy/site.toml` as `/etc/<name>/site.toml`; renders the systemd units, the nginx site and
-snippets, and the directory's side (below) from `deploy/templates/`; makes each
-service's env file once with a fresh secret (`/etc/<unit>/{portal,sso}.env`: secrets and local
-overrides only, never overwritten) and the SSO's token key pair; then `nginx -t`, enables and
-restarts the units. A host on the old layout (unit `ldap-portal`) is moved: the old unit is removed
-and its `/etc`, `/var/lib`, `/var/log` carried over to the derived names. The WebDAV directory timer
-(`dav-homes`, `<site>-dav-homes`) of earlier versions is stopped and removed; `/data` is left as it is.
+What the installer does: creates a system user per role (the runner runs as the handbook's); copies
+the code and builds its virtualenv with `uv sync --frozen` from `uv.lock`; installs `deploy/site.toml`
+as `/etc/<name>/site.toml`; renders a unit per role, the nginx site and snippets, and the directory's
+side (below) from `deploy/templates/`; makes once what must be made once (each role's env file in
+`/etc/<unit>/`, secrets and local overrides only; the SSO's token key pair; the handbook's agent key
+pair); then `nginx -t`, enables and restarts the units, and checks the handbook's sandbox. A host on
+an older layout is moved to the derived names (`ldap-portal`, and the handbook's own `refhandbook`
+and `refhandbook-runner` with `/var/lib/refhandbook`): the old units are removed and their `/etc`,
+`/var/lib`, `/var/log` carried over, and what is left behind (old code copies, the old handbook user)
+is listed for removal.
 
 ### TLS at a router
 
@@ -145,7 +150,7 @@ Run the portal on a host only admins can log in to: anyone with root there holds
 ### Tests
 
 ```sh
-uv pip install --python .venv/bin/python -e '.[dev]' && .venv/bin/python -m pytest -q
+uv run pytest tests/portal       # or: uv run pytest   (both suites)
 ```
 
 The tests run the real app (routes, permissions, CSRF, throttling, rollback, first-login password
@@ -204,9 +209,10 @@ should list only your own values, and `getent passwd <someone-else>` should have
 
 ### Serving under a sub-path
 
-Set `PORTAL_ROOT_PATH=/account` and proxy `/account/` to the portal (the second half of
-`deploy/nginx.conf`). Links, redirects and the session cookie's `Path` all carry the prefix, and the
-app accepts requests whether or not nginx strips it.
+The portal is served at `portal_root` (`/account` unless `[site]` says otherwise); the installer passes
+it to the unit (`PORTAL_ROOT_PATH`) and to the site file's routes (`@@portal_root@@`). Links,
+redirects and the session cookie's `Path` all carry the prefix, and the app accepts requests whether
+or not nginx strips it.
 
 ## One sign-in for the site
 
@@ -218,7 +224,7 @@ The site runs behind one nginx server with one Kerberos sign-in:
 | `/auth/` | site sign-in, `portal/sso.py` on :8090 | public (rate-limited) |
 | `/account/` | this portal on :8080 with `PORTAL_AUTH=sso`; `/account/request` and `/account/join/` stay public | `auth_request` + token |
 | `/agents` | refhandbook's approval page | `auth_request` + token |
-| `/mcp`, `/authorize`, `/token`, `/register`, `/revoke`, `/login`, `/.well-known/oauth-*` | refhandbook with `RHB_AUTH=sso` | its own OAuth; `/login` via `auth_request` + token |
+| `/mcp`, `/authorize`, `/token`, `/register`, `/revoke`, `/login`, `/.well-known/oauth-*` | the handbook (docs/handbook.md) | its own OAuth; `/login` via `auth_request` + token |
 
 **Services are declared, not hand-wired.** `deploy/site.toml` lists every service once: its
 routes, the audience its tokens are minted for, its card on the main page and its menu entry
