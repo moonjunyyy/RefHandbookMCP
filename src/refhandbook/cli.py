@@ -229,15 +229,15 @@ def _approve(args: argparse.Namespace, hb: Handbook) -> int:
 def _policy(args: argparse.Namespace, hb: Handbook) -> int:
     """The terminal on the server is the user's channel: a policy granted here is the user's."""
     from . import cap_api
-    from .agents.workspace import Workspace
+    from .agents.workspace import DEFAULT_POLICY, Workspace
 
     ws = Workspace(hb)
+    name = args.name or DEFAULT_POLICY
     changes: dict = {}
     if args.commands is not None:
         changes["commands"] = args.commands.split()
     if args.add:
-        name = args.name or "default"
-        current = ws.policy(name if name in ws.policies() else "default")["attrs"]["commands"]
+        current = (ws.policy(name)["attrs"] if name in ws.policies() else ws.base_policy())["commands"]
         changes["commands"] = list(changes.get("commands", current)) + args.add.split()
     if args.network:
         changes["network"] = args.network == "on"
@@ -258,7 +258,7 @@ def _policy(args: argparse.Namespace, hb: Handbook) -> int:
             changes[k] = getattr(args, k)
     try:
         if changes:
-            ws.set_policy(args.name or "default", actor="user", **changes)
+            ws.set_policy(name, actor="user", **changes)
         print(cap_api.policy_text(ws, args.name))
     except HandbookError as e:
         print(f"error: {e}", file=sys.stderr)

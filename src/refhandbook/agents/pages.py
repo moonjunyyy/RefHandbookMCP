@@ -227,7 +227,7 @@ def _overview(ws: Workspace, uid: str, token: str, q: Any) -> str:
     out.append("<h2>샌드박스 정책</h2><p class='muted small'>정책이 곧 샌드박스입니다: 보이는 명령, 네트워크, 한도. "
                "한 번 허용하면 그 안의 스크립트와 실행은 다시 묻지 않습니다.</p>")
     for name in ws.policies() + [""]:
-        a = ws.policy(name)["attrs"] if name else ws.policy("default")["attrs"]
+        a = ws.policy(name)["attrs"] if name else ws.base_policy()
         p = ws.policy(name) if name else None
         title = f"{_e(name)} <span class='muted small'>(작성: {_e(p['author'])})</span>" if p else "새 정책"
         out.append(

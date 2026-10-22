@@ -323,6 +323,11 @@ class Workspace:
             raise WorkspaceError(f"no policy {name!r} in force; policies: {', '.join(self.policies()) or 'none'}")
         return n
 
+    def base_policy(self) -> dict[str, Any]:
+        """What a new policy starts from: the default policy as it is in force, or, if the user took it
+        out of force, its definition."""
+        return self.policy(DEFAULT_POLICY)["attrs"] if DEFAULT_POLICY in self.policies() else self.default_policy_spec()
+
     def policies(self) -> list[str]:
         return [r[0].split(":", 1)[1] for r in
                 self.g.db.execute("SELECT id FROM k_nodes WHERE type = 'policy' ORDER BY id")]

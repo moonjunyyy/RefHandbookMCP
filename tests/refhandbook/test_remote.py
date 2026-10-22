@@ -546,3 +546,18 @@ def test_a_grant_the_model_asked_for_is_approved_on_the_page(client):
     assert Workspace(server._user_store("moon")).policy("wider")["attrs"]["network"] is True
     r = c.post("/agents/cap/approve", data=form, headers=tok, follow_redirects=False)  # nothing waits any more
     assert "err=" in r.headers["location"]
+
+
+def test_the_approval_page_opens_without_the_default_policy(client):
+    """The user may retire the default policy and keep others (here: dev). The new-policy form then
+    starts from the default's definition instead of failing."""
+    from refhandbook.agents.workspace import DEFAULT_POLICY, Workspace
+
+    c, key = client, client.key
+    w = Workspace(server._user_store("moon"))
+    w.set_policy("dev", actor="user", commands=["sh", "cat"])
+    w.caps.remove("policy", DEFAULT_POLICY, actor="user")
+    assert w.policies() == ["dev"]
+    page = c.get("/agents", headers={"X-Auth-Token": site_token(key)})
+    assert page.status_code == 200 and "새 정책" in page.text and ">dev <" in page.text
+    assert w.base_policy() == Workspace.default_policy_spec()
