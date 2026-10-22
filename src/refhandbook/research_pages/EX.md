@@ -51,5 +51,5 @@ configuration.
 
 - **a**: boundary read and reported → push `report the boundary; propose adoption if any` @USER
 - **b**: a new claim emerged from the boundary → push `verify H#` @VF
-- **c**: a configuration stays undecided after an attempt → push `reformulate H# under <config>` @FM
+- **c**: a configuration stays undecided after an attempt → push `reformulate H# under <config>` @FM-DEFINE
 - **d**: the user adopts or rejects a premise → push `apply the main-line change` @X6

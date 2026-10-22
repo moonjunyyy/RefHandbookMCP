@@ -8,7 +8,7 @@ ENTRY — object: a K `@RF` `on` the item to resolve (a term, symbol, claim,
 agreement, result, or paper). It is pushed by:
 - N1 step 2, for an unresolvable reference in the user's message;
 - N2 step 1 (context sweep);
-- QM2, X8, or any page that needs knowledge from outside this conversation.
+- QM-ACQUIRE, X8, or any page that needs knowledge from outside this conversation.
 
 ◆ Look before you say you do not know, and before you proceed as if you know.
 Every recovered item carries the place it came from.
@@ -20,7 +20,7 @@ Every recovered item carries the place it came from.
 2. **Internal ladder.** Stop at the first hit in an original.
    1. **This conversation.** Quote the turn.
    2. **Ledger, registered documents, uploaded or project files.** Register a
-      user file you rely on as a `source` document (card N4). Use `cat -n` or
+      user file you rely on as a `source` document (card N4-SOURCE). Use `cat -n` or
       `view`.
    3. **Past chats in scope.** These tools search only the current project, or
       only non-project chats when outside a project.

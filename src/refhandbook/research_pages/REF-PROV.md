@@ -2,96 +2,19 @@
 KIND: reference
 TAGS: research, reference
 TRIGGERS: origin; entailed; model origin; use table; evidence; computed; sourced; unverified; relation type; approximation; proxy
-OBJECTIVE: The core rules (origin, use, evidence) and how to classify origins, type relations, and tell approximation from added information.
+OBJECTIVE: Index of the core rules (origin, use, evidence) and of how to classify origins, type relations, tell approximation from added information, and explore premises.
+PARTS: REF-ORIGIN, REF-USE, REF-EVIDENCE, REF-CLASSIFY, REF-RELATIONS, REF-APPROX, REF-EXPLORE
 
 Consulted from a card step; return to that step. Not a procedure: it consumes no K.
 
-The core rules every basis tag uses (origin, the use table, evidence), then the
-rules for classifying items, typing relations, and exploring premises.
+An index of the core rules every basis tag uses (origin, the use table,
+evidence), then the rules for classifying items, typing relations, and exploring
+premises; each is its own card.
 
-
-**Origin** of an item:
-
-- **user**: the user's words, or the same content restated in symbols with
-  no structure added (the minimal reading);
-- **entailed(<step>)**: follows from user items by a cited step, including
-  premises presupposed by a definition the user gave;
-- **model**: everything else, such as a larger reading, an added premise, a
-  frame, an intermediate object, or a special case.
-
-A model item stays out of the main line until the user adopts it. It may be
-used inside named exploration configurations meanwhile, and anything built on
-it is `model` too. On adoption, set its origin to `user(adopted, session N)`.
-Content cells hold only the user's words for user items; notes go in the
-evidence cell.
-
-| item | may be used as |
-|---|---|
-| origin `model`; status `proposed` | inside exploration configurations and model rows only; never on the main line |
-| status `off`, `superseded`, `refuted`, `stale`, `false`, `history` | nothing on the main line (`off` premises may still be members of an exploration configuration) |
-| status `question` | nothing (a question is not a premise) |
-| `Z` isolated unknown | a symbol or gauge only; never a value, coordinate, or reference location |
-| an object marked `proxy(X)` | its own properties; a property of X needs a row showing it transfers |
-| evidence `[unverified]` | a premise whose conclusion is at most `[unverified]` |
-| evidence `pointer:` (memory lines, other projects) | a search seed for RF only; never a premise |
-
-**Evidence** (what the work actually earned):
-
-| evidence | earned by |
-|---|---|
-| `computed` | executed symbolic or exact check, result visible |
-| `measured` | executed run with recorded configuration; corroborates, does not prove |
-| `sourced: <locator>` | original opened and read this session; the locator is `chat:<uuid>`, `file:<path>`, or a URL |
-| `followed` | each step reproduced |
-| `[unverified]` | recall, plausibility, summaries, anything else |
-| `restored` | copied verbatim from an earlier printed ledger |
-| `pointer: <where>` | a memory line or summary that says where to look; not evidence |
-| `not found: <calls>` | failed search or reading |
-
-**Classifying an item's origin is itself a claim.** Compare the item with the
-user's words before labeling it.
-
-- Something that realizes the user's described operation in the minimal way is
-  `entailed(<quote>)`, even if the model wrote it down.
-- Mislabeling in either direction is an error:
-  - labeling as `model` in order to disown work;
-  - labeling as `user` in order to own work.
-
-A model item stays out of the main line until the user adopts it; it may be
-explored in a named configuration meanwhile. On adoption, `set` its
-origin to `user(adopted, session N)`. Content cells hold only the user's words for
-user items; notes go in the evidence cell.
-
-**Relations** (typed `dep` edges; syntax in REF-LEDGER). Record the exact relation. Never
-infer one relation from surface similarity.
-
-- A relation is a basis (the row rests on its target) or a link (it relates to
-  it): the table is in REF-LEDGER. Choose by what the row does with the target,
-  not by what makes a gate pass.
-- `sup` (supports) is evidence, not proof. A claim becomes `true` only through
-  basis edges (`req`, `der`, …) under explicit assumptions.
-- `ref` points to a row the claim is about, or compares with, without resting
-  on it.
-- `iso` and `int` need the explicit map, written in the evidence cell.
-- `spec` marks a special case. A result on a `spec` row does not transfer to the
-  general row.
-- Mathematical resemblance never creates an `int` edge to a physical or
-  empirical identity.
-- **Approximation versus information.** An `X` row may change *how* the
-  available information is computed: discretization, finite samples,
-  tolerances. An `X` row may never *add* information: priors, damping or
-  regularization, filled-in unobserved directions, default structure.
-  Anything that adds information is an `A` row with origin `model`: it stays
-  out of the main line and may be explored (X5, EX).
-- **External results** (`T`) stay external. A verdict that rests on `T1` holds
-  only in configurations that contain `T1`.
-
-**Exploration.** Every verdict sits in a claim × configuration cell.
-- `main` is the user's line: the `A` and `T` rows that are `on`.
-- Named configurations are the model's to define freely. They may switch
-  premises on or off, swap alternatives, and include model premises.
-- Taint propagates. A row built on a model row is itself `model`. A `user` or
-  `entailed` row that rests on a model row is an error.
-- An exploration verdict is reported with its configuration, and never stands
-  in for the main line.
-- Only the user adopts a premise into the main line.
+- REF-ORIGIN — the origin of an item (user, entailed, model), adoption, what a content cell holds
+- REF-USE — what an item may be used as, by origin, status, section and evidence
+- REF-EVIDENCE — the evidence tags and what earns each
+- REF-CLASSIFY — classifying an item's origin is itself a claim
+- REF-RELATIONS — choosing the exact `dep` relation (basis or link, `sup`, `ref`, `iso`/`int`, `spec`)
+- REF-APPROX — approximation versus added information; external results stay external
+- REF-EXPLORE — exploration: configurations, taint, exploration verdicts, adoption

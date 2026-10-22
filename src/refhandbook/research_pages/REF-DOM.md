@@ -18,7 +18,7 @@ Every domain card has the same shape:
 - **EDGES**: the chain of objects this field's work follows.
 - **IDENTIFY**: what to identify **from what the user gave**. An item the user did
   not give stays an unspecified symbol, or an `open` row. **Never fill it with a
-  default on the main line** (card REF-PROV: that would be a model-origin item).
+  default on the main line** (card REF-ORIGIN: that would be a model-origin item).
   A default may still be **explored**: register it as a model premise and
   compare configurations with and without it (EX).
 - **CHECKS**: what to run or verify in this field. Use only the checks relevant

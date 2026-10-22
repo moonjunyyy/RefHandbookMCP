@@ -59,6 +59,18 @@ def test_pages_load_as_clean_cards():
     assert [f for f in hb.audit() if f["entry"].startswith("rs-")] == []
 
 
+def test_every_research_card_holds_one_topic_and_every_index_resolves():
+    from refhandbook.store import decomposition
+    hb = Handbook(":memory:")
+    research.ensure_cards(hb)
+    ids = set(hb._column("SELECT id FROM entries WHERE id LIKE 'rs-%'"))
+    for cid in sorted(ids):
+        assert decomposition(hb.get_entry(cid)) == [], cid
+    parts = hb._column("SELECT src FROM relations WHERE type='part_of' AND src LIKE 'rs-%'")
+    assert parts and set(parts) <= ids
+    assert {"rs-ref-old-names", "rs-ref-use", "rs-qm-acquire", "rs-n4-source", "rs-start-loop"} <= ids
+
+
 def test_card_numbers_match_page_step_references():
     hb = Handbook(":memory:")
     research.ensure_cards(hb)
@@ -623,11 +635,11 @@ def test_skills_only_point_at_the_cards_and_no_card_teaches_an_old_name():
             assert cid in ids or cid == "rs-dom-", (skill, cid)
         assert not [o for o in DEPRECATED_TOOLS if o in text and o != "research_review_rules"], skill
         assert "§" not in text.split("## Index")[0]  # no rules kept here: they are cards
-    table = hb.get_entry("rs-ref-sandbox")["body"]
+    table = hb.get_entry("rs-ref-old-names")["body"]
     for o in old:
         assert f"`{o}`" in table, o
     for page in (root / "src/refhandbook/research_pages").glob("*.md"):
-        if page.name != "REF-SANDBOX.md":
+        if page.name not in ("REF-SANDBOX.md", "REF-OLD-NAMES.md"):
             text = page.read_text()
             assert not [o for o in DEPRECATED_TOOLS if o in text and o != "research_review_rules"], page
             assert "SKILL.md" not in text, page
