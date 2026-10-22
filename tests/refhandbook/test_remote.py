@@ -559,5 +559,5 @@ def test_the_approval_page_opens_without_the_default_policy(client):
     w.caps.remove("policy", DEFAULT_POLICY, actor="user")
     assert w.policies() == ["dev"]
     page = c.get("/agents", headers={"X-Auth-Token": site_token(key)})
-    assert page.status_code == 200 and "새 정책" in page.text and ">dev <" in page.text
+    assert page.status_code == 200 and "새 정책" in page.text and "<b>dev</b>" in page.text
     assert w.base_policy() == Workspace.default_policy_spec()

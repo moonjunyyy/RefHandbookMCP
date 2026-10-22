@@ -172,96 +172,165 @@ def _e(x: Any) -> str:
     return html.escape(str(x))
 
 
-def _overview(ws: Workspace, uid: str, token: str, q: Any) -> str:
-    g = ws.g
-    out = [f"<h1>에이전트 · 샌드박스</h1><p class='muted small'><b>{_e(uid)}</b> · 여기서 하는 승인과 정책은 "
-           "모델이 대신할 수 없는, 사용자의 결정입니다.</p>"]
-    if q.get("ok"):
-        out.append(f"<p class='flash ok'>{_e(q['ok'])}</p>")
-    if q.get("err"):
-        out.append(f"<p class='flash error'>{_e(q['err'])}</p>")
-    hidden = f"<input type=hidden name=csrf value='{token}'>"
-    caps = ws.caps
+# ── the page ─────────────────────────────────────────────────────────────
+# Laid out with the site's stylesheet (portal/static/style.css): a card per section, folded panels for
+# the policies, key/value lists instead of JSON dumps.
 
-    # grants waiting: versions the model wrote that widen what it may do
-    waiting = [r for r in caps.list() if r["attrs"].get("pending")]
-    out.append(f"<h2>승인 대기 중인 권한 ({len(waiting)})</h2>")
-    if not waiting:
-        out.append("<p class='muted small'>모델이 요청한 권한 확장이 없습니다. 좁히는 변경과 스크립트는 승인 없이 바로 적용됩니다.</p>")
-    for r in waiting:
-        a = r["attrs"]
-        k = caps.kind(a["kind"])
-        ver = caps.version(r, a["pending"])
-        cur = caps.version(r) if a.get("version") else None
-        why = k.widens(caps, cur["spec"] if cur else None, ver["spec"])
-        ident = (f"<input type=hidden name=kind value='{_e(a['kind'])}'><input type=hidden name=name value='{_e(a['name'])}'>"
-                 f"<input type=hidden name=version value='{a['pending']}'>")
-        out.append(
-            f"<p><b>{_e(a['kind'])} {_e(a['name'])}</b> v{a['pending']} <span class='muted small'>(작성: {_e(ver['author'])}"
-            f"{', 현재 v' + str(a['version']) if a.get('version') else ', 아직 적용된 버전 없음'})</span><br>"
-            f"넓어지는 것: <b>{_e('; '.join(why) or '-')}</b>{'<br>' + _e(ver['note']) if ver['note'] else ''}</p>"
-            f"<pre>{_e(json.dumps(ver['spec'], ensure_ascii=False, indent=1, sort_keys=True))}</pre>"
-            + (f"<pre>{_e(ver['body'][:20000])}</pre>" if ver["body"] else "")
-            + f"<form class=inline method=post action='/agents/cap/approve'>{hidden}{ident}<button>승인</button></form>"
-            f"<form class=inline method=post action='/agents/cap/reject'>{hidden}{ident}<button>거절</button></form>")
+LIMITS = (("timeout", "시간(초)"), ("memory_mb", "메모리 MB"), ("cpus", "CPU"), ("disk_mb", "디스크 MB"),
+          ("tmp_mb", "tmp MB"), ("concurrent", "동시 실행"))
+STATE_TAGS = {"active": "ok", "proposed": "warn", "deprecated": "bad"}
 
-    # proposals
-    rules = proposals.open_proposals(g)
-    out.append(f"<h2>제안된 규칙 ({len(rules)})</h2>")
-    if not rules:
-        out.append("<p class='muted small'>열린 제안이 없습니다. 제안은 경고로만 돌다가, 여기서 승인하면 막는 규칙이 됩니다.</p>")
-    for r in rules:
-        retires = "".join(f"<p class='muted small'>승인하면 은퇴하는 규칙 <b>{_e(o['id'])}</b>: {_e(o.get('message', ''))}</p>"
-                          f"<pre>{_e(o.get('body', ''))}</pre>" for o in r["replaces"])
-        out.append(
-            f"<p><b>{_e(r['id'])}</b> <span class='muted small'>[{_e(r['phase'])}, 승인하면 {_e(r['severity'])}] "
-            f"승인 해시 {r['approval']}</span><br>{_e(r['message'])}<br><span class='muted small'>{_e(r['why'])}</span></p>"
-            f"<pre>{_e(r['body'])}</pre>{retires}"
-            f"<form class=inline method=post action='/agents/approve'>{hidden}<input type=hidden name=rule value='{_e(r['id'])}'>"
-            f"<input type=hidden name=seen value='{r['approval']}'>"
-            f"<button>승인{' (' + _e(' '.join(o['id'] for o in r['replaces'])) + ' 대체)' if r['replaces'] else ''}</button></form>"
-            f"<form class=inline method=post action='/agents/reject'>{hidden}<input type=hidden name=rule value='{_e(r['id'])}'>"
-            "<button>거절</button></form>")
 
-    # policies
-    out.append("<h2>샌드박스 정책</h2><p class='muted small'>정책이 곧 샌드박스입니다: 보이는 명령, 네트워크, 한도. "
-               "한 번 허용하면 그 안의 스크립트와 실행은 다시 묻지 않습니다.</p>")
-    for name in ws.policies() + [""]:
-        a = ws.policy(name)["attrs"] if name else ws.base_policy()
-        p = ws.policy(name) if name else None
-        title = f"{_e(name)} <span class='muted small'>(작성: {_e(p['author'])})</span>" if p else "새 정책"
-        out.append(
-            f"<h3>{title}</h3><form method=post action='/agents/policy'>{hidden}"
-            + (f"<input type=hidden name=name value='{_e(name)}'>" if name else
-               "<label>이름 <input name=name required pattern='[a-z0-9][a-z0-9._-]*'></label>")
-            + f"<label>설명 <input name=description value='{_e(p['content'] if p else '')}'></label>"
-            f"<label>명령 (공백으로 구분, * 는 모든 명령) <textarea name=commands rows=3>{_e(' '.join(a['commands']))}</textarea></label>"
-            f"<label>레이어 (공백으로 구분) <input name=layers value='{_e(' '.join(a.get('layers') or []))}'></label>"
-            f"<label>마운트 (한 줄에 하나: 원본 대상 [rw]; 원본은 서버가 허용한 디렉터리 아래, {{user}} 사용 가능) "
-            f"<textarea name=mounts rows=2>{_e(chr(10).join(m['source'] + ' ' + m['target'] + (' rw' if m['rw'] else '') for m in a.get('mounts') or []))}</textarea></label>"
-            f"<label><input type=checkbox name=network {'checked' if a['network'] else ''} style='width:auto'> 네트워크</label> "
-            f"<label>포트 <input class=short name=ports value='{_e('any' if a.get('ports') in (None, 'any') else ' '.join(map(str, a.get('ports') or [])))}'></label> "
-            + " ".join(f"<label>{lab} <input class=short name={k} value='{_e(a.get(k, ''))}'></label>"
-                       for k, lab in (("timeout", "시간(초)"), ("memory_mb", "메모리MB"), ("cpus", "CPU"),
-                                      ("disk_mb", "디스크MB"), ("tmp_mb", "tmpMB"), ("concurrent", "동시")))
-            + "<br><button>저장</button></form>")
+def _value(v: Any) -> str:
+    """A spec value as the page shows it: lists joined, booleans in words."""
+    if isinstance(v, bool):
+        return "예" if v else "아니오"
+    if isinstance(v, list):
+        return " ".join(v) if all(isinstance(x, str) for x in v) else json.dumps(v, ensure_ascii=False)
+    if isinstance(v, dict):
+        return json.dumps(v, ensure_ascii=False)
+    return str(v)
 
-    # every record (read-only): what is in force, what a review deprecated
+
+def _kv(spec: dict[str, Any]) -> str:
+    rows = "".join(f"<dt>{_e(k)}</dt><dd>{_e(_value(v)) or '<span class=muted>-</span>'}</dd>"
+                   for k, v in sorted(spec.items()))
+    return f"<dl class='kv'>{rows}</dl>"
+
+
+def _section(anchor: str, title: str, intro: str, body: str) -> str:
+    return (f"<section class='card section' id='{anchor}'><h2>{title}</h2>"
+            f"<p class='muted small'>{intro}</p>{body}</section>")
+
+
+def _empty(text: str) -> str:
+    return f"<p class='empty muted'>{text}</p>"
+
+
+def _grant(caps: Any, r: dict[str, Any], hidden: str) -> str:
+    a = r["attrs"]
+    ver = caps.version(r, a["pending"])
+    cur = caps.version(r) if a.get("version") else None
+    why = caps.kind(a["kind"]).widens(caps, cur["spec"] if cur else None, ver["spec"])
+    ident = (f"{hidden}<input type=hidden name=kind value='{_e(a['kind'])}'><input type=hidden name=name value='{_e(a['name'])}'>"
+             f"<input type=hidden name=version value='{a['pending']}'>")
+    status = f"현재 v{a['version']}" if a.get("version") else "아직 적용된 버전 없음"
+    body = (f"<details><summary>본문</summary><pre>{_e(ver['body'][:20000])}</pre></details>" if ver["body"] else "")
+    return (f"<div class='item'><div class='item-head'><b>{_e(a['kind'])} {_e(a['name'])}</b>"
+            f"<span class='tag'>v{a['pending']}</span><span class='muted small'>작성 {_e(ver['author'])} · {status}</span></div>"
+            f"<p>넓어지는 것: {''.join(f'<span class=\"tag warn\">{_e(w)}</span>' for w in why) or '-'}</p>"
+            + (f"<p class='muted'>{_e(ver['note'])}</p>" if ver["note"] else "")
+            + _kv(ver["spec"]) + body
+            + f"<div class='actions'><form class=inline method=post action='/agents/cap/approve'>{ident}<button>승인</button></form>"
+            f"<form class=inline method=post action='/agents/cap/reject'>{ident}<button class=secondary>거절</button></form></div></div>")
+
+
+def _rule(r: dict[str, Any], hidden: str) -> str:
+    rid = f"<input type=hidden name=rule value='{_e(r['id'])}'>"
+    replaces = "".join(f"<details><summary>승인하면 은퇴하는 규칙 {_e(o['id'])}</summary>"
+                       f"<p class='muted small'>{_e(o.get('message', ''))}</p><pre>{_e(o.get('body', ''))}</pre></details>"
+                       for o in r["replaces"])
+    label = "승인" + (f" ({_e(' '.join(o['id'] for o in r['replaces']))} 대체)" if r["replaces"] else "")
+    return (f"<div class='item'><div class='item-head'><b>{_e(r['id'])}</b><span class='tag'>{_e(r['phase'])}</span>"
+            f"<span class='tag warn'>승인하면 {_e(r['severity'])}</span>"
+            f"<span class='muted small'>승인 해시 {r['approval']}</span></div>"
+            f"<p>{_e(r['message'])}</p><p class='muted small'>{_e(r['why'])}</p><pre>{_e(r['body'])}</pre>{replaces}"
+            f"<div class='actions'><form class=inline method=post action='/agents/approve'>{hidden}{rid}"
+            f"<input type=hidden name=seen value='{r['approval']}'><button>{label}</button></form>"
+            f"<form class=inline method=post action='/agents/reject'>{hidden}{rid}<button class=secondary>거절</button></form>"
+            "</div></div>")
+
+
+def _policy(name: str, a: dict[str, Any], p: dict[str, Any] | None, hidden: str) -> str:
+    """One policy as a folded panel: a summary line, and its form when opened (a new one has a name field)."""
+    ports = "any" if a.get("ports") in (None, "any") else " ".join(map(str, a.get("ports") or []))
+    mounts = "\n".join(m["source"] + " " + m["target"] + (" rw" if m["rw"] else "") for m in a.get("mounts") or [])
+    if p:
+        head = (f"<b>{_e(name)}</b><span class='muted small'>작성 {_e(p['author'])}</span>"
+                f"<span class='tag {'warn' if a['network'] else ''}'>네트워크 {'켜짐' if a['network'] else '꺼짐'}"
+                f"{' · ' + _e(ports) if a['network'] else ''}</span>"
+                f"<span class='tag'>명령 {'전부' if '*' in a['commands'] else len(a['commands'])}</span>"
+                f"<span class='tag'>{_e(a.get('timeout', ''))}s · {_e(a.get('memory_mb', ''))} MB</span>"
+                + (f"<span class='muted small'>{_e(p['content'])}</span>" if p["content"] else ""))
+        ident = f"<input type=hidden name=name value='{_e(name)}'>"
+    else:
+        head = "<b>새 정책</b><span class='muted small'>기본 정책에서 시작합니다</span>"
+        ident = "<label>이름 <input name=name required pattern='[a-z0-9][a-z0-9._-]*'></label>"
+    limits = "".join(f"<label>{lab}<input name={k} value='{_e(a.get(k, ''))}'></label>" for k, lab in LIMITS)
+    return (f"<details class='panel'><summary>{head}</summary>"
+            f"<form method=post action='/agents/policy'>{hidden}"
+            f"<div class='cols'>{ident}<label>설명 <input name=description value='{_e(p['content'] if p else '')}'></label></div>"
+            f"<label>명령 <span class='muted small'>공백으로 구분, * 는 모든 명령</span>"
+            f"<textarea name=commands rows=3>{_e(' '.join(a['commands']))}</textarea></label>"
+            f"<div class='cols'><label>레이어 <span class='muted small'>공백으로 구분</span>"
+            f"<input name=layers value='{_e(' '.join(a.get('layers') or []))}'></label>"
+            f"<label>마운트 <span class='muted small'>한 줄에 하나: 원본 대상 [rw] · {{user}} 사용 가능</span>"
+            f"<textarea name=mounts rows=2>{_e(mounts)}</textarea></label></div>"
+            f"<div class='cols'><label class='check'><input type=checkbox name=network {'checked' if a['network'] else ''}>"
+            f" 네트워크 허용</label><label>포트 <input name=ports value='{_e(ports)}'></label></div>"
+            f"<div class='fields'>{limits}</div>"
+            f"<div class='actions'><button>저장</button></div></form></details>")
+
+
+def _records(caps: Any) -> tuple[int, str]:
     recs = caps.list()
-    out.append(f"<h2>기능 기록 ({len(recs)})</h2><p class='muted small'>스크립트·정책·레이어·규칙·카드·별칭. 각 기록은 버전이 남고, "
-               "검토 기한이 지나면 스스로 점검해 갱신되거나 폐기 예정이 됩니다.</p><table><tr><th>종류</th><th>이름</th>"
-               "<th>버전</th><th>상태</th><th>작성</th><th>검토/사유</th><th>설명</th></tr>")
+    rows = []
     for r in recs:
         a = r["attrs"]
         note = (a.get("reason") or "") if r["state"] != "active" else time.strftime(
             "%Y-%m-%d", time.localtime(a.get("review_after") or 0)) if a.get("review_after") else ""
-        out.append(f"<tr><td>{_e(a['kind'])}</td><td>{_e(a['name'])}</td><td>{_e(a.get('version') or '-')}</td>"
-                   f"<td>{_e(r['state'])}</td><td>{_e(r['author'])}</td><td>{_e(note)}</td><td>{_e(r['content'])}</td></tr>")
-    out.append("</table><h2>최근 작업</h2><table><tr><th>작업</th><th>상태</th><th>스크립트</th><th>종료</th></tr>")
-    for j in ws.jobs(30):
-        a = j["attrs"]
-        out.append(f"<tr><td>{_e(j['id'])}</td><td>{_e(j['state'])}</td><td>{_e(a.get('script'))} "
-                   f"{_e(' '.join(a.get('args', [])))}</td><td>{_e(a.get('exit', ''))}</td></tr>")
-    out.append("</table>")
-    return "".join(out)
+        rows.append(f"<tr><td>{_e(a['kind'])}</td><td><b>{_e(a['name'])}</b></td><td>{_e(a.get('version') or '-')}</td>"
+                    f"<td><span class='tag {STATE_TAGS.get(r['state'], '')}'>{_e(r['state'])}</span></td>"
+                    f"<td>{_e(r['author'])}</td><td>{_e(note)}</td><td class='wrap'>{_e(r['content'])}</td></tr>")
+    table = ("<div class='table-wrap'><table><thead><tr><th>종류</th><th>이름</th><th>버전</th><th>상태</th><th>작성</th>"
+             f"<th>검토 / 사유</th><th>설명</th></tr></thead><tbody>{''.join(rows)}</tbody></table></div>")
+    return len(recs), table if recs else _empty("기록이 없습니다.")
 
+
+def _jobs(ws: Workspace) -> str:
+    rows = [f"<tr><td><code>{_e(j['id'])}</code></td><td><span class='tag'>{_e(j['state'])}</span></td>"
+            f"<td class='wrap'>{_e(j['attrs'].get('script'))} {_e(' '.join(j['attrs'].get('args', [])))}</td>"
+            f"<td>{_e(j['attrs'].get('exit', ''))}</td></tr>" for j in ws.jobs(30)]
+    if not rows:
+        return _empty("아직 실행한 작업이 없습니다.")
+    return ("<div class='table-wrap'><table><thead><tr><th>작업</th><th>상태</th><th>스크립트</th><th>종료 코드</th></tr>"
+            f"</thead><tbody>{''.join(rows)}</tbody></table></div>")
+
+
+def _overview(ws: Workspace, uid: str, token: str, q: Any) -> str:
+    caps = ws.caps
+    hidden = f"<input type=hidden name=csrf value='{token}'>"
+    waiting = [r for r in caps.list() if r["attrs"].get("pending")]
+    rules = proposals.open_proposals(ws.g)
+    policies = ws.policies()
+    n_records, records = _records(caps)
+
+    summary = "".join(f"<a class='chip{' warn' if n and warn else ''}' href='#{a}'>{label} <b>{n}</b></a>"
+                      for a, label, n, warn in (("grants", "승인 대기", len(waiting), True),
+                                                ("rules", "제안된 규칙", len(rules), True),
+                                                ("policies", "정책", len(policies), False),
+                                                ("records", "기능 기록", n_records, False)))
+    out = [f"<div class='page-head'><h1>에이전트 · 샌드박스</h1>"
+           f"<p class='muted'><b>{_e(uid)}</b> · 여기서 하는 승인과 정책은 모델이 대신할 수 없는, 사용자의 결정입니다.</p>"
+           f"<nav class='chips'>{summary}</nav></div>"]
+    if q.get("ok"):
+        out.append(f"<p class='flash ok'>{_e(q['ok'])}</p>")
+    if q.get("err"):
+        out.append(f"<p class='flash error'>{_e(q['err'])}</p>")
+
+    out.append(_section("grants", f"승인 대기 중인 권한 ({len(waiting)})",
+                        "모델이 쓴 버전 중 할 수 있는 일을 넓히는 것. 좁히는 변경과 스크립트는 승인 없이 바로 적용됩니다.",
+                        "".join(_grant(caps, r, hidden) for r in waiting) or _empty("모델이 요청한 권한 확장이 없습니다.")))
+    out.append(_section("rules", f"제안된 규칙 ({len(rules)})",
+                        "제안은 경고로만 돌다가, 여기서 승인하면 막는 규칙이 됩니다.",
+                        "".join(_rule(r, hidden) for r in rules) or _empty("열린 제안이 없습니다.")))
+    out.append(_section("policies", f"샌드박스 정책 ({len(policies)})",
+                        "정책이 곧 샌드박스입니다: 보이는 명령, 네트워크, 한도. 한 번 허용하면 그 안의 스크립트와 실행은 "
+                        "다시 묻지 않습니다. 정책을 눌러 펼치면 고칠 수 있습니다.",
+                        "".join(_policy(n, ws.policy(n)["attrs"], ws.policy(n), hidden) for n in policies)
+                        + _policy("", ws.base_policy(), None, hidden)))
+    out.append(_section("records", f"기능 기록 ({n_records})",
+                        "스크립트·정책·레이어·규칙·카드·별칭. 각 기록은 버전이 남고, 검토 기한이 지나면 스스로 점검해 갱신되거나 "
+                        "폐기 예정이 됩니다.", records))
+    out.append(_section("jobs", "최근 작업", "마지막 30개.", _jobs(ws)))
+    return "".join(out)

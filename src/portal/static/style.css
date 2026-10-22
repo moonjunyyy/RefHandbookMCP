@@ -127,3 +127,44 @@ code.address { display: block; padding: 7px 9px; background: var(--soft); border
 pre { margin: 6px 0; padding: 8px 10px; background: var(--soft); border-radius: 6px; white-space: pre-wrap;
       font: .85em/1.5 var(--mono); overflow-wrap: anywhere; }
 input.short { display: inline-block; width: 6rem; }
+
+/* ── pages of records and decisions (the handbook's /agents) ────────── */
+.page-head { margin: 8px 0 20px; }
+.page-head h1 { margin-bottom: 4px; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.chip { display: inline-flex; gap: 6px; align-items: baseline; padding: 5px 12px; border: 1px solid var(--line);
+        border-radius: 999px; background: var(--card); color: var(--text); text-decoration: none; font-size: .88rem; }
+.chip b { font-family: var(--mono); }
+.chip:hover { border-color: var(--accent); color: var(--accent); }
+.chip.warn { border-color: color-mix(in srgb, var(--warn) 50%, var(--line)); color: var(--warn); }
+.card.section { margin-bottom: 18px; }
+.card.section > h2 { margin-bottom: 2px; }
+.card.section > p.muted { margin: 0 0 12px; }
+.empty { margin: 4px 0; padding: 12px 14px; border: 1px dashed var(--line); border-radius: 8px; font-size: .9rem; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.item { padding: 16px 0; border-top: 1px solid var(--line); }
+.item:first-of-type { border-top: 0; padding-top: 4px; }
+.item > p { margin: 6px 0; }
+.item-head { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: baseline; }
+.item-head .tag { margin: 0; }
+dl.kv { margin: 10px 0; padding: 10px 12px; background: var(--soft); border-radius: 8px; font-size: .88rem;
+        grid-template-columns: max-content 1fr; gap: 3px 16px; }
+dl.kv dt { font-family: var(--mono); font-size: .9em; }
+details > summary { cursor: pointer; }
+details:not(.panel) { margin: 8px 0; }
+details:not(.panel) > summary { font-size: .88rem; color: var(--accent); }
+details.panel { border: 1px solid var(--line); border-radius: 8px; margin: 8px 0; background: var(--card); }
+details.panel > summary { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: baseline; padding: 12px 14px;
+                          list-style: none; }
+details.panel > summary::-webkit-details-marker { display: none; }
+details.panel > summary::before { content: "▸"; color: var(--muted); width: 1em; }
+details.panel[open] > summary::before { content: "▾"; }
+details.panel > summary .tag { margin: 0; }
+details.panel[open] > summary { border-bottom: 1px solid var(--line); }
+details.panel > form { padding: 14px; }
+.cols { display: grid; gap: 0 14px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); align-items: start; }
+.fields { display: grid; gap: 0 12px; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); }
+.fields label { font-size: .85rem; }
+label .muted.small { font-weight: 400; margin-left: 4px; }
+label.check { margin-bottom: 14px; padding: 9px 0; }
+.actions form + form { margin-top: 0; }  /* side by side, not stacked as .card form + form would */
