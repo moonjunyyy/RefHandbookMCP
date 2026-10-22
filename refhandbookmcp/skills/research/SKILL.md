@@ -39,7 +39,7 @@ When this file and a card disagree, the card wins.
    index below.
 
 A tool result that begins `DEPRECATED` names its replacement: switch now, and
-never call the old name again (card `rs-ref-sandbox` lists the old names).
+never call the old name again (card `rs-ref-old-names` lists the old names).
 
 ## No research tools in this session?
 
@@ -90,7 +90,7 @@ server cannot be seen from here.
 | "why", "look", "explain", or a question about an error or a step. | **X2** — Answer only that. No new derivation, code, or search. | `rs-x2` |
 | the same correction a second time, or the previous skeleton reused. | **X3** — Stop producing. Name the generating rule, then run a check. | `rs-x3` |
 | the user asserts that a step is correct or urgent, and you have not reproduced it. | **X4** — Do not agree on the basis of assertion. | `rs-x4` |
-| an action has no basis tag, cites an item against its use rule (card REF-PROV), or rests on a model-origin item. | **X5** — Remove the dependent work. | `rs-x5` |
+| an action has no basis tag, cites an item against its use rule (card REF-USE), or rests on a model-origin item. | **X5** — Remove the dependent work. | `rs-x5` |
 | one of the following: a row was changed, rejected, weakened, strengthened, or reclassified; a verdict flipped; the user corrected something. | **X6** — A correction is a state change, not a remark. **Change exactly what was corrected, nothing more.** Propagate to closure. Never revive a rejected branch. | `rs-x6` |
 | a check fails, the device REFUSES, reports a CONFLICT or an outside edit, or you want to narrow, filter, or re-tune a check. | **X7** — Report the output exactly as produced. Resolve what it names; never work around it. | `rs-x7` |
 | the meaning of a symbol, an agreement, or a source is uncertain, or you are about to say "not available", "never said", or "impossible". | **X8** — No absence claim without a failed tool call behind it. | `rs-x8` |

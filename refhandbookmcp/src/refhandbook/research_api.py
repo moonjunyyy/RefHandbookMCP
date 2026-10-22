@@ -150,7 +150,7 @@ def research_end(ledger: str, session: str, idle: str = "") -> str:
 def research_add(ledger: str, session: str, sec: str, content: str, origin: str, status: str,
                  evidence: str = "", dep: str = "", grp: str = "") -> str:
     """Add a row. sec: U C R S A Z T E H X P (plan objects K come from research_push).
-    origin: user | entailed(<step>) | model. status: see card rs-ref-ledger. dep: '[rel:]ID' tokens
+    origin: user | entailed(<step>) | model. status: see card rs-ref-sections. dep (card rs-ref-dep): '[rel:]ID' tokens
     (rel: req der sup eq iso spec int con). grp: alternative group for an assumption."""
     return R().add(ledger, session, sec, content, origin, status, evidence, dep, grp)
 
@@ -178,8 +178,8 @@ def research_carry(ledger: str, session: str, uid: str, why: str) -> str:
 # ── plan objects ─────────────────────────────────────────────────────────
 
 def research_push(ledger: str, session: str, do: str, page: str, frm: str, on: str = "", exit: str = "") -> str:
-    """Push a plan object K: `do` on the `on` rows, to be run on card `page` (N1 N2 N3 N3b N4 RF EX RV
-    X1-X9 QM DV FM VF IM DOM-*, any handbook card id, or USER to wait for the user). frm: the K or U
+    """Push a plan object K: `do` on the `on` rows, to be run on card `page` (a research page name such as
+    N3, QM-ACQUIRE or DOM-ML, any handbook card id, or USER to wait for the user). frm: the K or U
     it comes from; exit: the exit of frm that returns it."""
     return R().push(ledger, session, do, page, frm, on, exit)
 
@@ -230,7 +230,7 @@ def research_doc(ledger: str, action: Literal["register", "plan", "sync", "check
                  doc: str | None = None, text: str = "", label: str = "document",
                  role: Literal["source", "deliverable", "working"] | None = None,
                  items: list[dict[str, Any]] | None = None, ref: str = "") -> str:
-    """Documents (card rs-n4). register: label, role (source = the user's original, read-only;
+    """Documents (cards rs-n4, rs-n4-source, rs-ref-doc-roles). register: label, role (source = the user's original, read-only;
     deliverable = written for the user; working = the model's own), text. plan: without items, a
     draft change list for doc from its current text; with items (and session), commit it.
     sync: the rewritten text, checked against the committed plan and the reader lint.
