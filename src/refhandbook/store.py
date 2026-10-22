@@ -94,6 +94,56 @@ CREATE VIRTUAL TABLE IF NOT EXISTS search USING fts5(
 );
 """
 
+# ── atomicity: a card holds one topic ────────────────────────────────────
+#
+# A card is one of three shapes, and each holds exactly one thing:
+#   procedure (checklist)  one situation → one outcome, by one sequence of steps; it branches only to
+#                          other cards (GO TO, exits)
+#   set (reference)        one homogeneous set: one list or one table, under at most one label
+#   index (reference)      a list of other cards and nothing else
+# Anything else holds more than one topic and is decomposable: split it, one card per part, and keep
+# the original id as the first part or as the index of the parts (so every link to it still leads
+# somewhere). decomposition() names the parts it finds; an empty list means the card is atomic.
+
+MAX_STEPS = 10  # a longer sequence has sub-procedures in it
+_HEADING = re.compile(r"^(#{1,6}\s+\S.*|\*\*[^*\n]{1,80}\*\*[.:]?\s*$|\*\*[^*\n]{1,80}[.:]\*\*.*)$")
+
+
+def _sections(body: str) -> tuple[list[str], int]:
+    """(section labels, number of tables) of a body."""
+    labels, tables, prev = [], 0, False
+    for line in body.splitlines():
+        t = line.strip()
+        if _HEADING.match(t):
+            labels.append(re.sub(r"^#+\s*|\*\*", "", t).split(".")[0].strip()[:60])
+        table = t.startswith("|")
+        tables += table and not prev
+        prev = table
+    return labels, tables
+
+
+def decomposition(entry: dict[str, Any]) -> list[str]:
+    """The separable parts a card holds, as reasons a reader can act on; [] when it holds one."""
+    out = []
+    labels, tables = _sections(entry.get("body") or "")
+    items = entry.get("items") or []
+    heads = [i["text"] for i in items if i["kind"] == "note" and "\n" not in i["text"] and len(i["text"]) <= 80
+             and not i["text"].rstrip().endswith((".", ":", ";", "!", "?")) and not i["text"].startswith("EXITS")]
+    steps = [i for i in items if i["kind"] == "step" and i["phase"] == "action" and not i.get("ends") and not i.get("goto")]
+    if entry.get("kind", "checklist") == "checklist":
+        if labels or tables:
+            what = ([f"section {', '.join(labels)}"] if labels else []) + ([f"{tables} table(s)"] if tables else [])
+            out.append(f"reference material inside a procedure ({'; '.join(what)}): a set of its own")
+        if len(heads) >= 2:
+            out.append(f"{len(heads)} sub-procedures ({'; '.join(heads)}): one card each")
+        if len(steps) > MAX_STEPS:
+            out.append(f"{len(steps)} steps (over {MAX_STEPS}): a sequence this long holds sub-procedures")
+    elif max(len(labels), tables) >= 2:
+        what = ([f"sections {', '.join(labels)}"] if labels else []) + ([f"{tables} tables"] if tables else [])
+        out.append(f"{len(labels) + tables} sets ({'; '.join(what)}): one card each, the original as their index")
+    return out
+
+
 # bm25 weights, one per search column: a hit on an alerting cue outranks a hit in the steps.
 SEARCH_WEIGHTS = "0.0, 5.0, 8.0, 3.0, 1.0"
 
@@ -204,9 +254,12 @@ class Handbook:
         triggers: list[str] | None = None,
         tags: list[str] | None = None,
         items: list[dict[str, Any]] | None = None,
+        atomic: bool = False,
     ) -> dict[str, Any]:
         """Create an entry, or update one. On update, arguments left as None keep
-        their stored value; a list argument replaces the stored list whole."""
+        their stored value; a list argument replaces the stored list whole. With
+        `atomic`, an entry that holds more than one topic is refused (nothing is
+        written), with the parts it holds."""
         if id is None:
             if not title:
                 raise HandbookError("a new entry needs a title")
@@ -257,6 +310,12 @@ class Handbook:
                     ],
                 )
             self._reindex(id)
+            if atomic and (parts := decomposition(self.get_entry(id))):
+                raise HandbookError(
+                    f"REFUSED: {id!r} holds more than one topic: {' · '.join(parts)}. Write one card per part "
+                    "(a procedure: one situation, one outcome, one sequence; a set: one list or table), link them "
+                    "(GO TO, part_of, precedes), and keep this id as the first part or as their index (card rs-split). "
+                    "Nothing was written.")
         self.changed()
         return self.get_entry(id)
 
@@ -478,6 +537,8 @@ class Handbook:
                     add(entry_id, "error", f"step {n} goes to {i['goto']!r}, which does not exist [3.5]")
                 if i["goto"] and i["ends"]:
                     add(entry_id, "error", f"step {n} both ends the entry and goes elsewhere [3.2]")
+            for part in decomposition(e):
+                add(entry_id, "error", f"holds more than one topic: {part} (split it: card rs-split)")
             if entry_id not in linked and not e["tags"]:
                 add(entry_id, "warning", "orphan: no tags and no relations, so it appears in no index group")
             for src in self._column("SELECT src FROM relations WHERE type = 'supersedes' AND dst = ?", entry_id):

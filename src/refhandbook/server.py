@@ -124,8 +124,16 @@ def lookup(
 def open_entry(id: str) -> str:
     """Show one entry as a card: condition, objective, memory items, numbered steps,
     deferred items, and its related entries."""
+    from .store import decomposition
+
     hb = handbook()
-    return render.card(hb.get_entry(id), hb.neighbors(id))
+    e = hb.get_entry(id)
+    card = render.card(e, hb.neighbors(id))
+    parts = decomposition(e)
+    if parts and not e["id"].startswith("rs-"):
+        card = (f"SPLIT BEFORE USE: this card holds more than one topic ({' · '.join(parts)}). Split it first "
+                "(open_entry('rs-split')), then follow the part that fits.\n\n" + card)
+    return card
 
 
 @tool(READ)
@@ -171,11 +179,13 @@ def save_entry(
     ] = None,
 ) -> str:
     """Create an entry, or update one by id. On update, omitted arguments are kept and a
-    list argument replaces the stored list. Returns the saved card."""
+    list argument replaces the stored list. Returns the saved card. One card holds one topic: a
+    procedure (one situation, one outcome, one sequence of at most 10 steps) or a set (one list or
+    table); an entry holding more is refused with its parts, to be written as separate cards."""
     hb = handbook()
     entry = hb.save_entry(
         id=id, title=title, kind=kind, condition=condition, objective=objective,
-        body=body, triggers=triggers, tags=tags, items=items,
+        body=body, triggers=triggers, tags=tags, items=items, atomic=True,
     )  # fmt: skip
     return render.card(entry, hb.neighbors(entry["id"]))
 

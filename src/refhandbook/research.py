@@ -1648,7 +1648,7 @@ def parse_page(text: str) -> dict[str, Any]:
         raise ResearchError(f"page must start with '# PAGE <ID> — <title>': {lines[0]!r}")
     pid, title = m.group(1), m.group(2).strip()
     meta, i = {}, 1
-    while i < len(lines) and re.match(r"^(KIND|TAGS|TRIGGERS|OBJECTIVE):", lines[i]):
+    while i < len(lines) and re.match(r"^(KIND|TAGS|TRIGGERS|OBJECTIVE|PARTS):", lines[i]):
         k, v = lines[i].split(":", 1)
         meta[k] = v.strip()
         i += 1
@@ -1760,6 +1760,9 @@ def parse_page(text: str) -> dict[str, Any]:
     }
     rels = [{"src": entry["id"], "type": "pushes_to", "dst": page_card_id(t), "note": "an exit returns objects for it"}
             for t in sorted(pushes) if page_card_id(t) != entry["id"]]  # a self-push stays in the exit text
+    # an index card names its parts: each part is part_of it, so the index shows them under RELATED
+    rels += [{"src": page_card_id(p.strip()), "type": "part_of", "dst": entry["id"], "note": "one part of the index"}
+             for p in meta.get("PARTS", "").split(",") if p.strip()]
     return {"entry": entry, "relations": rels}
 
 

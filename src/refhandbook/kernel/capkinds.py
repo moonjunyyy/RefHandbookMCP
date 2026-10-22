@@ -152,6 +152,16 @@ class CardKind(Kind):
         hb = reg.ctx.get("hb")
         if hb is not None and reg.find("card", name) is None and hb.exists(name):
             raise CapError(f"card {name!r} is a handbook entry already (not a record): pick another name")
+        from ..store import _clean_item, decomposition
+
+        try:
+            items = [_clean_item(i, n) for n, i in enumerate(spec.get("items") or [], 1)]
+        except Exception as e:  # noqa: BLE001 — HandbookError: a bad item
+            raise CapError(str(e)) from e
+        parts = decomposition({"kind": spec.get("kind") or "checklist", "body": spec.get("body") or "", "items": items})
+        if parts:
+            raise CapError(f"card {name} holds more than one topic: {' · '.join(parts)}; one record per part "
+                           "(card rs-split)")
         return spec
 
     def apply(self, reg: Registry, rec: dict[str, Any], ver: dict[str, Any]) -> None:
