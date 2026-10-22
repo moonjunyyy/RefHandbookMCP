@@ -59,6 +59,12 @@ Paragraph numbers refer to its Chapter 7.
 | Deferred items | Grouped at the end, labelled, each with the moment it applies (2.12) |
 | End marker | Present at every point the card can finish, including inside branches (3.2) |
 
+**One card, one topic.** A card is a procedure (one situation, one outcome, one sequence of at most
+ten steps, branching only to other cards), a set (one list or one table), or an index of its parts.
+`store.decomposition()` names the parts a card holds beyond that; the model's writes (`save_entry`,
+`cap kind=card`) are refused with those parts, `open_entry` marks such a card SPLIT BEFORE USE
+(card `rs-split` says how), and `audit` reports it. The research cards are held to the same rule.
+
 CAP 676's table of checklist errors puts "complete the wrong checklist" beside "provide index,
 objective, description of the failure conditions". That is why `lookup` returns the condition
 and objective of each candidate and no steps: the reader confirms first, then opens.
