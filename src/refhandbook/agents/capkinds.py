@@ -32,7 +32,6 @@ POLICY_FIELDS = {"commands", "network", "ports", "mounts", "layers", "exec_work"
 RESERVED = ("/", "/usr", "/bin", "/sbin", "/lib", "/lib32", "/lib64", "/libx32", "/etc", "/opt", "/proc", "/dev",
             "/work", "/tmp", "/run", "/job", "/root", "/sys", "/var")
 CMD_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*$")
-MOUNT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 
 def _ws(reg: Registry) -> Any:
@@ -63,29 +62,31 @@ def mount_roots(ws: Any) -> list[MountRoot]:
       RHB_SANDBOX_MOUNT_ROOTS  colon-separated host directories (the older form): each is offered
                                under its own path, so a source is a host path under it.
 
+    With RHB_SANDBOX_MOUNT_STAGE set (the server's units), a named directory is its staged, idmapped
+    mount <stage>/<user>/<NAME> (agents/mounts.py), which root prepares; else FROM itself.
     Neither set: no mounts."""
+    from . import mounts
+
+    try:
+        offered = mounts.offers()
+    except mounts.MountError as e:
+        raise CapError(str(e)) from e
+    stage = mounts.stage_root()
     out: list[MountRoot] = []
-
-    def host(t: str, var: str) -> str:
-        try:
-            return os.path.realpath(t.format(user=ws.owner, uid=ws.owner_uid))
-        except (KeyError, IndexError, ValueError) as e:
-            raise CapError(f"{var}: bad template {t!r}: {e}") from e
-
-    for entry in filter(None, (x.strip() for x in os.environ.get("RHB_SANDBOX_MOUNTS", "").split(","))):
-        frm, sep, to = entry.partition("=")
-        name, _, mode = to.partition(":")
-        name = name.strip().strip("/")
-        if not sep or not frm.strip().startswith("/") or not MOUNT_NAME_RE.match(name) or mode not in ("", "ro"):
-            raise CapError(f"RHB_SANDBOX_MOUNTS: {entry!r} is not FROM=NAME[:ro] (FROM an absolute path, NAME "
-                           "letters, digits, . _ -)")
-        if any(r.name == name for r in out):
-            raise CapError(f"RHB_SANDBOX_MOUNTS: the name {name!r} is used twice")
-        out.append(MountRoot(host(frm.strip(), "RHB_SANDBOX_MOUNTS"), name, mode == "ro"))
+    for o in offered:
+        host = str(stage / ws.owner / o.name) if stage else _expand(o.template, ws, "RHB_SANDBOX_MOUNTS")
+        out.append(MountRoot(host, o.name, o.ro))
     for t in filter(None, os.environ.get("RHB_SANDBOX_MOUNT_ROOTS", "").split(":")):
-        h = host(t, "RHB_SANDBOX_MOUNT_ROOTS")
+        h = _expand(t, ws, "RHB_SANDBOX_MOUNT_ROOTS")
         out.append(MountRoot(h, h))
     return out
+
+
+def _expand(template: str, ws: Any, var: str) -> str:
+    try:
+        return os.path.realpath(template.format(user=ws.owner, uid=ws.owner_uid))
+    except (KeyError, IndexError, ValueError) as e:
+        raise CapError(f"{var}: bad template {template!r}: {e}") from e
 
 
 def _under(path: str, root: str) -> bool:
@@ -121,6 +122,11 @@ def mount_resolve(ws: Any, source: str) -> tuple[str, MountRoot]:
     if root is None:
         raise CapError(f"mount source {source!r} is outside the directories this server lets you mount: {names}")
     if not os.path.exists(path):
+        from .mounts import stage_root
+
+        if stage_root() and root.host.startswith(str(stage_root())) and not os.path.exists(root.host):
+            raise CapError(f"mount source {source!r}: {root.name} is not prepared for you: the directory is not "
+                           "there or not yours, or the server has not staged it yet (it does every few minutes)")
         raise CapError(f"mount source {source!r} does not exist ({path})")
     return path, root
 

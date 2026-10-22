@@ -1,0 +1,18 @@
+# @@generated@@
+# The offered sandbox mount directories (RHB_SANDBOX_MOUNTS), staged for every user of the handbook as
+# idmapped binds under /run/@@name@@-mounts: through them the user's files read and write as the
+# handbook's user, and what the sandbox writes stays the user's (src/refhandbook/agents/mounts.py).
+# Root's, and in the host's mount namespace on purpose (no sandboxing options): what it mounts must
+# outlive it for the handbook's units to see. @@name@@-mounts.timer runs it again every few minutes.
+[Unit]
+Description=@@name@@ sandbox mounts, idmapped for the handbook's user
+After=local-fs.target nss-user-lookup.target remote-fs.target
+Before=@@unit:handbook@@.service @@unit:runner@@.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/@@unit:handbook@@/handbook.env
+ExecStart=@@code@@/.venv/bin/refhandbook mounts --data-dir /var/lib/@@unit:handbook@@ --service-user @@user:handbook@@ --stage /run/@@name@@-mounts
+
+[Install]
+WantedBy=multi-user.target

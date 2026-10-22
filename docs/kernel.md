@@ -119,7 +119,16 @@ One sandbox per user, shared by Chat sessions (the `cap`, `run`, `job`, `files` 
   host directories, each offered under its own path) still works. A source outside the offered
   directories (after `..` is refused and symlinks are followed), a read-write mount of a `:ro` one,
   or a target over the sandbox's own directories is refused; a policy granted read-write before its
-  directory became `:ro` stops running until it is granted again. Read-only unless `rw`; a
+  directory became `:ro` stops running until it is granted again.
+  On the server the sandbox runs as the handbook's user, and a user's files are the user's: so root
+  stages each offered directory, for each user of the handbook, as an idmapped bind mount at
+  `/run/<name>-mounts/<user>/<NAME>` (`<name>-mounts.service`, again every two minutes by its timer;
+  `agents/mounts.py`). Through it the user's uid and gid read as the service's, and what the sandbox
+  writes stays the user's; nothing else is mapped. Staged are users with a handbook store whose uid is
+  at least UID_MIN, who are in `RHB_REQUIRE_GROUP` if set, and who own the directory FROM resolves to.
+  The handbook's units resolve a name to its staged mount (`RHB_SANDBOX_MOUNT_STAGE`) and stay
+  locked down (`ProtectHome`, `ProtectSystem=strict`; the runner writes through the stage only).
+  `refhandbook mounts … --check` prints the plan. Read-only unless `rw`; a
   read-write mount is noexec like every writable mount. The source's identity (device, inode) is
   checked again after the bind, so a source swapped in between is refused.
 - **Layer** — what a policy can stack on the base: a build script run as root inside a sandbox of a

@@ -65,6 +65,9 @@ SKIP = {".git", ".venv", "__pycache__", ".pytest_cache", "ldap_portal.egg-info",
 Run = Callable[[list[str]], int]
 
 
+# units besides the roles': root's, with no user or port of their own (<name>-<unit>)
+HELPERS = ("mounts.service", "mounts.timer")
+
 # [site] keys the router's side takes (site.local.toml: they are this host's); unset, a placeholder
 ROUTER_KEYS = {"router_address": "<this host's address as the router reaches it>",
                "router_cert": "<the certificate's fullchain.pem on the router>",
@@ -102,6 +105,7 @@ def rendered(f: Facts, site_file: Path) -> dict[str, tuple[str, int]]:
 
     out = {
         **{f"/etc/systemd/system/{f.unit(role)}.service": (t(f"{role}.service"), 0o644) for role in ROLES},
+        **{f"/etc/systemd/system/{f.name}-{h}": (t(h), 0o644) for h in HELPERS},
         f"/etc/nginx/sites-available/{f.domain}.conf": (t("site.conf"), 0o644),
         f"/etc/nginx/snippets/{f.name}-proxy.conf": (t("proxy.conf"), 0o644),
         f"/etc/nginx/snippets/{f.name}-apps-map.conf": (site_mod.render_map(site, f.name), 0o644),
@@ -401,6 +405,10 @@ def install(site_file: Path, root: Path = Path("/"), sh: Run = _run, src: Path =
         return 1
     units = [f"{f.unit(role)}.service" for role in ROLES]
     sh(["systemctl", "daemon-reload"])
+    # the mounts first: the handbook's units see the staged directories from their start
+    sh(["systemctl", "enable", "--now", f"{f.name}-mounts.timer"])
+    sh(["systemctl", "enable", f"{f.name}-mounts.service"])
+    sh(["systemctl", "restart", f"{f.name}-mounts.service"])
     sh(["systemctl", "enable", *units])
     sh(["systemctl", "restart", *units])
     sh(["systemctl", "reload", "nginx"])

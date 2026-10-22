@@ -93,6 +93,12 @@ def main(argv: list[str] | None = None) -> int:
     rn.add_argument("--once", action="store_true", help="start what is queued, wait for it, and exit")
     rn.add_argument("--workers", type=int, default=4)
     sub.add_parser("sandbox-check", help="report the sandbox primitives this host offers")
+    mo = sub.add_parser("mounts", help="root: stage the offered directories (RHB_SANDBOX_MOUNTS) for every user, "
+                                       "idmapped to the handbook's user (<name>-mounts.service)")
+    mo.add_argument("--data-dir", required=True, help="the handbook's data directory (its users/)")
+    mo.add_argument("--service-user", required=True, help="the handbook's system user")
+    mo.add_argument("--stage", required=True, help="where the staged mounts go (root's, e.g. /run/<name>-mounts)")
+    mo.add_argument("--check", action="store_true", help="print the plan; change nothing")
     sub.add_parser("reject", help="the user's channel: reject a proposed rule (the model cannot revive it)"
                    ).add_argument("name")
     args = parser.parse_args(argv)
@@ -118,6 +124,10 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if all(ok for name, ok, _ in rows if name in ("user namespaces", "seccomp")) else 1
     if args.command == "runner":
         return _runner(args)
+    if args.command == "mounts":
+        from .agents import mounts
+
+        return mounts.main(args.data_dir, args.service_user, args.stage, args.check)
     if args.command == "layers":
         return _layers(args)
     hb = Handbook(args.db)

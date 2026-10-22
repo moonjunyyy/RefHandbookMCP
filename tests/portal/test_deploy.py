@@ -265,9 +265,19 @@ def test_the_handbook_takes_its_settings_from_the_sites_facts(fresh, tmp_path):
     env = dict(line.split("=", 2)[1:] for line in unit.splitlines() if line.startswith("Environment="))
     assert env == {"RHB_PUBLIC_URL": f"https://{f.domain}", "RHB_PORT": str(f.ports["handbook"]),
                    "RHB_SSO_PUBLIC_KEY_FILE": f"{f.conf_dir('sso')}/sso-public.pem", "RHB_SSO_ISSUER": f.issuer,
-                   "RHB_SSO_AUDIENCE": "refhandbook", "RHB_LOGIN_URL": "/auth/login"}
-    runner = deploy.rendered(f, SITE)[f"/etc/systemd/system/{f.unit('runner')}.service"][0]
+                   "RHB_SSO_AUDIENCE": "refhandbook", "RHB_LOGIN_URL": "/auth/login",
+                   "RHB_SANDBOX_MOUNT_STAGE": f"/run/{f.name}-mounts"}
+    files = deploy.rendered(f, SITE)
+    runner = files[f"/etc/systemd/system/{f.unit('runner')}.service"][0]
     assert f"User={f.user('handbook')}" in runner and f"StateDirectory={f.unit('handbook')}" in runner
+    assert f"ReadWritePaths=-/run/{f.name}-mounts" in runner  # written through, though /run is read-only
+    # the root helper stages the offered directories where the handbook's units read them
+    mounts = files[f"/etc/systemd/system/{f.name}-mounts.service"][0]
+    assert (f"refhandbook mounts --data-dir /var/lib/{f.unit('handbook')} --service-user {f.user('handbook')} "
+            f"--stage /run/{f.name}-mounts") in mounts
+    assert "User=" not in mounts and "Protect" not in mounts  # root, in the host's mount namespace
+    assert f"Before={f.unit('handbook')}.service {f.unit('runner')}.service" in mounts
+    assert "OnUnitActiveSec=2min" in files[f"/etc/systemd/system/{f.name}-mounts.timer"][0]
     s = tmp_path / "site.toml"
     s.write_text('[[app]]\nid = "a"\ntitle = "A"\naudience = "one"\nupstream = "@@upstream:handbook@@"\n'
                  '[[app]]\nid = "b"\ntitle = "B"\naudience = "two"\nupstream = "@@upstream:handbook@@"\n')

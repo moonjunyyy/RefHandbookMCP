@@ -12,6 +12,9 @@ Group=@@user:runner@@
 StateDirectory=@@unit:handbook@@
 StateDirectoryMode=0700
 LoadCredential=agent-keys:/etc/@@unit:handbook@@/agent-keys
+Environment=RHB_SANDBOX_MOUNT_STAGE=/run/@@name@@-mounts
+# the staged mounts (@@name@@-mounts.service) are written through, as ProtectSystem makes /run read-only
+ReadWritePaths=-/run/@@name@@-mounts
 EnvironmentFile=-/etc/@@unit:handbook@@/handbook.env
 WorkingDirectory=/var/lib/@@unit:handbook@@
 ExecStart=@@code@@/.venv/bin/refhandbook runner --data-dir /var/lib/@@unit:handbook@@

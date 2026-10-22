@@ -1,0 +1,11 @@
+# @@generated@@
+# Stage a new user's offered directories (and drop what is no longer offered) without anyone acting.
+[Unit]
+Description=@@name@@ sandbox mounts, kept current
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=2min
+
+[Install]
+WantedBy=timers.target

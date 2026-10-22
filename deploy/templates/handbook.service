@@ -22,6 +22,7 @@ Environment=RHB_SSO_PUBLIC_KEY_FILE=@@sso_public_key@@
 Environment=RHB_SSO_ISSUER=@@issuer@@
 Environment=RHB_SSO_AUDIENCE=@@handbook_audience@@
 Environment=RHB_LOGIN_URL=@@signin@@/login
+Environment=RHB_SANDBOX_MOUNT_STAGE=/run/@@name@@-mounts
 EnvironmentFile=-/etc/@@unit:handbook@@/handbook.env
 WorkingDirectory=/var/lib/@@unit:handbook@@
 ExecStart=@@code@@/.venv/bin/refhandbook serve

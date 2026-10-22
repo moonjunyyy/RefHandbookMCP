@@ -454,10 +454,11 @@ distributions without AppArmor.
 
 ## Open choices
 
-- **Whose uid runs the sandbox.** As designed, the sandbox runs as the service uid, mapped to
-  `agent` inside a user namespace. It needs no root, and it cannot touch the user's home directory.
-  Running it as the user's own POSIX uid, with their home mounted, would need a root helper
-  (`systemd-run --uid`). That is left for later.
+- **Whose uid runs the sandbox.** The sandbox runs as the service uid, mapped to `agent` inside a
+  user namespace; it needs no root. The user's own data reaches it through the offered mount
+  directories, which root stages as idmapped binds (user ↔ service uid; `docs/kernel.md`,
+  "Mounts"), so files keep their owner. Running the sandbox itself as the user's POSIX uid would
+  need a root helper per run (`systemd-run --uid`), and is left for later.
 - **Network inside the sandbox.** None in v1. An allowlist (package indexes, git hosts) would need
   a proxy outside the namespace, reached through a socket bound into it.
 - **Budget unit.** Tokens per provider is exact. USD needs a price table to maintain.
