@@ -197,6 +197,19 @@ class Directory:
             except LDAPException:
                 pass
 
+    def delete_user(self, uid: str) -> None:
+        """Remove the account: its entry (the kldap backend keeps the Kerberos principal and alias in it,
+        so they go too), its private group, and its name from every group it was in."""
+        with self._conn() as conn:
+            for g in self._groups_of(conn, uid):
+                if g != uid:
+                    conn.modify(self.s.group_dn(g), {"memberUid": [(MODIFY_DELETE, [uid])]})
+            for dn in (self.s.user_dn(uid), self.s.group_dn(uid)):
+                try:
+                    conn.delete(dn)
+                except LDAPNoSuchObjectResult:
+                    pass  # half made (a create that failed midway): what is there goes
+
     def rollback_user(self, uid: str) -> None:
         with self._conn() as conn:
             self._delete_entries(conn, uid)

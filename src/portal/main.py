@@ -553,6 +553,24 @@ def create_app(settings: Settings | None = None, directory=None, kerberos=None, 
         flash(request, "ok", f"{target.uid} {'enabled' if enabled else 'disabled'}.")
         return redirect(f"/admin/users/{target.uid}")
 
+    @app.post("/admin/users/{uid}/delete")
+    async def delete_user(request: Request, uid: str):
+        """Delete an account for good: its directory entry (with the kldap backend the Kerberos
+        principal and its alias live in it, so they go with it), its private group and its group
+        memberships. The admin types the name again to confirm. Files it owns (home, data) stay."""
+        actor = current_actor(request)
+        data = await form(request)
+        target = target_user(uid)
+        require(actor, "delete_user", target)
+        if str(data.get("confirm", "")).strip() != target.uid:
+            flash(request, "error", f"To delete the account, type its username ({target.uid}) to confirm.")
+            return redirect(f"/admin/users/{target.uid}")
+        directory.delete_user(target.uid)
+        audit.record(actor.uid, "delete_user", target.uid, True, ip(request),
+                     f"uidNumber={target.uid_number} groups={','.join(target.groups)}")
+        flash(request, "ok", f"{target.uid} deleted. Files it owned (home directory, data) were not touched.")
+        return redirect("/admin/users")
+
     @app.post("/admin/users/{uid}/groups")
     async def set_group(request: Request, uid: str):
         actor = current_actor(request)

@@ -1,5 +1,6 @@
 """End-to-end tests of routes, permissions and CSRF against in-memory fakes of LDAP and Kerberos."""
 import re
+from pathlib import Path
 from dataclasses import replace
 
 import pytest
@@ -52,6 +53,12 @@ class FakeDirectory:
 
     def set_membership(self, group, uid, member):
         (self.groups[group].add if member else self.groups[group].discard)(uid)
+
+    def delete_user(self, uid):
+        self.deleted = [*getattr(self, "deleted", []), uid]
+        self.users.pop(uid, None)
+        for members in self.groups.values():
+            members.discard(uid)
 
 
 class FakeKerberos:
@@ -224,6 +231,25 @@ def test_admin_cannot_lock_self_out_and_reserved_names(env):
     r = c.post("/admin/users/new", data={"uid": "x,ou=Admins", "name": "R", "mail": "",
                                           "loginShell": "/bin/bash", "csrf": t})
     assert "Username:" in r.text
+
+
+def test_an_admin_deletes_an_account_after_typing_its_name(env):
+    s, d, k, ka, app, _ = env
+    c, _ = login(app, "moon", "moon-password-1")
+    assert "Delete account" in c.get("/admin/users/alice").text
+    t = csrf(c, "/")
+    c.post("/admin/users/alice/delete", data={"csrf": t, "confirm": "alic"})  # not the name: nothing happens
+    assert "alice" in d.users
+    r = c.post("/admin/users/alice/delete", data={"csrf": t, "confirm": "alice"}, follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/admin/users"
+    assert d.deleted == ["alice"] and all("alice" not in m for m in d.groups.values())
+    assert not any(x[0] == "delete" for x in ka.calls)  # the entry holds the principal: nothing for kadmin
+    assert "delete_user" in Path(s.audit_log).read_text()
+    # not oneself, not by helpdesk
+    assert c.post("/admin/users/moon/delete", data={"csrf": t, "confirm": "moon"}).status_code == 403
+    h, _ = login(app, "helen", "helen-password-1")
+    assert "Delete account" not in h.get("/admin/users/moon").text
+    assert h.post("/admin/users/moon/delete", data={"csrf": csrf(h, "/"), "confirm": "moon"}).status_code == 403
 
 
 def test_disabled_user_session_is_dropped(env):

@@ -41,6 +41,19 @@
       {% endif %}
     </form>
     {% endif %}
+    {% if can("delete_user", target) %}
+    <details class="danger-zone">
+      <summary class="danger-text">Delete account…</summary>
+      <form method="post" action="{{ settings.root_path }}/admin/users/{{ target.uid }}/delete">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <p class="muted small">Removes the directory entry (and with it the Kerberos principal), the private group and every
+          group membership. This cannot be undone. Files the account owns (home directory, data) are not touched.</p>
+        <label>Type <code>{{ target.uid }}</code> to confirm
+          <input name="confirm" autocomplete="off" autocapitalize="none" required pattern="{{ target.uid }}"></label>
+        <button class="danger">Delete {{ target.uid }}</button>
+      </form>
+    </details>
+    {% endif %}
     {% if not (can("reset_password", target) or can("unlock", target) or can("set_enabled", target)) %}
       <p class="muted">You can't change this account{% if target.uid == actor.uid %} here; use <a href="{{ settings.root_path }}/">My account</a>{% endif %}.</p>
     {% endif %}
