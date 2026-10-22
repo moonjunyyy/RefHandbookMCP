@@ -75,10 +75,14 @@ class Team:
     # ── ids ──────────────────────────────────────────────────────────────
 
     def _seq(self, run: str, kind: str) -> int:
+        """The run's next number of a kind. In a tx of its own (a savepoint inside a caller's): a bare
+        write would open Python's implicit transaction and, with nothing to commit it, keep the store's
+        write lock for good, so every other process's write fails "database is locked"."""
         key = f"agseq:{run}:{kind}"
-        self.g.db.execute("INSERT OR IGNORE INTO k_meta VALUES (?, '0')", (key,))
-        self.g.db.execute("UPDATE k_meta SET value = CAST(value AS INTEGER) + 1 WHERE key = ?", (key,))
-        return int(self.g.db.execute("SELECT value FROM k_meta WHERE key = ?", (key,)).fetchone()[0])
+        with self.g.tx():
+            self.g.db.execute("INSERT OR IGNORE INTO k_meta VALUES (?, '0')", (key,))
+            self.g.db.execute("UPDATE k_meta SET value = CAST(value AS INTEGER) + 1 WHERE key = ?", (key,))
+            return int(self.g.db.execute("SELECT value FROM k_meta WHERE key = ?", (key,)).fetchone()[0])
 
     def _run_of(self, node_id: str) -> str:
         n = self.g.node(node_id)

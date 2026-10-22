@@ -195,6 +195,9 @@ async def _drive(crew, run, ticks=400):
     try:
         for _ in range(ticks):
             await crew.tick()
+            # the runner never leaves a write transaction open between steps: another process (the
+            # handbook's pages and tools) must be able to write the store at any time
+            assert not crew.g.db.in_transaction
             if crew.g.node(run)["state"] == "closed" and not crew.tasks:
                 return
             await asyncio.sleep(0.01)
@@ -323,6 +326,25 @@ def test_a_lead_cannot_finish_before_reading_its_children(tmp_path, ks):
     # refused while the child is open (the kernel), or done but its result unread (the agents package)
     assert refusals and ("still open" in refusals[0] or "unread" in refusals[0])
     assert crew.team.result(run)["content"] == "after reading"
+
+
+def test_the_web_process_can_write_while_a_run_is_going(tmp_path, ks):
+    """The runner and the handbook's pages are two processes on one store: opening agents, queueing
+    spawns and numbering notes must leave no write lock behind."""
+    from refhandbook.agents.team import Team
+
+    ks.put("moon", "anthropic", "main", "sk-ant-api03-abcdefghijklmnop")
+    crew = _crew(tmp_path, ks, team_policy)
+    run = _start(crew)
+    with crew.lock:
+        root = crew.team.open_agent(run, role="lead", goal="g", mode="root", actor="kernel")
+        crew.team.queue_spawn(run, root, {"role": "worker", "goal": "w"})
+        crew.team.artifact(run, root, "a.txt", "0" * 64, 1)
+    assert not crew.g.db.in_transaction
+    other = Handbook(tmp_path / "users" / "moon.db")  # another connection, as the web process has
+    other.db.execute("PRAGMA busy_timeout = 200")
+    t = Team(Workspace(other).g)
+    t.request_run("from the page", actor="user")  # fails "database is locked" if the runner held it
 
 
 def test_a_killed_runner_resumes_without_replaying_tool_calls(tmp_path, ks):

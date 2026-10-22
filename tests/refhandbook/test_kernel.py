@@ -335,3 +335,16 @@ def test_null_is_a_value_and_ordering_is_numeric_only(g):
     ], actor="kernel")
     fired = {f.rule for f in evaluate(g, "check", "x", "task")}
     assert fired == {"no_prefix"}  # has_v(a, null) holds; prefix(null) is false; "10" is not ordered against 300
+
+
+def test_no_write_leaves_a_transaction_open(g):
+    """Every write is its own unit outside a caller's transaction: a write that left Python's implicit
+    transaction open would hold the store's write lock, and another process (the runner, the pages)
+    would fail with "database is locked"."""
+    g.log("kernel", "a note in the log")
+    g.tick()
+    assert not g.db.in_transaction
+    with g.transaction():
+        g.log("kernel", "inside")  # a savepoint of the caller's transaction
+        assert g.db.in_transaction
+    assert not g.db.in_transaction

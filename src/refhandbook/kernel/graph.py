@@ -359,13 +359,18 @@ class Graph:
     def clock(self) -> int:
         return int(self.db.execute("SELECT value FROM k_meta WHERE key = 'clock'").fetchone()[0])
 
+    # tick and log write, so like every write they are a unit of their own (a savepoint inside a
+    # caller's transaction): a bare write would open Python's implicit transaction and keep the
+    # store's write lock until something happened to commit it (another process: "database is locked")
     def tick(self) -> int:
-        self.db.execute("UPDATE k_meta SET value = CAST(value AS INTEGER) + 1 WHERE key = 'clock'")
-        return self.clock()
+        with self.tx():
+            self.db.execute("UPDATE k_meta SET value = CAST(value AS INTEGER) + 1 WHERE key = 'clock'")
+            return self.clock()
 
     def log(self, actor: str, event: str, ref: str = "", **meta: Any) -> None:
-        self.db.execute("INSERT INTO k_log (clock, actor, event, ref, meta) VALUES (?, ?, ?, ?, ?)",
-                        (self.clock(), actor, event, ref, json.dumps(meta, ensure_ascii=False)))
+        with self.tx():
+            self.db.execute("INSERT INTO k_log (clock, actor, event, ref, meta) VALUES (?, ?, ?, ?, ?)",
+                            (self.clock(), actor, event, ref, json.dumps(meta, ensure_ascii=False)))
 
     def rules_rev(self) -> int:
         return int(self.db.execute("SELECT value FROM k_meta WHERE key = 'rules_rev'").fetchone()[0])
