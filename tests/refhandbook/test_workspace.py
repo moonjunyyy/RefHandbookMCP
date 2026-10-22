@@ -351,3 +351,37 @@ def test_what_a_build_makes_runs_only_under_exec_work_and_the_refusal_says_why(w
     ws.set_policy("build", actor="user", commands=["*"], exec_work=True)
     out = cap_api.run("b", wait=30)
     assert "ran-work" in out and "ran-tmp" in out and "HINT" not in out
+
+
+def test_a_recipe_unpacks_with_modes_as_roots_files(tmp_path, monkeypatch):
+    """A layer build runs as root of a namespace mapping uid 0 alone: chown to the publisher's uid
+    fails there, and must not cost the files their modes (a node that cannot run)."""
+    import importlib.util
+    import io
+    import tarfile
+    from pathlib import Path
+
+    spec = importlib.util.spec_from_file_location(
+        "fetch", Path(__file__).resolve().parents[2] / "src/refhandbook/agents/recipes/fetch.py")
+    fetch = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fetch)
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w") as tf:
+        data = b"#!/bin/sh\necho hi\n"
+        ti = tarfile.TarInfo("node-v1/bin/node")
+        ti.size, ti.mode, ti.uid, ti.gid, ti.uname = len(data), 0o755, 1001, 1001, "build"
+        tf.addfile(ti, io.BytesIO(data))
+    buf.seek(0)
+    owners = []
+
+    def chown(path, uid, gid, *a, **k):  # what an unmapped uid gets in the build's namespace
+        owners.append(uid)
+        if uid != 0:
+            raise OSError(22, "Invalid argument")
+
+    monkeypatch.setattr(os, "geteuid", lambda: 0)
+    monkeypatch.setattr(os, "chown", chown)
+    monkeypatch.setattr(os, "lchown", chown, raising=False)
+    fetch.unpack(buf, str(tmp_path / "node"), 1)
+    assert owners == [0]
+    assert os.stat(tmp_path / "node" / "bin" / "node").st_mode & 0o777 == 0o755

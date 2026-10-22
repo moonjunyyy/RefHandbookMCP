@@ -53,7 +53,13 @@ def download(url: str, sums: str | None) -> tempfile.SpooledTemporaryFile:
 
 
 def unpack(tmp, dest: str, strip: int) -> None:
+    """Unpack as the layer's own files: root's. The archive's owners are dropped: the build runs as
+    root of a user namespace that maps uid 0 alone, so chown to the publisher's uid (node's is 1001)
+    fails, and tarfile, which skips a member's chmod once its chown fails and by default only logs
+    that, would leave every file without its modes (a node that cannot run). errorlevel 2: any
+    failure to restore a file stops the build instead."""
     with tarfile.open(fileobj=tmp) as tf:
+        tf.errorlevel = 2
         members = []
         for m in tf.getmembers():
             parts = m.name.split("/")[strip:]
@@ -62,19 +68,26 @@ def unpack(tmp, dest: str, strip: int) -> None:
             m.name = "/".join(parts)
             if m.islnk():
                 m.linkname = "/".join(m.linkname.split("/")[strip:])
+            m.uid = m.gid = 0
+            m.uname = m.gname = "root"
             members.append(m)
         os.makedirs(dest, exist_ok=True)
-        tf.extractall(dest, members=members, filter="tar")
+        tf.extractall(dest, members=members, filter="tar", numeric_owner=True)
 
 
-args = sys.argv[1:]
-sums = None
-if args[0] == "--sums":
-    sums, args = args[1], args[2:]
-if args[0] == "--json":
-    print(eval(args[2], {"d": json.load(get(args[1]))}))  # noqa: S307 — the recipe's own expression
-elif args[0] == "--unpack":
-    unpack(download(args[1], sums), args[2], int(args[3]) if len(args) > 3 else 0)
-else:
-    with download(args[0], sums) as src, open(args[1], "wb") as f:
-        shutil.copyfileobj(src, f)
+def main() -> None:
+    args = sys.argv[1:]
+    sums = None
+    if args[0] == "--sums":
+        sums, args = args[1], args[2:]
+    if args[0] == "--json":
+        print(eval(args[2], {"d": json.load(get(args[1]))}))  # noqa: S307 — the recipe's own expression
+    elif args[0] == "--unpack":
+        unpack(download(args[1], sums), args[2], int(args[3]) if len(args) > 3 else 0)
+    else:
+        with download(args[0], sums) as src, open(args[1], "wb") as f:
+            shutil.copyfileobj(src, f)
+
+
+if __name__ == "__main__":
+    main()
