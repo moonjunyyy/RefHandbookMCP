@@ -14,14 +14,19 @@ derivation.
     ldap_uri      ldaps://ldap.<realm, lowercased>
     issuer        https://<domain>
     http_service  HTTP@<domain>
-    code          /opt/<name>-portal      the installed code and its virtualenv
+    code          /opt/<name>-site        the installed code and its virtualenv (both packages)
+    portal_root   /account                where the account portal is served
     router        (none)                  a TLS-terminating proxy in front (IP or CIDR, or a list of
                                           them): nginx then serves plain HTTP on `listen` (80) to it
 
 Each service is named after the site and its role, and that name is everything systemd keys on:
 the unit, its system user, /etc/<unit>, /var/lib/<unit> and /var/log/<unit>.
 
-    portal  <name>-portal   :8080        sso  <name>-sso   :8090        apps  <name>-apps  :8100
+    portal    <name>-portal    :8080     the account portal
+    sso       <name>-sso       :8090     the site sign-in, at SIGNIN (/auth)
+    apps      <name>-apps      :8100     each user's storage for the hosted apps
+    handbook  <name>-handbook  :8765     the reference handbook (MCP)
+    runner    <name>-runner              the handbook's sandbox runner: the handbook's user and data
 
 Standard library only: the installer reads these before any virtualenv exists.
 """
@@ -37,9 +42,13 @@ from functools import cache
 from pathlib import Path
 
 KRB5_CONF = os.environ.get("KRB5_CONFIG", "/etc/krb5.conf").split(":")[0]
-ROLES = {"portal": 8080, "sso": 8090, "apps": 8100}
+ROLES = {"portal": 8080, "sso": 8090, "apps": 8100, "handbook": 8765, "runner": 0}
+# A role that runs as another role's user, in its directories (the runner works on the handbook's data).
+RUNS_AS = {"runner": "handbook"}
+# Where the site sign-in lives (portal/sso.py): its pages, its check for nginx, its stylesheet.
+SIGNIN = "/auth"
 USED = {"realm", "name", "base_dn", "domain", "users_ou", "groups_ou", "ldap_uri", "sso_issuer", "http_service",
-        "code", "ports", "aliases", "router", "listen"}
+        "code", "ports", "aliases", "router", "listen", "portal_root"}
 
 
 class FactError(ValueError):
@@ -77,12 +86,17 @@ class Facts:
     http_service: str
     code: str
     ports: dict
-    extra: dict  # the other string keys of [site] (portal_root, …): placeholders and options
+    extra: dict  # the other string keys of [site]: placeholders and options
     router: tuple[str, ...] = ()  # TLS ends there; empty = nginx holds the certificate itself
     listen: int = 80  # the plain-HTTP port the router connects to
+    portal_root: str = "/account"
 
     def unit(self, role: str) -> str:
         return f"{self.name}-{role}"
+
+    def user(self, role: str) -> str:
+        """The system user a role's unit runs as (and owns its directories)."""
+        return self.unit(RUNS_AS.get(role, role))
 
     def conf_dir(self, role: str) -> str:
         return f"/etc/{self.unit(role)}"
@@ -106,8 +120,9 @@ class Facts:
         return f"/etc/{self.name}/site.toml"
 
     def substitute(self, text: str, extra: dict | None = None) -> str:
-        """@@key@@ in a template or a site-file string: a fact (@@domain@@), a role's unit, port or
-        upstream (@@unit:sso@@, @@port:portal@@, @@upstream:portal@@), or a key of `extra`."""
+        """@@key@@ in a template or a site-file string: a fact (@@domain@@), a role's unit, user, port
+        or upstream (@@unit:sso@@, @@user:runner@@, @@port:portal@@, @@upstream:portal@@), or a key of
+        `extra`."""
         extra = extra or {}
 
         def one(m: re.Match) -> str:
@@ -116,7 +131,8 @@ class Facts:
             if role:
                 if role not in self.ports:
                     raise FactError(f"@@{key}@@: no role {role!r} (roles: {', '.join(self.ports)})")
-                return {"unit": self.unit, "port": lambda r: str(self.ports[r]), "upstream": self.upstream}[kind](role)
+                return {"unit": self.unit, "user": self.user, "port": lambda r: str(self.ports[r]),
+                        "upstream": self.upstream}[kind](role)
             if key in extra:
                 return str(extra[key])
             if key in self.extra:
@@ -181,9 +197,10 @@ def facts(site_file: str | None = None) -> Facts:
         base_dn=base_dn, users_ou=get("users_ou", f"ou=Users,{base_dn}"),
         groups_ou=get("groups_ou", f"ou=Groups,{base_dn}"), ldap_uri=get("ldap_uri", f"ldaps://ldap.{lower}"),
         issuer=get("sso_issuer", f"https://{domain}"), http_service=get("http_service", f"HTTP@{domain}"),
-        code=given.get("code") or f"/opt/{name}-portal", ports=ports,
+        code=given.get("code") or f"/opt/{name}-site", ports=ports,
         extra={k: v for k, v in given.items() if isinstance(v, str) and k not in USED},
-        router=router, listen=int(given.get("listen", 80)))
+        router=router, listen=int(given.get("listen", 80)),
+        portal_root=get("portal_root", Facts.portal_root).rstrip("/"))
 
 
 def running_dir(kind: str, fallback: str) -> str:

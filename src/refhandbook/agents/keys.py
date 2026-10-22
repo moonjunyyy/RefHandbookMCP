@@ -2,8 +2,10 @@
 
 A key is sealed to an X25519 public key: an ephemeral key pair, ECDH, HKDF-SHA256, AES-256-GCM,
 with `uid|provider|label` as associated data (a row moved to another user or provider does not
-open). The web process holds only the public key (RHB_AGENT_KEYS_PUB); the runner reads the private
-key from its systemd credential (`$CREDENTIALS_DIRECTORY/agent-keys`) or RHB_AGENT_KEYS_FILE.
+open). The web process holds only the public key; the runner reads the private key from its systemd
+credential (`$CREDENTIALS_DIRECTORY/agent-keys`). Both default to the unit's configuration directory
+(`$CONFIGURATION_DIRECTORY/agent-keys[.pub]`), where the installer makes the pair once:
+`python -m refhandbook.agents.keys gen <dir>`; RHB_AGENT_KEYS_PUB and RHB_AGENT_KEYS_FILE override.
 
 Rows live in `<data>/agent-keys.db`. The model never sees a key: tools list providers, labels and
 fingerprints only, and the runner scrubs a key out of any error text before it goes anywhere.
@@ -81,8 +83,16 @@ def unseal(priv: X25519PrivateKey, epk: bytes, nonce: bytes, ct: bytes, aad: byt
     return AESGCM(key).decrypt(nonce, ct, aad).decode()
 
 
+def _conf(name: str) -> Path:
+    """A file in the unit's configuration directory (systemd's ConfigurationDirectory=)."""
+    d = os.environ.get("CONFIGURATION_DIRECTORY", "").split(":")[0]
+    if not d:
+        raise KeyError_(f"no {name}: not in a unit with ConfigurationDirectory=, and no RHB_AGENT_KEYS_* set")
+    return Path(d) / name
+
+
 def generate(priv_path: str | Path, pub_path: str | Path) -> None:
-    """Make the key pair (install.sh): the private key 0400, the public key 0444."""
+    """Make the key pair (the installer, once): the private key 0400, the public key 0444."""
     priv = X25519PrivateKey.generate()
     pem = priv.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
                              serialization.NoEncryption())
@@ -95,7 +105,7 @@ def generate(priv_path: str | Path, pub_path: str | Path) -> None:
 
 
 def load_public(path: str | Path | None = None) -> X25519PublicKey:
-    p = Path(path or os.environ.get("RHB_AGENT_KEYS_PUB", "/etc/refhandbook/agent-keys.pub"))
+    p = Path(path or os.environ.get("RHB_AGENT_KEYS_PUB") or _conf("agent-keys.pub"))
     k = serialization.load_pem_public_key(p.read_bytes())
     if not isinstance(k, X25519PublicKey):
         raise KeyError_(f"{p} is not an X25519 public key")
@@ -106,7 +116,7 @@ def private_path() -> Path:
     cred = os.environ.get("CREDENTIALS_DIRECTORY")
     if cred and (Path(cred) / "agent-keys").exists():
         return Path(cred) / "agent-keys"
-    return Path(os.environ.get("RHB_AGENT_KEYS_FILE", "/etc/refhandbook/agent-keys"))
+    return Path(os.environ.get("RHB_AGENT_KEYS_FILE") or _conf("agent-keys"))
 
 
 def load_private(path: str | Path | None = None) -> X25519PrivateKey:
@@ -207,3 +217,14 @@ def scrub(text: str, secrets: list[str]) -> str:
         for form in {s, base64.b64encode(s.encode()).decode()}:
             text = text.replace(form, "[key]")
     return text
+
+
+if __name__ == "__main__":
+    import sys
+
+    if len(sys.argv) == 3 and sys.argv[1] == "gen":
+        d = Path(sys.argv[2])
+        generate(d / "agent-keys", d / "agent-keys.pub")
+        print(f"wrote {d}/agent-keys (0400) and {d}/agent-keys.pub (0444)")
+    else:
+        raise SystemExit("usage: python -m refhandbook.agents.keys gen <directory>")

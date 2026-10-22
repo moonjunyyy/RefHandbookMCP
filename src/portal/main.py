@@ -11,6 +11,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from . import audit, tokens, validators
 from .config import Settings
+from .facts import SIGNIN
 from .directory import Directory, DirectoryError, User
 from .invites import InviteError, InviteStore
 from .kerberos import KAdmin, Kerberos, KerberosError, LoginResult
@@ -95,7 +96,7 @@ def create_app(settings: Settings | None = None, directory=None, kerberos=None, 
     def render(request: Request, name: str, actor: Actor | None = None, **ctx):
         ctx.update(actor=actor, csrf=csrf_token(request.session), flashes=request.session.pop("flash", []),
                    can=(lambda action, target=None: actor is not None and can(actor, action, s, target)),
-                   settings=s, url=url, sso=sso, requests_enabled=requests is not None,
+                   settings=s, url=url, sso=sso, signin=SIGNIN, requests_enabled=requests is not None,
                    invites_enabled=invites is not None,
                    site_menu=s.site().menu(set(actor.user.groups) if actor else set()),
                    pending_requests=(lambda: requests.count() if requests is not None else 0))
@@ -213,7 +214,7 @@ def create_app(settings: Settings | None = None, directory=None, kerberos=None, 
     @app.get("/expired")
     async def expired_page(request: Request):
         if sso:
-            return RedirectResponse("/auth/expired", status_code=303)
+            return RedirectResponse(f"{SIGNIN}/expired", status_code=303)
         return render(request, "expired.html", uid=request.session.get("expired_uid", ""))
 
     @app.post("/expired")

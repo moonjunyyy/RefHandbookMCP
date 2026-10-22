@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from .conftest import SITE
-from portal import deploy, facts as facts_mod
+from portal import deploy, facts as facts_mod, site
 from portal.facts import facts, krb5_default_realm
 
 REPO = Path(__file__).resolve().parents[2]
@@ -35,7 +35,7 @@ def test_every_fact_derives_from_the_realm(fresh, tmp_path):
     f = facts(str(s))
     assert (f.name, f.domain, f.base_dn, f.users_ou, f.ldap_uri, f.issuer, f.http_service, f.code) == (
         "lab", "www.lab.example.org", "dc=lab,dc=example,dc=org", "ou=Users,dc=lab,dc=example,dc=org",
-        "ldaps://ldap.lab.example.org", "https://www.lab.example.org", "HTTP@www.lab.example.org", "/opt/lab-portal")
+        "ldaps://ldap.lab.example.org", "https://www.lab.example.org", "HTTP@www.lab.example.org", "/opt/lab-site")
     assert (f.unit("portal"), f.conf_dir("sso"), f.state_dir("portal")) == ("lab-portal", "/etc/lab-sso",
                                                                              "/var/lib/lab-portal")
     s.write_text('[site]\ndomain = "lab.example.org"\nbase_dn = "o=lab"\n')
@@ -90,6 +90,16 @@ def test_install_makes_secrets_once_and_moves_an_old_layout(fresh, tmp_path, cap
     hand_made.chmod(0o644)
     retired = root / "etc/systemd/system/m00nny-dav-homes.timer"  # the site no longer serves WebDAV
     retired.write_text("[Timer]\n")
+    # the handbook as its own installer left it: units, data, a hand-written env file, its code copy
+    (root / "etc/systemd/system/refhandbook.service").write_text("[Service]\n")
+    (root / "etc/systemd/system/refhandbook-runner.service").write_text("[Service]\n")
+    (root / "var/lib/refhandbook/users").mkdir(parents=True)
+    (root / "var/lib/refhandbook/users/moon.db").write_bytes(b"ledgers")
+    (root / "etc/refhandbook").mkdir(parents=True)
+    (root / "etc/refhandbook/env").write_text("RHB_AUTH=sso\nRHB_REQUIRE_GROUP=research\n")
+    (root / "opt/refhandbook-venv").mkdir(parents=True)
+    which = shutil.which
+    fresh.setattr(deploy.shutil, "which", lambda cmd: "/usr/bin/uv" if cmd == "uv" else which(cmd))
     sh = Recorder()
     assert deploy.install(SITE, root=root, sh=sh) == 0
     assert not old_unit.exists() and ["systemctl", "disable", "--now", "ldap-portal.service"] in sh.calls
@@ -104,10 +114,21 @@ def test_install_makes_secrets_once_and_moves_an_old_layout(fresh, tmp_path, cap
     assert len(sso_secret) > 40 and "PORTAL_REALM=M00NNY.KR" in sso_env.read_text()  # filled in, the rest kept
     assert (sso_env.stat().st_mode & 0o777) == 0o640
     assert (root / "etc/nginx/sites-enabled/www.m00nny.kr.conf").is_symlink()
-    assert (root / "opt/m00nny-portal/src/portal/deploy.py").exists() and not (root / "opt/m00nny-portal/.git").exists()
+    assert (root / "opt/m00nny-site/src/portal/deploy.py").exists() and not (root / "opt/m00nny-portal/.git").exists()
     assert not retired.exists() and ["systemctl", "disable", "--now", "m00nny-dav-homes.timer"] in sh.calls
-    assert ["systemctl", "restart", "m00nny-portal.service", "m00nny-sso.service", "m00nny-apps.service"] in sh.calls
+    assert ["systemctl", "restart", *(f"m00nny-{r}.service" for r in ("portal", "sso", "apps", "handbook", "runner"))] \
+        in sh.calls
+    # one virtualenv for both packages, from the lock
+    assert any(c[:1] == ["env"] and "sync" in c and "--frozen" in c and f"--project" in c for c in sh.calls)
+    # the handbook moved to the derived names, with its users' data
+    for old in ("refhandbook.service", "refhandbook-runner.service"):
+        assert ["systemctl", "disable", "--now", old] in sh.calls and not (root / "etc/systemd/system" / old).exists()
+    assert (root / "var/lib/m00nny-handbook/users/moon.db").read_bytes() == b"ledgers"
+    assert (root / "etc/m00nny-handbook/handbook.env").exists()  # the overrides file, made once
+    assert any(c[-3:-1] == ["refhandbook.agents.keys", "gen"] and c[-1].endswith("etc/m00nny-handbook") for c in sh.calls)
     out = capsys.readouterr().out
+    assert "/etc/m00nny-handbook/env is not read any more" in out  # RHB_REQUIRE_GROUP would be lost silently
+    assert "/opt/refhandbook-venv is no longer used" in out
     assert "ktadd -k /etc/m00nny-sso/http.keytab HTTP/www.m00nny.kr@M00NNY.KR" in out  # only what is missing
     assert "/etc/m00nny-portal/portal.keytab" not in out.split("Only an admin")[1]
     assert "/etc/m00nny-portal/http.keytab" not in out  # one copy of the HTTP key: the SSO's
@@ -153,7 +174,7 @@ def test_the_hosts_own_keys_stay_beside_the_site_file(fresh, tmp_path):
     s.write_text(SITE.read_text())
     (tmp_path / "site.local.toml").write_text('[site]\nrouter = "172.16.0.1"\n')
     f = facts(str(s))
-    assert f.router == ("172.16.0.1",) and f.extra["portal_root"] == "/account"  # merged, the local key wins
+    assert f.router == ("172.16.0.1",) and f.portal_root == "/account"  # merged, the local key wins
     files = deploy.rendered(f, s)
     assert "set_real_ip_from 172.16.0.1;" in files["/etc/nginx/sites-available/www.m00nny.kr.conf"][0]
     assert files["/etc/m00nny/site.local.toml"][0] == '[site]\nrouter = "172.16.0.1"\n'
@@ -212,3 +233,21 @@ def test_the_installer_takes_paths_from_where_it_is_run(tmp_path):
                          capture_output=True, text=True, env={"PATH": "/usr/bin:/bin", "PORTAL_REALM": "M00NNY.KR"})
     assert out.returncode != 0
     assert "run as root" in out.stderr  # it got as far as the root check, from tmp_path, with the code found
+
+
+def test_the_handbook_takes_its_settings_from_the_sites_facts(fresh, tmp_path):
+    """Nothing in its unit is written by hand: the site's URL and issuer, the sign-in's key and path,
+    its port, and the audience of the apps that reach it."""
+    f = facts(str(SITE))
+    unit = deploy.rendered(f, SITE)[f"/etc/systemd/system/{f.unit('handbook')}.service"][0]
+    env = dict(line.split("=", 2)[1:] for line in unit.splitlines() if line.startswith("Environment="))
+    assert env == {"RHB_PUBLIC_URL": f"https://{f.domain}", "RHB_PORT": str(f.ports["handbook"]),
+                   "RHB_SSO_PUBLIC_KEY_FILE": f"{f.conf_dir('sso')}/sso-public.pem", "RHB_SSO_ISSUER": f.issuer,
+                   "RHB_SSO_AUDIENCE": "refhandbook", "RHB_LOGIN_URL": "/auth/login"}
+    runner = deploy.rendered(f, SITE)[f"/etc/systemd/system/{f.unit('runner')}.service"][0]
+    assert f"User={f.user('handbook')}" in runner and f"StateDirectory={f.unit('handbook')}" in runner
+    s = tmp_path / "site.toml"
+    s.write_text('[[app]]\nid = "a"\ntitle = "A"\naudience = "one"\nupstream = "@@upstream:handbook@@"\n'
+                 '[[app]]\nid = "b"\ntitle = "B"\naudience = "two"\nupstream = "@@upstream:handbook@@"\n')
+    with pytest.raises(site.SiteError, match="disagree"):
+        deploy.rendered(f, s)

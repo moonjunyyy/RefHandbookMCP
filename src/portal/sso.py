@@ -25,7 +25,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from . import audit, tokens, validators
 from .config import Settings
-from .facts import facts
+from .facts import SIGNIN, facts
 from .kerberos import Kerberos, KerberosError, LoginResult
 from .security import SecurityHeadersMiddleware, Throttle, csrf_ok, csrf_token
 from .validators import ValidationError
@@ -67,7 +67,7 @@ def create_app(settings: Settings | None = None, kerberos=None, signing_key=None
     # and the sign-in should carry over. Lax still keeps the cookie off cross-site POSTs.
     app.add_middleware(SessionMiddleware, secret_key=s.sso_secret, session_cookie=s.sso_cookie,
                        max_age=s.sso_max_age, same_site="lax", https_only=s.cookie_secure, path="/")
-    app.mount("/auth/static", StaticFiles(directory=HERE / "static"), name="static")
+    app.mount(f"{SIGNIN}/static", StaticFiles(directory=HERE / "static"), name="static")
     templates = Jinja2Templates(directory=HERE / "templates")
 
     def ip(request: Request) -> str:
@@ -77,7 +77,8 @@ def create_app(settings: Settings | None = None, kerberos=None, signing_key=None
         request.session.setdefault("flash", []).append([kind, msg])
 
     def render(request: Request, name: str, status: int = 200, **ctx):
-        ctx.update(csrf=csrf_token(request.session), flashes=request.session.pop("flash", []), settings=s)
+        ctx.update(csrf=csrf_token(request.session), flashes=request.session.pop("flash", []), settings=s,
+                   signin=SIGNIN)
         resp = templates.TemplateResponse(request, name, ctx)
         resp.status_code = status
         return resp
@@ -111,7 +112,7 @@ def create_app(settings: Settings | None = None, kerberos=None, signing_key=None
 
     # ---- nginx auth_request ------------------------------------------------------------------
 
-    @app.get("/auth/check")
+    @app.get(f"{SIGNIN}/check")
     async def check(request: Request):
         uid = session_user(request)
         if uid is None:
@@ -129,11 +130,11 @@ def create_app(settings: Settings | None = None, kerberos=None, signing_key=None
     @app.get("/")
     async def home(request: Request):
         return render(request, "sso_home.html", current=session_user(request),
-                      apps=[a for a in s.site().apps if a.card], portal=facts().extra.get("portal_root", "/account"))
+                      apps=[a for a in s.site().apps if a.card], portal=facts().portal_root)
 
     # ---- sign-in -----------------------------------------------------------------------------
 
-    @app.get("/auth/login")
+    @app.get(f"{SIGNIN}/login")
     async def login_page(request: Request):
         nxt = next_from_query(request.url.query)
         uid = session_user(request)
@@ -141,7 +142,7 @@ def create_app(settings: Settings | None = None, kerberos=None, signing_key=None
             return redirect(nxt)
         return render(request, "sso_login.html", next=nxt, current=uid)
 
-    @app.post("/auth/login")
+    @app.post(f"{SIGNIN}/login")
     async def login(request: Request):
         data = await request.form()
         if not csrf_ok(request.session, data.get("csrf")):
@@ -160,7 +161,7 @@ def create_app(settings: Settings | None = None, kerberos=None, signing_key=None
             request.session["expired_uid"] = raw_uid
             request.session["expired_next"] = nxt
             flash(request, "info", "비밀번호를 먼저 바꿔야 합니다 (임시 비밀번호이거나 만료됨).")
-            return redirect("/auth/expired")
+            return redirect(f"{SIGNIN}/expired")
         if uid is None:
             msg = ("사용자명 또는 비밀번호가 맞지 않습니다." if result is LoginResult.BAD
                    else "비활성화되었거나 잠긴 계정입니다.")
@@ -169,11 +170,11 @@ def create_app(settings: Settings | None = None, kerberos=None, signing_key=None
         request.session.update(uid=uid, login_at=time.time())
         return redirect(nxt)
 
-    @app.get("/auth/logout")
+    @app.get(f"{SIGNIN}/logout")
     async def logout_page(request: Request):
         return render(request, "sso_logout.html", current=session_user(request))
 
-    @app.post("/auth/logout")
+    @app.post(f"{SIGNIN}/logout")
     async def logout(request: Request):
         data = await request.form()
         if csrf_ok(request.session, data.get("csrf")):
@@ -183,21 +184,21 @@ def create_app(settings: Settings | None = None, kerberos=None, signing_key=None
 
     # ---- one-time and expired passwords (kpasswd; no admin rights) ----------------------------
 
-    @app.get("/auth/expired")
+    @app.get(f"{SIGNIN}/expired")
     async def expired_page(request: Request):
         return render(request, "sso_expired.html", uid=request.session.get("expired_uid", ""))
 
-    @app.post("/auth/expired")
+    @app.post(f"{SIGNIN}/expired")
     async def expired_change(request: Request):
         data = await request.form()
         if not csrf_ok(request.session, data.get("csrf")):
             flash(request, "error", "Invalid or missing CSRF token. Reload the page and try again.")
-            return redirect("/auth/expired")
+            return redirect(f"{SIGNIN}/expired")
         raw_uid = str(data.get("uid", "")).strip().lower()[:64]
         keys = (f"ip:{ip(request)}", f"uid:{raw_uid}")
         if throttle.blocked(*keys):
             flash(request, "error", "실패가 너무 많습니다. 15분 뒤 다시 시도하세요.")
-            return redirect("/auth/expired")
+            return redirect(f"{SIGNIN}/expired")
         try:
             uid = validators.uid(raw_uid)
             new = validators.new_password(str(data.get("new", "")), str(data.get("confirm", "")))
@@ -206,14 +207,14 @@ def create_app(settings: Settings | None = None, kerberos=None, signing_key=None
             throttle.fail(*keys)
             audit.record(raw_uid, "change_expired_password", raw_uid, False, ip(request), str(e))
             flash(request, "error", str(e))
-            return redirect("/auth/expired")
+            return redirect(f"{SIGNIN}/expired")
         audit.record(uid, "change_expired_password", uid, True, ip(request))
         nxt = request.session.pop("expired_next", "/")
         request.session.pop("expired_uid", None)
         flash(request, "ok", "비밀번호를 바꿨습니다. 새 비밀번호로 로그인하세요.")
-        return redirect("/auth/login?next=" + nxt)
+        return redirect(f"{SIGNIN}/login?next=" + nxt)
 
-    @app.get("/auth/healthz")
+    @app.get(f"{SIGNIN}/healthz")
     async def healthz():
         return Response("ok", media_type="text/plain")
 

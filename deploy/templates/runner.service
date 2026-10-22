@@ -1,0 +1,40 @@
+# @@generated@@
+# The handbook's sandbox runner: the only unit that creates namespaces (docs/agents.md §7). It works on
+# the handbook's data as the handbook's user, and alone receives the agent keys' private half.
+[Unit]
+Description=@@name@@ handbook sandbox runner
+After=network-online.target @@unit:handbook@@.service
+
+[Service]
+Type=simple
+User=@@user:runner@@
+Group=@@user:runner@@
+StateDirectory=@@unit:handbook@@
+StateDirectoryMode=0700
+LoadCredential=agent-keys:/etc/@@unit:handbook@@/agent-keys
+EnvironmentFile=-/etc/@@unit:handbook@@/handbook.env
+WorkingDirectory=/var/lib/@@unit:handbook@@
+ExecStart=@@code@@/.venv/bin/refhandbook runner --data-dir /var/lib/@@unit:handbook@@
+Restart=on-failure
+RestartSec=3
+Delegate=yes
+LimitNOFILE=65536
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectClock=yes
+RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_INET AF_INET6
+RestrictNamespaces=user mnt pid net ipc uts cgroup
+SystemCallFilter=@system-service @mount @sandbox unshare pivot_root sethostname
+SystemCallErrorNumber=EPERM
+SystemCallArchitectures=native
+LockPersonality=yes
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

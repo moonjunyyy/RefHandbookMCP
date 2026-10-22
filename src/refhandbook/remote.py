@@ -87,7 +87,7 @@ class Config:
     sso_audience: str = "refhandbook"  # the audience nginx asks the sign-in to mint for this app
     login_url: str = "/auth/login"  # the site sign-in page, for a browser without its cookie
     host: str = "127.0.0.1"
-    port: int = 8765
+    port: int = 0  # RHB_PORT: the installer renders the handbook role's port (portal/facts.py ROLES)
     require_group: str | None = None  # a POSIX group (through NSS) the user must belong to
     redirect_allow: tuple[str, ...] = DEFAULT_REDIRECTS
     access_ttl: int = 3600
@@ -117,6 +117,9 @@ class Config:
         data = _env("RHB_DATA_DIR") or (os.environ.get("STATE_DIRECTORY", "").split(":")[0] or None)
         if not data:
             raise SystemExit("RHB_DATA_DIR is required outside a unit with StateDirectory=")
+        port = _env("RHB_PORT")
+        if not port:
+            raise SystemExit("RHB_PORT is required (the handbook role's port, which nginx proxies to)")
         allow = _env("RHB_REDIRECT_ALLOW")
         return cls(
             public_url=public,
@@ -126,7 +129,7 @@ class Config:
             sso_audience=_env("RHB_SSO_AUDIENCE", cls.sso_audience),  # type: ignore[arg-type]
             login_url=_url_env("RHB_LOGIN_URL", cls.login_url),  # type: ignore[arg-type]
             host=_env("RHB_HOST", cls.host),  # type: ignore[arg-type]
-            port=int(_env("RHB_PORT", str(cls.port))),  # type: ignore[arg-type]
+            port=int(port),
             require_group=_env("RHB_REQUIRE_GROUP"),
             redirect_allow=tuple(s.strip() for s in allow.split(",") if s.strip()) if allow else DEFAULT_REDIRECTS,
             access_ttl=int(_env("RHB_ACCESS_TTL", str(cls.access_ttl))),  # type: ignore[arg-type]

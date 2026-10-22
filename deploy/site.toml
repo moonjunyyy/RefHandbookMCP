@@ -7,7 +7,7 @@
 #   realm = "M00NNY.KR"              name = "m00nny"               domain = "www.m00nny.kr"
 #   base_dn = "dc=m00nny,dc=kr"      users_ou = "ou=Users,<base_dn>"   groups_ou = "ou=Groups,<base_dn>"
 #   ldap_uri = "ldaps://ldap.m00nny.kr"   aliases = ["m00nny.kr"]   code = "/opt/m00nny-portal"
-#   ports = { portal = 8080, sso = 8090 }
+#   ports = { <role> = <port> }        (the roles and their default ports: portal/facts.py ROLES)
 # TLS: nginx holds the certificate (/etc/letsencrypt/live/<domain>) unless `router` names the
 # TLS-terminating proxy in front (an IP or CIDR, or a list): then nginx serves plain HTTP on
 # `listen` (80) to it alone, takes the client from its X-Forwarded-For, and the installer renders
@@ -82,7 +82,7 @@ id = "agents"
 title = "에이전트 · 샌드박스"
 description = "모델이 제안한 규칙의 승인·거절, 샌드박스 정책(쓸 수 있는 명령·네트워크·한도), 스크립트와 작업 현황."
 audience = "refhandbook"
-upstream = "http://127.0.0.1:8765"
+upstream = "@@upstream:handbook@@"
 menu = "Agents"
 menu_href = "/agents"
 link = [{ label = "승인 화면", href = "/agents" }]
@@ -99,7 +99,7 @@ title = "핸드북 (Claude MCP)"
 description = "Claude에서 커스텀 커넥터로 추가하고 Connect를 누르면, 이 사이트 로그인 후 허용 화면이 나옵니다."
 code = "https://@@domain@@/mcp"
 audience = "refhandbook"
-upstream = "http://127.0.0.1:8765"
+upstream = "@@upstream:handbook@@"
   [[app.route]]
   path = "/login"
   match = "exact"

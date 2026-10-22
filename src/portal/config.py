@@ -4,7 +4,7 @@ import ssl
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .facts import facts, running_dir
+from .facts import SIGNIN, facts, running_dir
 
 
 def _env(name: str, default: str) -> str:
@@ -123,7 +123,7 @@ class Settings:
     # X-Auth-Token (see portal/tokens.py), verified with the SSO's public key. "local": the portal's
     # own sign-in page, as before.
     auth_mode: str = field(default_factory=lambda: _env("AUTH", "local"))
-    login_url: str = field(default_factory=lambda: _env("LOGIN_URL", "/auth/login"))
+    login_url: str = field(default_factory=lambda: _env("LOGIN_URL", SIGNIN + "/login"))
     sso_issuer: str = field(default_factory=lambda: _env("SSO_ISSUER", _f().issuer))
     sso_public_key_file: str = field(default_factory=lambda: _env(
         "SSO_PUBLIC_KEY_FILE", _f().conf_dir("sso") + "/sso-public.pem"))

@@ -298,6 +298,7 @@ def site_env(monkeypatch, tmp_path):
     monkeypatch.setenv("RHB_PUBLIC_URL", ISS)
     monkeypatch.setenv("RHB_SSO_PUBLIC_KEY_FILE", str(tmp_path / "sso-public.pem"))
     monkeypatch.setenv("RHB_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("RHB_PORT", "8765")
     return monkeypatch
 
 
