@@ -20,6 +20,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +32,7 @@ POLICY_FIELDS = {"commands", "network", "ports", "mounts", "layers", "exec_work"
 RESERVED = ("/", "/usr", "/bin", "/sbin", "/lib", "/lib32", "/lib64", "/libx32", "/etc", "/opt", "/proc", "/dev",
             "/work", "/tmp", "/run", "/job", "/root", "/sys", "/var")
 CMD_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*$")
+MOUNT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 
 def _ws(reg: Registry) -> Any:
@@ -42,34 +44,90 @@ def _ws(reg: Registry) -> Any:
 
 # ── mounts ───────────────────────────────────────────────────────────────
 
-def mount_roots(ws: Any) -> list[str]:
-    """RHB_SANDBOX_MOUNT_ROOTS: the host directories (colon-separated; {user} and {uid} name the
-    store's owner) under which a policy may mount the user's data. Unset: no mounts."""
-    out = []
-    for t in filter(None, os.environ.get("RHB_SANDBOX_MOUNT_ROOTS", "").split(":")):
+@dataclass(frozen=True)
+class MountRoot:
+    """A host directory the administrator offers (`host`, resolved for the store's owner) under the
+    name users write in a mount's source (`name`); `ro`: never mounted read-write."""
+    host: str
+    name: str
+    ro: bool = False
+
+
+def mount_roots(ws: Any) -> list[MountRoot]:
+    """What a policy may mount, from the administrator's settings ({user} and {uid} name the store's
+    owner in both):
+
+      RHB_SANDBOX_MOUNTS       comma-separated FROM=NAME[:ro]: the host directory FROM, offered as
+                               NAME (a mount's source is NAME or NAME/sub/path); :ro forbids rw.
+                               e.g. /home/{user}/data=data,/srv/corpora/arxiv=arxiv:ro
+      RHB_SANDBOX_MOUNT_ROOTS  colon-separated host directories (the older form): each is offered
+                               under its own path, so a source is a host path under it.
+
+    Neither set: no mounts."""
+    out: list[MountRoot] = []
+
+    def host(t: str, var: str) -> str:
         try:
-            out.append(os.path.realpath(t.format(user=ws.owner, uid=ws.owner_uid)))
+            return os.path.realpath(t.format(user=ws.owner, uid=ws.owner_uid))
         except (KeyError, IndexError, ValueError) as e:
-            raise CapError(f"RHB_SANDBOX_MOUNT_ROOTS: bad template {t!r}: {e}") from e
+            raise CapError(f"{var}: bad template {t!r}: {e}") from e
+
+    for entry in filter(None, (x.strip() for x in os.environ.get("RHB_SANDBOX_MOUNTS", "").split(","))):
+        frm, sep, to = entry.partition("=")
+        name, _, mode = to.partition(":")
+        name = name.strip().strip("/")
+        if not sep or not frm.strip().startswith("/") or not MOUNT_NAME_RE.match(name) or mode not in ("", "ro"):
+            raise CapError(f"RHB_SANDBOX_MOUNTS: {entry!r} is not FROM=NAME[:ro] (FROM an absolute path, NAME "
+                           "letters, digits, . _ -)")
+        if any(r.name == name for r in out):
+            raise CapError(f"RHB_SANDBOX_MOUNTS: the name {name!r} is used twice")
+        out.append(MountRoot(host(frm.strip(), "RHB_SANDBOX_MOUNTS"), name, mode == "ro"))
+    for t in filter(None, os.environ.get("RHB_SANDBOX_MOUNT_ROOTS", "").split(":")):
+        h = host(t, "RHB_SANDBOX_MOUNT_ROOTS")
+        out.append(MountRoot(h, h))
     return out
 
 
-def mount_source(ws: Any, source: str) -> str:
-    """The host path a mount's source names, checked to lie under an allowed root."""
+def _under(path: str, root: str) -> bool:
+    return path == root or path.startswith(root.rstrip("/") + "/")
+
+
+def mount_resolve(ws: Any, source: str) -> tuple[str, MountRoot]:
+    """The host path a mount's source names, and the offered directory it lies in. A source is NAME
+    or NAME/sub/path of an offered directory, or (the older form) a host path under one; either way
+    the resolved path (symlinks followed) must stay inside it."""
     roots = mount_roots(ws)
     if not roots:
-        raise CapError("mounts are off on this server: the administrator names the directories users may mount "
-                       "with RHB_SANDBOX_MOUNT_ROOTS (e.g. /data/{user})")
+        raise CapError("mounts are off on this server: the administrator offers directories with "
+                       "RHB_SANDBOX_MOUNTS (e.g. /home/{user}/data=data)")
     try:
-        path = os.path.realpath(source.format(user=ws.owner, uid=ws.owner_uid))
+        src = source.format(user=ws.owner, uid=ws.owner_uid).strip()
     except (KeyError, IndexError, ValueError) as e:
         raise CapError(f"mount source {source!r}: {e}") from e
-    if not any(path == r or path.startswith(r.rstrip("/") + "/") for r in roots):
-        raise CapError(f"mount source {source!r} is outside the directories this server lets you mount: "
-                       f"{', '.join(roots)}")
+    names = ", ".join(r.name + (" (ro)" if r.ro else "") for r in roots)
+    if src.startswith("/"):
+        path = os.path.realpath(src)
+        root = next((r for r in roots if _under(path, r.host)), None)
+    else:
+        name, _, sub = src.partition("/")
+        if ".." in sub.split("/"):
+            raise CapError(f"mount source {source!r}: no '..'")
+        root = next((r for r in roots if r.name == name), None)
+        if root is None:
+            raise CapError(f"mount source {source!r}: no directory {name!r} is offered here; offered: {names}")
+        path = os.path.realpath(os.path.join(root.host, sub)) if sub else root.host
+        if not _under(path, root.host):  # a symlink inside leads out
+            root = None
+    if root is None:
+        raise CapError(f"mount source {source!r} is outside the directories this server lets you mount: {names}")
     if not os.path.exists(path):
         raise CapError(f"mount source {source!r} does not exist ({path})")
-    return path
+    return path, root
+
+
+def mount_source(ws: Any, source: str) -> str:
+    """The host path a mount's source names, checked to lie in an offered directory."""
+    return mount_resolve(ws, source)[0]
 
 
 def _mounts(ws: Any, mounts: Any) -> list[dict[str, Any]]:
@@ -87,7 +145,9 @@ def _mounts(ws: Any, mounts: Any) -> list[dict[str, Any]]:
         if target in targets:
             raise CapError(f"mount target {target} is used twice")
         targets.add(target)
-        mount_source(ws, str(m["source"]))
+        _, root = mount_resolve(ws, str(m["source"]))
+        if m.get("rw") and root.ro:
+            raise CapError(f"mount source {m['source']!r}: {root.name} is offered read-only")
         out.append({"source": str(m["source"]), "target": target, "rw": bool(m.get("rw", False))})
     return out
 

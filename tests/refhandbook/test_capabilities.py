@@ -66,6 +66,56 @@ def test_a_mounted_directory_is_read_only_unless_granted_rw(ws, data):
     assert "wrote" in out and (data / ws.owner / "papers" / "b.txt").read_text() == "x\n"
 
 
+@pytest.fixture
+def offered(tmp_path, monkeypatch, ws):
+    """Two directories offered by name, one of them read-only, and nothing around them."""
+    home = tmp_path / "home" / ws.owner / "data"
+    (home / "2024").mkdir(parents=True)
+    (home / "2024" / "a.txt").write_text("named\n")
+    corpus = tmp_path / "srv" / "arxiv"
+    corpus.mkdir(parents=True)
+    (tmp_path / "home" / ws.owner / "secret").mkdir()
+    (home / "out").symlink_to(tmp_path / "home" / ws.owner / "secret")
+    monkeypatch.delenv("RHB_SANDBOX_MOUNT_ROOTS", raising=False)
+    monkeypatch.setenv("RHB_SANDBOX_MOUNTS", f"{tmp_path}/home/{{user}}/data=data, {corpus}=arxiv:ro")
+    return tmp_path
+
+
+def test_a_mount_names_an_offered_directory_and_a_path_inside_it(ws, offered, monkeypatch):
+    from refhandbook.agents.capkinds import mount_resolve, mount_roots
+
+    assert [(r.name, r.ro) for r in mount_roots(ws)] == [("data", False), ("arxiv", True)]
+    ws.set_policy("x", actor="user", mounts=[{"source": "data/2024", "target": "/mnt/papers"},
+                                             {"source": "arxiv", "target": "/corpus"}])
+    assert mount_resolve(ws, "data/2024")[0] == str(offered / "home" / ws.owner / "data" / "2024")
+    # the older form, a host path inside an offered directory, still works
+    ws.set_policy("y", actor="user", mounts=[{"source": str(offered / "home" / "{user}" / "data"), "target": "/d"}])
+    for source, match in (("data/../secret", "no '..'"), ("data/out", "outside"), ("home", "no directory 'home'"),
+                          (str(offered / "home" / ws.owner / "secret"), "outside"), ("data/nope", "does not exist")):
+        with pytest.raises(KernelError, match=match):
+            ws.set_policy("z", actor="user", mounts=[{"source": source, "target": "/d"}])
+    with pytest.raises(KernelError, match="read-only"):
+        ws.set_policy("z", actor="user", mounts=[{"source": "arxiv", "target": "/d", "rw": True}])
+    for bad in ("relative=data", "/x=", "/x=a b", "/x=a:rw", "/x=a,/y=a"):
+        monkeypatch.setenv("RHB_SANDBOX_MOUNTS", bad)
+        with pytest.raises(KernelError, match="RHB_SANDBOX_MOUNTS"):
+            mount_roots(ws)
+
+
+@needs_sandbox
+def test_a_named_mount_shows_only_its_sub_path_and_a_read_only_offer_stays_so(ws, offered, monkeypatch):
+    ws.set_policy("papers", actor="user", mounts=[{"source": "data/2024", "target": "/mnt/papers", "rw": True}])
+    cap_api.cap("add", kind="script", name="peek", spec={"policy": "papers"},
+                body="cat /mnt/papers/a.txt; ls -a /mnt /mnt/papers\n")
+    out = cap_api.run("peek", wait=30)
+    # only data/2024 is there: not data/ itself, its symlink out, or the directory beside it
+    assert "named" in out and "a.txt" in out and "secret" not in out and "out" not in out.replace("stdout", "")
+    # the administrator now offers it read-only: the rw grant no longer runs
+    monkeypatch.setenv("RHB_SANDBOX_MOUNTS", f"{offered}/home/{{user}}/data=data:ro")
+    out = cap_api.run("peek", wait=30)
+    assert "offered read-only" in out
+
+
 def _wait_built(ws, name, timeout=120):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:

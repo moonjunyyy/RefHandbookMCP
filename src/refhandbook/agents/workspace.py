@@ -642,13 +642,19 @@ class Runner:
         return egress.supervisor().close(key) if egress._sup is not None else {}
 
     def _spec(self, j: dict[str, Any], jobdir: Path) -> sandbox.Spec:
-        from .capkinds import layer_env, layer_trees, mount_source, resolve_command
+        from .capkinds import layer_env, layer_trees, mount_resolve, resolve_command
 
         with self.lock:
             pol = self.ws.policy(j["attrs"]["policy"])["attrs"]
             trees = layer_trees(self.ws.caps, pol.get("layers") or []) if pol.get("layers") else []
             env = layer_env(self.ws.caps, pol.get("layers") or []) if pol.get("layers") else {}
-            mounts = [(mount_source(self.ws, m["source"]), m["target"], m["rw"]) for m in pol.get("mounts") or []]
+            mounts = []
+            for m in pol.get("mounts") or []:
+                src, root = mount_resolve(self.ws, m["source"])
+                if m["rw"] and root.ro:  # offered read-only since the policy was granted
+                    raise WorkspaceError(f"mount {m['source']}: {root.name} is now offered read-only; "
+                                         "grant the policy again without rw")
+                mounts.append((src, m["target"], m["rw"]))
         ids = {}
         for src, dst, _ in mounts:
             st = os.stat(src)

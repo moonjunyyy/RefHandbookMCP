@@ -67,7 +67,8 @@ def main(argv: list[str] | None = None) -> int:
     po.add_argument("--ports", help="space-separated TCP ports the network may reach ('any': every port)")
     po.add_argument("--layers", help="space-separated layers stacked on the base (replaces the list)")
     po.add_argument("--mount", action="append", metavar="SOURCE:TARGET[:rw]",
-                    help="mount the user's data (under RHB_SANDBOX_MOUNT_ROOTS) at TARGET; repeat; 'none' clears")
+                    help="mount an offered directory (NAME[/sub/path] of RHB_SANDBOX_MOUNTS) at TARGET; "
+                         "repeat; 'none' clears")
     ly = sub.add_parser("layers", help="the server's shared layers: build them (with the network), list them")
     ly.add_argument("action", choices=["build", "list", "recipes"])
     ly.add_argument("names", nargs="*", help="recipes to build (default: all)")

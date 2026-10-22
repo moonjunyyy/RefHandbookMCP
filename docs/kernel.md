@@ -110,12 +110,18 @@ One sandbox per user, shared by Chat sessions (the `cap`, `run`, `job`, `files` 
   network and its ports, the limits, the layers it stacks, and mounts of the user's own data. The
   kernel installs `default`: a coreutils-like set, a shell and Python, no network. The user grants
   on `/agents` or with `refhandbook policy <name> …` on the server; the model may propose one.
-- **Mounts** — `{source, target, rw}`. The administrator names the directories users may mount with
-  `RHB_SANDBOX_MOUNT_ROOTS` (colon-separated; `{user}` and `{uid}` name the store's owner, e.g.
-  `/data/{user}`); a source outside them, or a target over the sandbox's own directories, is
-  refused. Read-only unless `rw`; a read-write mount is noexec like every writable mount. The
-  source's identity (device, inode) is checked again after the bind, so a source swapped in between
-  is refused.
+- **Mounts** — `{source, target, rw}`. The administrator offers directories by name with
+  `RHB_SANDBOX_MOUNTS`: comma-separated `FROM=NAME[:ro]`, FROM a host directory (`{user}` and `{uid}`
+  name the store's owner), NAME what users write, `:ro` never read-write; e.g.
+  `/home/{user}/data=data,/srv/corpora/arxiv=arxiv:ro`. A mount's source is `NAME` or
+  `NAME/sub/path`, and only that path appears at the target: an offered directory is not all or
+  nothing, and users never name host paths. The older `RHB_SANDBOX_MOUNT_ROOTS` (colon-separated
+  host directories, each offered under its own path) still works. A source outside the offered
+  directories (after `..` is refused and symlinks are followed), a read-write mount of a `:ro` one,
+  or a target over the sandbox's own directories is refused; a policy granted read-write before its
+  directory became `:ro` stops running until it is granted again. Read-only unless `rw`; a
+  read-write mount is noexec like every writable mount. The source's identity (device, inode) is
+  checked again after the bind, so a source swapped in between is refused.
 - **Layer** — what a policy can stack on the base: a build script run as root inside a sandbox of a
   policy the model already holds (that policy's commands, network, ports, limits and timeout: a
   build is never a wider sandbox), whose changes under `/usr/local`, `/opt` and `/etc` become a

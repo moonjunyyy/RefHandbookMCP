@@ -461,7 +461,20 @@ def _rule(r: dict[str, Any], hidden: str) -> str:
             "</div></div>")
 
 
-def _policy(name: str, a: dict[str, Any], p: dict[str, Any] | None, hidden: str) -> str:
+def _offered(ws: Workspace) -> str:
+    """The directories this server offers for mounts, as the policy form names them."""
+    from .capkinds import mount_roots
+
+    try:
+        roots = mount_roots(ws)
+    except HandbookError as e:
+        return f"마운트 설정 오류: {e}"
+    if not roots:
+        return "이 서버는 마운트를 허용하지 않습니다"
+    return "쓸 수 있는 원본: " + ", ".join(r.name + (" (읽기 전용)" if r.ro else "") for r in roots)
+
+
+def _policy(name: str, a: dict[str, Any], p: dict[str, Any] | None, hidden: str, offered: str = "") -> str:
     """One policy as a folded panel: a summary line, and its form when opened (a new one has a name field)."""
     ports = "any" if a.get("ports") in (None, "any") else " ".join(map(str, a.get("ports") or []))
     mounts = "\n".join(m["source"] + " " + m["target"] + (" rw" if m["rw"] else "") for m in a.get("mounts") or [])
@@ -484,7 +497,7 @@ def _policy(name: str, a: dict[str, Any], p: dict[str, Any] | None, hidden: str)
             f"<textarea name=commands rows=3>{_e(' '.join(a['commands']))}</textarea></label>"
             f"<div class='cols'><label>레이어 <span class='muted small'>공백으로 구분</span>"
             f"<input name=layers value='{_e(' '.join(a.get('layers') or []))}'></label>"
-            f"<label>마운트 <span class='muted small'>한 줄에 하나: 원본 대상 [rw] · {{user}} 사용 가능</span>"
+            f"<label>마운트 <span class='muted small'>한 줄에 하나: 원본[/하위 경로] 대상 [rw] · {_e(offered)}</span>"
             f"<textarea name=mounts rows=2>{_e(mounts)}</textarea></label></div>"
             f"<div class='cols'><label class='check'><input type=checkbox name=network {'checked' if a['network'] else ''}>"
             f" 네트워크 허용</label><label>포트 <input name=ports value='{_e(ports)}'></label></div>"
@@ -524,6 +537,7 @@ def _overview(ws: Workspace, uid: str, token: str, q: Any) -> str:
     rules = proposals.open_proposals(ws.g)
     policies = ws.policies()
     n_records, records = _records(caps)
+    offered = _offered(ws)
 
     summary = "".join(f"<a class='chip{' warn' if n and warn else ''}' href='#{a}'>{label} <b>{n}</b></a>"
                       for a, label, n, warn in (("grants", "승인 대기", len(waiting), True),
@@ -548,8 +562,8 @@ def _overview(ws: Workspace, uid: str, token: str, q: Any) -> str:
     out.append(_section("policies", f"샌드박스 정책 ({len(policies)})",
                         "정책이 곧 샌드박스입니다: 보이는 명령, 네트워크, 한도. 한 번 허용하면 그 안의 스크립트와 실행은 "
                         "다시 묻지 않습니다. 정책을 눌러 펼치면 고칠 수 있습니다.",
-                        "".join(_policy(n, ws.policy(n)["attrs"], ws.policy(n), hidden) for n in policies)
-                        + _policy("", ws.base_policy(), None, hidden)))
+                        "".join(_policy(n, ws.policy(n)["attrs"], ws.policy(n), hidden, offered) for n in policies)
+                        + _policy("", ws.base_policy(), None, hidden, offered)))
     out.append(_section("records", f"기능 기록 ({n_records})",
                         "스크립트·정책·레이어·규칙·카드·별칭. 각 기록은 버전이 남고, 검토 기한이 지나면 스스로 점검해 갱신되거나 "
                         "폐기 예정이 됩니다.", records))
