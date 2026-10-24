@@ -84,9 +84,18 @@ def _run(cmd: list[str]) -> int:
 # ── rendering: pure, into any root ──────────────────────────────────────
 
 
-def rendered(f: Facts, site_file: Path) -> dict[str, tuple[str, int]]:
-    """Every generated file: absolute path → (content, mode)."""
+def live_pages(f: Facts, site, root: Path = Path("/")) -> set[str]:  # noqa: ANN001 — site: portal.site.Site
+    """The pages apps whose build is published under `root`: their page paths go to them; until then
+    those paths stay with the services that served them (an update never leaves a path unanswered)."""
+    return {a.id for a in site.apps if a.pages and (root / f.apps_root.lstrip("/") / a.id / "index.html").exists()}
+
+
+def rendered(f: Facts, site_file: Path, root: Path = Path("/")) -> dict[str, tuple[str, int]]:
+    """Every generated file: absolute path → (content, mode). `root`: where to look for published
+    pages apps (live_pages)."""
     site = site_mod.load(site_file, f)
+    live = live_pages(f, site, root)
+    home = "/" in site_mod.page_paths(site, live)
     extra = {"generated": f"Generated from {f.site_file} by portal/deploy.py: edit that and rerun the installer.",
              "aliases_sp": "".join(f" {a}" for a in f.aliases), "port": str(f.listen), "signin": SIGNIN,
              "sso_public_key": f"{f.conf_dir('sso')}/sso-public.pem",
@@ -99,7 +108,12 @@ def rendered(f: Facts, site_file: Path) -> dict[str, tuple[str, int]]:
               or f"# (no members of {admin_group} were found when this was rendered)",
               "kdc_dn": _kdc_conf("ldap_kdc_dn") or "<ldap_kdc_dn of kdc.conf>",
               "kadmin_dn": _kdc_conf("ldap_kadmind_dn") or "<ldap_kadmind_dn of kdc.conf>",
-              "portal_dn": "<the DN ldapwhoami prints for portal/service>"}
+              "portal_dn": "<the DN ldapwhoami prints for portal/service>",
+              # the main page: the pages app's once it is published, else the sign-in's own
+              "home": "" if home else ("    location = / {   # the main page: the SSO's, so it knows who is signed in\n"
+                                       f"        include snippets/{f.name}-proxy.conf;\n"
+                                       '        proxy_set_header X-Auth-Token "";\n'
+                                       f"        proxy_pass {f.upstream('sso')};\n    }}\n")}
     extra |= {k: f.extra.get(k, default) for k, default in ROUTER_KEYS.items()}
 
     def t(name: str) -> str:
@@ -115,7 +129,7 @@ def rendered(f: Facts, site_file: Path) -> dict[str, tuple[str, int]]:
         f"/etc/nginx/sites-available/{f.domain}.conf": (t("site.conf"), 0o644),
         f"/etc/nginx/snippets/{f.name}-proxy.conf": (t("proxy.conf"), 0o644),
         f"/etc/nginx/snippets/{f.name}-apps-map.conf": (site_mod.render_map(site, f.name), 0o644),
-        f"/etc/nginx/snippets/{f.name}-apps.conf": (site_mod.render_locations(site, f.name), 0o644),
+        f"/etc/nginx/snippets/{f.name}-apps.conf": (site_mod.render_locations(site, f.name, live), 0o644),
         f.site_file: (site_file.read_text(), 0o644),
         **({str(local_file(f.site_file)): (local_file(site_file).read_text(), 0o644)}
            if local_file(site_file).exists() else {}),
@@ -396,8 +410,16 @@ def install(site_file: Path, root: Path = Path("/"), sh: Run = _run, src: Path =
     venv = code / ".venv"
     if _sync_venv(code, venv, sh) != 0:
         return 1
-    write_rendered(rendered(f, site_file), root)
     (root / f.apps_root.lstrip("/")).mkdir(parents=True, exist_ok=True)
+    # an app whose build is in the code tree (the site's pages: web/dist) is published first, so the
+    # nginx files below already send its paths to it (and, without a build, leave them where they were)
+    for a in site_mod.load(site_file, f).apps:
+        if a.build and (src / a.build / "index.html").is_file():
+            install_app(f, site_file, a.id, src / a.build, root)
+        elif a.build:
+            notes.append(f"{a.id}: no build at {a.build} (cd {Path(a.build).parent} && npm ci && npm run build); "
+                         "its paths stay with the services until it is published")
+    write_rendered(rendered(f, site_file, root), root)
     if not local_file(site_file).exists():  # dropped from the source: the installed copy goes too
         (root / str(local_file(f.site_file)).lstrip("/")).unlink(missing_ok=True)
     enabled = root / "etc/nginx/sites-enabled" / f"{f.domain}.conf"

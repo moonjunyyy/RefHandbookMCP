@@ -56,7 +56,7 @@ def keystore(data_dir: Path) -> KeyStore:
 
 
 def approval_url(run: str) -> str:
-    return f"{os.environ.get('RHB_PUBLIC_URL', '').rstrip('/')}/agents/runs/{run}"
+    return f"{os.environ.get('RHB_PUBLIC_URL', '').rstrip('/')}/approvals/runs/{run}"
 
 
 def _usage(u: dict[str, int]) -> str:

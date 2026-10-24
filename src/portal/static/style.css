@@ -186,3 +186,10 @@ pre.wrap { white-space: pre-wrap; word-break: break-word; }
 .actions form.inline input { width: auto; margin: 0; }
 input.cron { width: 14em; font-family: var(--mono, monospace); }
 td.num { text-align: right; white-space: nowrap; width: 1%; }
+/* the pages' app (web/): hidden parts, a key's model picker, a route row's tools */
+.hidden { display: none !important; }
+.model-pick { display: flex; gap: 6px; }
+.model-pick select, .model-pick input { margin: 0; }
+td.row-tools { white-space: nowrap; }
+td.row-tools button { padding: 2px 6px; }
+ul.groups li { display: inline-flex; align-items: center; gap: 6px; margin: 0 10px 6px 0; }

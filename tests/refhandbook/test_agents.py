@@ -1,6 +1,6 @@
 """Agents at work: sealed per-user keys (any provider, or a custom server in a standard format), the
 routing policy, the crew's runs on a scripted provider (spawn, wait, finish, route fallback, budgets,
-resume, cancel), the agent tools, and the key and run pages."""
+resume, cancel), presets and schedules, the agent tools, and the approval of a run the model asked for."""
 
 from __future__ import annotations
 
@@ -433,7 +433,7 @@ def test_the_model_asks_for_a_run_and_only_the_user_approves_it(tmp_path, ks, mo
     out = agents_api.agent_run("request", goal="survey the logs", suggest={"max_agents": 2, "roles": {"worker": "m"},
                                                                           "evil": 1})
     run = re.search(r"run (run:[0-9a-f]+)", out).group(1)
-    assert f"https://www.example.org/agents/runs/{run}" in out
+    assert f"https://www.example.org/approvals/runs/{run}" in out
     t = agents_api._team()
     assert t.g.node(run)["attrs"]["proposal"] == {"max_agents": 2, "roles": {"worker": "m"}}
     with pytest.raises(Forbidden):
@@ -451,7 +451,6 @@ def test_the_model_asks_for_a_run_and_only_the_user_approves_it(tmp_path, ks, mo
 
 @pytest.fixture
 def keyed(monkeypatch, tmp_path, pair):
-    from refhandbook.agents import pages
 
     K.generate(tmp_path / "k", tmp_path / "k.pub")
     monkeypatch.setenv("RHB_AGENT_KEYS_PUB", str(tmp_path / "k.pub"))
@@ -463,82 +462,10 @@ def keyed(monkeypatch, tmp_path, pair):
             raise K.KeyError_("제공자가 키를 거부했습니다 (401)")
         return ["claude-opus-5-5", "claude-haiku-5-5"], "ok"
 
-    monkeypatch.setattr(pages, "_check_key", fake_check)
+    monkeypatch.setattr(P, "check_key", fake_check)
     return checked, K.load_private(tmp_path / "k")
 
 
-def test_keys_are_registered_on_the_page_and_never_shown(client, keyed, cfg):
-    c, tok = client, {"X-Auth-Token": site_token(client.key), "Origin": BASE}
-    page = c.get("/agents/keys", headers=tok).text
-    assert "등록된 키 (0)" in page and "Custom" in page
-    form = {"provider": "anthropic", "label": "main", "secret": "sk-ant-api03-abcdefghijklmnop", "csrf": _csrf(page)}
-    r = c.post("/agents/keys/add", data={**form, "csrf": "0" * 64}, headers=tok, follow_redirects=False)
-    assert r.status_code == 403
-    r = c.post("/agents/keys/add", data=form, headers=tok, follow_redirects=False)
-    assert r.status_code == 303 and "ok=" in r.headers["location"]
-    r = c.post("/agents/keys/add", data={**form, "label": "x", "secret": "sk-refused-0000"}, headers=tok,
-               follow_redirects=False)
-    assert "err=" in r.headers["location"]
-    page = c.get("/agents/keys", headers=tok).text
-    assert "anthropic/main" in page and "sk-ant…mnop" in page and "abcdefghij" not in page and "anthropic/x" not in page
-    store = K.KeyStore(cfg.data_dir / "agent-keys.db", private=keyed[1])
-    assert store.get("moon", "anthropic", "main").secret == "sk-ant-api03-abcdefghijklmnop"
-    assert store.list("kim") == []
-    r = c.post("/agents/keys/delete", data={"ref": "anthropic/main", "csrf": _csrf(page)}, headers=tok,
-               follow_redirects=False)
-    assert "ok=" in r.headers["location"] and store.list("moon") == []
-
-
-def test_a_run_is_started_approved_and_cancelled_on_the_pages(client, keyed, cfg):
-    from refhandbook import server
-    from refhandbook.agents.team import Team
-
-    c, tok = client, {"X-Auth-Token": site_token(client.key), "Origin": BASE}
-    assert "먼저" in c.get("/agents/runs", headers=tok).text  # no key yet: the form says to register one
-    page = c.get("/agents/keys", headers=tok).text
-    form = {"provider": "anthropic", "label": "main", "secret": "sk-ant-api03-abcdefghijklmnop", "csrf": _csrf(page)}
-    c.post("/agents/keys/add", data=form, headers=tok)
-    page = c.get("/agents/runs", headers=tok).text
-    assert "<option value='claude-haiku-5-5'>" in page
-    new = {"goal": "count the files", "title": "count", "route0_key": "anthropic/main", "route0_model": "claude-opus-5-5",
-           "route0_lead": "on", "route0_worker": "on", "route1_key": "anthropic/main", "route1_model": "claude-haiku-5-5",
-           "route1_worker": "on", "max_agents": "2", "max_spawns": "3", "max_depth": "1", "max_steps": "20",
-           "max_tokens": "0", "context": "trim", "handoff": "digest", "retention": "verified", "policy": "default",
-           "effort": "", "csrf": _csrf(page)}
-    r = c.post("/agents/runs/new", data={**new, "route0_key": "openai/nope"}, headers=tok, follow_redirects=False)
-    assert "err=" in r.headers["location"]  # not one of the user's keys
-    r = c.post("/agents/runs/new", data=new, headers=tok, follow_redirects=False)
-    assert r.status_code == 303 and r.headers["location"].startswith("/agents/runs/run:")
-    run = r.headers["location"].split("?")[0].rsplit("/", 1)[1]
-    hb = server._user_store("moon")
-    t = Team(Workspace(hb).g)
-    g = t.grant(run)
-    assert [x["model"] for x in g["routes"]] == ["claude-opus-5-5", "claude-haiku-5-5"] and g["max_agents"] == 2
-    assert (cfg.data_dir / "users" / "moon.db.sandbox" / "runs" / run.split(":")[1]).exists()  # the runner's marker
-    page = c.get(f"/agents/runs/{run}", headers=tok).text
-    assert "count the files" in page and "anthropic/main" in page and "실행 취소" in page
-    # kim sees none of it
-    assert run not in c.get("/agents/runs", headers={"X-Auth-Token": site_token(client.key, "kim")}).text
-    # a run the model asked for waits on its page for the user's grant
-    asked = t.request_run("look into it", actor="model", proposal={"roles": {"lead": "claude-haiku-5-5"}})
-    page = c.get(f"/agents/runs/{asked}", headers=tok).text
-    assert "승인" in page and "value='claude-haiku-5-5'" in page
-    approve = {**{k: v for k, v in new.items() if k not in ("goal", "title")}, "csrf": _csrf(page)}
-    r = c.post(f"/agents/runs/{asked}/approve", data=approve, headers=tok, follow_redirects=False)
-    assert "ok=" in r.headers["location"] and t.g.node(asked)["attrs"]["phase"] == "approved"
-    r = c.post(f"/agents/runs/{asked}/cancel", data={"csrf": _csrf(page)}, headers=tok, follow_redirects=False)
-    assert "ok=" in r.headers["location"] and t.g.node(asked)["attrs"]["cancel"] == "cancelled by the user"
-    r = c.post(f"/agents/runs/{asked}/approve", data=approve, headers={**tok, "Origin": "https://evil.example"},
-               follow_redirects=False)
-    assert r.status_code == 403
-
-
-# ── the sandbox, through an agent ────────────────────────────────────────
-
-from .test_workspace import needs_sandbox  # noqa: E402
-
-
-@needs_sandbox
 def test_an_agents_sh_runs_in_the_sandbox_in_its_runs_directory(tmp_path, ks, monkeypatch):
     from refhandbook.agents.workspace import Runner
 
@@ -723,73 +650,62 @@ def test_the_runner_fires_a_due_schedule_and_runs_it(tmp_path, ks):
     assert crew.team.result(run)["content"] == "ok" and crew.g.node(run)["attrs"]["phase"] == "done"
 
 
-def test_presets_and_files_on_the_pages(client, keyed, cfg):
-    from refhandbook import server
+
+
+def test_a_run_the_model_asked_for_is_approved_on_the_approval_page(client, keyed, cfg):
+    """The approvals stay server pages: a run the model asked for gets its grant there (prefilled from
+    a preset when it asked from one); its own page is the pages app's."""
+    from refhandbook import agents_api, server
+    from refhandbook.agents.presets import Presets
     from refhandbook.agents.team import Team
 
     c, tok = client, {"X-Auth-Token": site_token(client.key), "Origin": BASE}
-    page = c.get("/agents/keys", headers=tok).text
-    c.post("/agents/keys/add", data={"provider": "anthropic", "label": "main", "secret": "sk-ant-api03-abcdefghijklmnop",
-                                     "csrf": _csrf(page)}, headers=tok)
-    page = c.get("/agents/presets", headers=tok).text
-    assert "프리셋 (0)" in page
-    form = {"name": "weekly", "goal": "summarize the week to {date}", "title": "weekly", "route0_key": "anthropic/main",
-            "route0_model": "claude-opus-5-5", "route0_lead": "on", "route0_worker": "on", "max_agents": "2",
-            "max_spawns": "2", "max_depth": "1", "max_steps": "10", "max_tokens": "0", "context": "trim",
-            "handoff": "digest", "retention": "verified", "policy": "default", "effort": "", "csrf": _csrf(page)}
-    r = c.post("/agents/presets/save", data=form, headers=tok, follow_redirects=False)
-    assert "ok=" in r.headers["location"]
-    page = c.get("/agents/presets", headers=tok).text
-    assert "프리셋 (1)" in page and "weekly" in page and "value='claude-opus-5-5'" in page  # its routes, to edit
-    r = c.post("/agents/presets/weekly/schedule", data={"cron": "0 9 * * mon", "csrf": _csrf(page)}, headers=tok,
-               follow_redirects=False)
-    assert "ok=" in r.headers["location"] and (cfg.data_dir / "users" / "moon.db.sandbox" / "schedules").exists()
-    r = c.post("/agents/presets/weekly/schedule", data={"cron": "0 9 31 2 *", "csrf": _csrf(page)}, headers=tok,
-               follow_redirects=False)
-    assert "err=" in r.headers["location"]
-    r = c.post("/agents/presets/weekly/run", data={"csrf": _csrf(page)}, headers=tok, follow_redirects=False)
-    run = r.headers["location"].split("?")[0].rsplit("/", 1)[1]
-    t = Team(Workspace(server._user_store("moon")).g)
-    assert t.grant(run)["max_agents"] == 2 and "summarize the week to 20" in t.g.node(run)["content"]
-    assert (cfg.data_dir / "users" / "moon.db.sandbox" / "runs" / run.split(":")[1]).exists()
-    sid = Presets(t.g).schedules()[0]["id"]
-    c.post(f"/agents/schedules/{sid}/toggle", data={"enabled": "0", "csrf": _csrf(page)}, headers=tok)
-    assert not (cfg.data_dir / "users" / "moon.db.sandbox" / "schedules").exists()
-    # the new-run form keeps its settings as a preset when named
-    page = c.get("/agents/runs", headers=tok).text
-    c.post("/agents/runs/new", data={**form, "name": "", "preset": "adhoc", "csrf": _csrf(page)}, headers=tok)
-    assert [p["attrs"]["name"] for p in Presets(t.g).list()] == ["adhoc", "weekly"]
-    # the model lists presets and asks from one; the grant is prefilled, nothing runs
-    from refhandbook import agents_api
-
+    ws = Workspace(server._user_store("moon"))
+    ks = K.KeyStore.for_web(cfg.data_dir)
+    ks.put("moon", "anthropic", "main", "sk-ant-api03-abcdefghijklmnop", models=["claude-opus-5-5", "claude-haiku-5-5"])
+    ks.put("moon", "custom", "gpu", "", fmt="openai-chat", base_url="https://models.example.org/v1", models=["qwen3"])
+    routes = [{"key": "anthropic/main", "model": "claude-opus-5-5", "roles": ["lead"]}] + [
+        {"key": "custom/gpu", "model": "qwen3", "roles": ["worker"]}] * 5
+    Presets(ws.g).save("weekly", "summarize the week", {**_grant(), "routes": routes})
     agents_api.configure(lambda: server._user_store("moon"), server._CALLS)
-    assert "weekly: weekly" in agents_api.agent_run("presets")
     out = agents_api.agent_run("request", preset="weekly")
     asked = re.search(r"run (run:[0-9a-f]+)", out).group(1)
-    assert t.g.node(asked)["attrs"]["phase"] == "requested" and t.g.node(asked)["attrs"]["proposal"]["preset"] == "weekly"
-    assert "value='claude-opus-5-5'" in c.get(f"/agents/runs/{asked}", headers=tok).text
-    # files: the workspace, read only
-    ws = Workspace(server._user_store("moon"))
-    ws.write("out/report.txt", "hello <b>")
-    page = c.get("/agents/files", headers=tok).text
-    assert "out/" in page and str(ws.work) not in page and "/var/lib" not in page  # no server paths on a page
-    assert "report.txt" in c.get("/agents/files?path=out", headers=tok).text
-    assert "hello &lt;b&gt;" in c.get("/agents/files?path=out/report.txt", headers=tok).text
-    escape = c.get("/agents/files?path=../../etc/passwd", headers=tok).text
-    assert "root:" not in escape and "outside the workspace" in escape
-    page = c.get("/agents/presets", headers=tok).text
-    c.post("/agents/presets/weekly/delete", data={"csrf": _csrf(page)}, headers=tok)
-    assert [p["attrs"]["name"] for p in Presets(t.g).list()] == ["adhoc"] and Presets(t.g).schedules() == []
+    assert f"/approvals/runs/{asked}" in out
+    page = c.get(f"/approvals/runs/{asked}", headers=tok).text
+    assert "summarize the week" in page and page.count("name=route") >= 6 * 5  # six routes drawn, not four
+    assert "list='models-custom/gpu'" in page and "<datalist id='models-custom/gpu'><option value='qwen3'>" in page
+    f = {"csrf": _csrf(page), "route0_key": "anthropic/main", "route0_model": "claude-opus-5-5", "route0_lead": "on",
+         **{k: v for i in range(1, 6) for k, v in ((f"route{i}_key", "custom/gpu"), (f"route{i}_model", "qwen3"),
+                                                     (f"route{i}_worker", "on"))},
+         "max_agents": "2", "max_spawns": "4", "max_depth": "1", "max_steps": "10", "max_tokens": "0",
+         "context": "trim", "handoff": "digest", "retention": "verified", "policy": "default", "effort": ""}
+    r = c.post(f"/approvals/runs/{asked}/approve", data=f, headers=tok, follow_redirects=False)
+    assert r.headers["location"].startswith(f"/agents/runs/{asked}")
+    t = Team(ws.g)
+    assert len(t.grant(asked)["routes"]) == 6 and t.g.node(asked)["attrs"]["phase"] == "approved"
+    # approved: nothing to approve any more, the page sends to the run's own
+    r = c.get(f"/approvals/runs/{asked}", headers=tok, follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == f"/agents/runs/{asked}"
+    # another one, rejected
+    other = t.request_run("no", actor="model")
+    r = c.post(f"/approvals/runs/{other}/reject", data={"csrf": _csrf(page)}, headers=tok, follow_redirects=False)
+    assert "ok=" in r.headers["location"] and t.g.node(other)["attrs"]["phase"] == "cancelled"
+    r = c.post(f"/approvals/runs/{other}/approve", data=f, headers={**tok, "Origin": "https://evil.example"},
+               follow_redirects=False)
+    assert r.status_code == 403
+    # until the pages app is published, /agents/ points to the approvals
+    assert c.get("/agents/", headers=tok, follow_redirects=False).headers["location"] == "/approvals"
 
 
-def test_no_agents_page_tells_how_the_site_is_built(client, keyed, cfg):
+def test_no_approval_page_tells_how_the_site_is_built(client, keyed):
     from tests.portal.test_app import BACKEND_WORDS
 
-    c, tok = client, {"X-Auth-Token": site_token(client.key), "Origin": BASE}
-    page = c.get("/agents/keys", headers=tok).text
-    c.post("/agents/keys/add", data={"provider": "anthropic", "label": "main", "secret": "sk-ant-api03-abcdefghijklmnop",
-                                     "csrf": _csrf(page)}, headers=tok)
-    for path in ("/agents", "/agents/runs", "/agents/keys", "/agents/presets", "/agents/files"):
+    from refhandbook import server
+    from refhandbook.agents.team import Team
+
+    c, tok = client, {"X-Auth-Token": site_token(client.key)}
+    asked = Team(Workspace(server._user_store("moon")).g).request_run("look", actor="model")
+    for path in ("/approvals", f"/approvals/runs/{asked}"):
         page = c.get(path, headers=tok).text
         found = BACKEND_WORDS.search(page)
         assert not found, (path, found and page[max(0, found.start() - 80):found.end() + 40])

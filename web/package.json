@@ -1,0 +1,16 @@
+{
+  "name": "site-pages",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "The site's pages: a front end of their own over the services' JSON APIs (docs/site.md).",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.0",
+    "vite": "^7.1.0"
+  }
+}

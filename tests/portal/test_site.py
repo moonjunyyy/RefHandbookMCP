@@ -16,25 +16,45 @@ def load():
 def test_the_shipped_file_declares_the_site():
     s = load()
     assert s.audiences == ("account", "refhandbook", "wordgen")
-    assert {a.id for a in s.apps} >= {"account", "agents", "refhandbook"}
+    assert {a.id for a in s.apps} >= {"account", "agents", "refhandbook", "site"}
+    pages = next(a for a in s.apps if a.id == "site")
+    assert pages.pages == ("/", "/account/", "/agents/") and pages.public and not pages.audience and not pages.card
 
 
-def test_only_the_routes_minted_for_receive_a_token():
-    out = site.render_locations(load(), "m00nny")
+def _blocks(out):
     blocks = dict(re.findall(r"(location [^{]+)\{(.*?)\n\}", out, re.S))
 
     def block(head):
         return next(v for k, v in blocks.items() if k.strip().split("   #")[0].strip() == head)
+    return block
 
-    assert "proxy_set_header X-Auth-Token $auth_token;" in block("location /account/")
-    assert "proxy_pass http://127.0.0.1:8080;" in block("location /account/")  # @@upstream:portal@@
-    assert "proxy_set_header X-Auth-Token $auth_token;" in block("location /agents")
+
+def test_the_pages_take_their_paths_only_once_published():
+    before = _blocks(site.render_locations(load(), "m00nny", live=set()))  # the pages app not published yet
+    assert "proxy_pass http://127.0.0.1:8080;" in before("location /account/")  # the portal's own pages still
+    out = site.render_locations(load(), "m00nny", live={"site"})
+    after = _blocks(out)
+    for page in ("location = /", "location /account/", "location /agents/"):
+        assert after(page).strip().endswith("rewrite ^ /apps/site/index.html last;") and "auth_request" not in after(page)
+    assert out.count("location /account/ {") == 1  # the portal's /account/ gave way, its API and public pages did not
+    assert "proxy_pass http://127.0.0.1:8080;" in after("location /account/api/")
+    assert "auth_request" not in after("location /apps/site/")  # the pages' files are public; the APIs are not
+
+
+def test_only_the_routes_minted_for_receive_a_token():
+    out = site.render_locations(load(), "m00nny")
+    block = _blocks(out)
+    assert "proxy_set_header X-Auth-Token $auth_token;" in block("location /account/api/")
+    assert "proxy_pass http://127.0.0.1:8080;" in block("location /account/api/")  # @@upstream:portal@@
+    for api in ("location /agents/api/", "location /approvals"):
+        assert "proxy_set_header X-Auth-Token $auth_token;" in block(api)
     for public in ("location = /account/request", "location /mcp", "location ^~ /.well-known/oauth-",
                    "location ~ ^/(register|authorize|token|revoke)$"):
         assert 'proxy_set_header X-Auth-Token "";' in block(public) and "auth_request" not in block(public)
     assert "proxy_buffering off;" in block("location /mcp")
     m = site.render_map(load(), "m00nny")
-    assert "~^/agents(/|\\?|$)" in m and "~^/login(\\?|$)" in m and "zone=m00nny_login" in m
+    assert "~^/approvals(/|\\?|$)" in m and "~^/agents/api(/|\\?|$)" in m and "~^/login(\\?|$)" in m
+    assert "zone=m00nny_login" in m
 
 
 def test_the_invitation_sign_up_is_public_and_throttled():

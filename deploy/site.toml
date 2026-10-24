@@ -39,6 +39,21 @@ aliases = ["m00nny.kr"]
 portal_root = "/account"
 
 [[app]]
+id = "site"
+title = "사이트 화면"
+description = "The site's pages (web/): the main page, the account pages and the agents' pages, over the services' APIs."
+static = true
+public = true
+card = false
+build = "web/dist"
+pages = ["/", "@@portal_root@@/", "/agents/"]
+  [[app.route]]
+  path = "/agents"
+  match = "exact"
+  auth = "public"
+  nginx = "return 301 /agents/$is_args$args;"
+
+[[app]]
 id = "account"
 title = "계정"
 description = "프로필과 비밀번호. 관리자는 여기서 사용자, 사용 신청, 초대 링크를 관리합니다."
@@ -56,6 +71,7 @@ link = [{ label = "내 계정", href = "@@portal_root@@/" },
   [[app.route]]
   path = "@@portal_root@@/"
   body = "16k"
+  note = "the portal's own pages, until the site's pages app is published (then it answers this path)"
   [[app.route]]
   path = "@@portal_root@@/api/"
   limit = "api"
@@ -95,16 +111,21 @@ title = "에이전트 · 샌드박스"
 description = "본인 API 키(Claude·OpenAI·Gemini·호환 서버)로 에이전트 팀 실행, 모델이 제안한 규칙의 승인·거절, 샌드박스 정책(쓸 수 있는 명령·네트워크·한도), 스크립트와 작업 현황."
 audience = "refhandbook"
 upstream = "@@upstream:handbook@@"
-menu = "Agents"
-menu_href = "/agents"
-link = [{ label = "승인 화면", href = "/agents" }, { label = "에이전트 실행", href = "/agents/runs" },
-        { label = "API 키", href = "/agents/keys" }]
+menu = "에이전트"
+menu_href = "/agents/"
+link = [{ label = "에이전트 실행", href = "/agents/" }, { label = "프리셋 · 예약", href = "/agents/presets" },
+        { label = "승인", href = "/approvals" }, { label = "API 키", href = "/agents/keys" }]
   [[app.route]]
-  path = "/agents"
+  path = "/approvals"
   limit = "oauth"
   burst = 20
   body = "64k"
-  note = "the approval page, the agent runs (/agents/runs) and the user's API keys (/agents/keys)"
+  note = "the approvals: server-rendered, no script (the user's channel: rules, grants, policies, runs)"
+  [[app.route]]
+  path = "/agents/"
+  limit = "oauth"
+  burst = 20
+  note = "until the site's pages app is published: the handbook points to the approvals"
   [[app.route]]
   path = "/agents/api/"
   limit = "api"

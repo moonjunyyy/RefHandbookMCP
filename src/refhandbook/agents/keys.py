@@ -39,6 +39,8 @@ PROVIDERS = ("anthropic", "openai", "gemini", "custom")
 # the wire format each provider speaks; a custom key names its own
 FORMATS = ("anthropic", "openai", "openai-chat", "gemini")
 NATIVE_FORMAT = {"anthropic": "anthropic", "openai": "openai", "gemini": "gemini"}
+# offered for a key whose server gives no model list (by wire format); a listed key offers its list
+SUGGESTED_MODELS = {"anthropic": ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1"]}
 LABEL_RE = re.compile(r"^[A-Za-z0-9._-]{1,32}$")
 INFO = b"refhandbook agent key v1"
 
@@ -177,6 +179,11 @@ class KeyInfo:
     @property
     def ref(self) -> str:
         return f"{self.provider}/{self.label}"
+
+    @property
+    def offered(self) -> list[str]:
+        """The models to choose from with this key: its server's list, else the format's suggestions."""
+        return list(self.models) or list(SUGGESTED_MODELS.get(self.format, []))
 
 
 @dataclass

@@ -38,20 +38,20 @@ def grant(*routes, **kw):
 def api(client, keyed):
     checked, _ = keyed
     # two keys, each with its own models (the provider's list, checked at registration)
-    from refhandbook.agents import pages
+    from refhandbook.agents import providers
 
     async def models_of(provider, secret, fmt, base):
         return ({"anthropic": ["claude-opus-5-5", "claude-haiku-5-5"]}.get(provider, ["qwen3-32b", "llama4"]), "ok")
 
-    pages_check = pages._check_key
-    pages._check_key = models_of
+    pages_check = providers.check_key
+    providers.check_key = models_of
     r = call(client, "POST", "/keys", {"provider": "anthropic", "label": "main", "secret": "sk-ant-api03-abcdefghijklmnop"})
     assert r.status_code == 201, r.text
     r = call(client, "POST", "/keys", {"provider": "custom", "label": "gpu", "secret": "", "format": "openai-chat",
                                        "base_url": "https://models.example.org/v1"})
     assert r.status_code == 201, r.text
     yield client
-    pages._check_key = pages_check
+    providers.check_key = pages_check
 
 
 def test_the_api_needs_the_sign_in_and_the_pages_own_writes(client, keyed):
@@ -104,7 +104,7 @@ def test_a_run_takes_as_many_routes_as_it_needs(api, cfg):
     # a run the model asked for: the API shows it and where to approve it, and cannot approve it
     asked = t.request_run("look", actor="model", proposal={"max_agents": 2})
     d = call(api, "GET", f"/runs/{asked}").json()
-    assert d["phase"] == "requested" and d["approve_url"] == f"/agents/runs/{asked}" and d["proposal"]["max_agents"] == 2
+    assert d["phase"] == "requested" and d["approve_url"] == f"/approvals/runs/{asked}" and d["proposal"]["max_agents"] == 2
 
 
 def test_presets_and_schedules(api):

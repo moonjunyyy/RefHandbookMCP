@@ -10,6 +10,7 @@ src/portal/               the site: facts (what derives from the realm), the sit
                           installer, the sign-in (SSO), the account portal, the apps' storage
 src/refhandbook/          the handbook: MCP server (OAuth, consent after the site sign-in),
                           cards, research ledger, kernel, agents and their sandbox runner
+web/                      the site's pages (TypeScript, vite): /, /account/…, /agents/… over the APIs
 apps/                     hosted apps (static builds published at /apps/<id>/)
 deploy/site.toml          the site file
 deploy/templates/         every file the installer renders (units, nginx, env, directory ACLs)
@@ -22,4 +23,5 @@ docs/                     site.md (the site and portal), handbook.md, kernel.md,
 sudo deploy/install.sh --check     # what it derives, before touching anything
 sudo deploy/install.sh             # install or update everything
 uv run pytest                      # both suites
+cd web && npm ci && npm run build  # the pages (published by the installer)
 ```

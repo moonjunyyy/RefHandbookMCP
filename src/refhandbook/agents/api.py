@@ -40,6 +40,7 @@ from portal.api import ApiError, answer, bad, body, endpoint, missing, unauthori
 
 from ..store import Handbook, HandbookError
 from . import cron, crew
+from . import providers as P
 from . import keys as K
 from .presets import Presets
 from .team import (CONTEXT_LEVELS, DEFAULT_GRANT, EFFORTS, HANDOFF_LEVELS, MAX_ROUTES, RETENTION_LEVELS, ROLES,
@@ -47,14 +48,12 @@ from .team import (CONTEXT_LEVELS, DEFAULT_GRANT, EFFORTS, HANDOFF_LEVELS, MAX_R
 from .workspace import Workspace
 
 PREFIX = "/agents/api/v1"
-# offered for a key whose provider gives no model list (or before one is fetched)
-SUGGESTED = {"anthropic": ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1"]}
 
 
 def _key(k: K.KeyInfo) -> dict[str, Any]:
     return {"ref": k.ref, "provider": k.provider, "label": k.label, "format": k.format, "base_url": k.base_url,
             "fingerprint": k.fingerprint, "status": k.status, "created": k.created, "last_used": k.last_used,
-            "models": k.models or SUGGESTED.get(k.format if k.provider == "custom" else k.provider, []),
+            "models": k.offered,
             "models_listed": bool(k.models)}
 
 
@@ -131,7 +130,7 @@ def install(m: Any, *, stores: Callable[[str], Handbook], who: Callable[[Request
         return g
 
     def approve_url(run: str) -> str:
-        return f"/agents/runs/{run}"
+        return f"/approvals/runs/{run}"
 
     # ── who, and the vocabulary ──────────────────────────────────────────
 
@@ -157,8 +156,6 @@ def install(m: Any, *, stores: Callable[[str], Handbook], who: Callable[[Request
 
     @route("/keys", ["POST"])
     async def keys_add(request: Request) -> Any:
-        from .pages import _check_key
-
         uid = user(request)
         d = await body(request)
         provider, label = str(d.get("provider", "")), str(d.get("label", "")).strip()
@@ -166,7 +163,7 @@ def install(m: Any, *, stores: Callable[[str], Handbook], who: Callable[[Request
         ks = keystore()
         if ks.public is None:
             raise ApiError(503, "unavailable", "keys cannot be registered until the administrator finishes the setup")
-        models, status = await _check_key(provider, secret, fmt, base)
+        models, status = await P.check_key(provider, secret, fmt, base)
         info = await anyio.to_thread.run_sync(lambda: ks.put(uid, provider, label, secret, fmt=fmt, base_url=base,
                                                              models=models))
         if status != "ok":

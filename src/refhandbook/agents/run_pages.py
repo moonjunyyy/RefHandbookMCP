@@ -20,15 +20,13 @@ from typing import Any
 
 from ..store import HandbookError
 from .keys import FORMATS, PROVIDERS, KeyInfo
-from .team import CONTEXT_LEVELS, DEFAULT_GRANT, EFFORTS, HANDOFF_LEVELS, RETENTION_LEVELS, ROLES, Team
+from .team import CONTEXT_LEVELS, DEFAULT_GRANT, EFFORTS, HANDOFF_LEVELS, MAX_ROUTES, RETENTION_LEVELS, ROLES, Team
 
 ROUTE_ROWS = 4
 PROVIDER_NAMES = {"anthropic": "Claude (Anthropic)", "openai": "OpenAI", "gemini": "Gemini (Google)",
                   "custom": "Custom (표준 형식 서버)"}
 FORMAT_NAMES = {"anthropic": "Anthropic Messages", "openai": "OpenAI Responses",
                 "openai-chat": "OpenAI Chat Completions (vLLM, Ollama, OpenRouter …)", "gemini": "Gemini generateContent"}
-# offered in the model field when a key's own list is empty (the provider's list call failed or is not offered)
-SUGGESTED = {"anthropic": ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1"]}
 ROLE_NAMES = {"lead": "리드", "worker": "워커", "verifier": "검증"}
 PHASE_TAGS = {"requested": "warn", "approved": "", "running": "ok", "done": "ok", "cancelled": "bad", "failed": "bad"}
 PHASE_NAMES = {"requested": "승인 대기", "approved": "시작 대기", "running": "실행 중", "done": "완료",
@@ -57,7 +55,7 @@ def _flash(q: Any) -> str:
 
 
 def nav(here: str) -> str:
-    links = (("/agents", "승인 · 샌드박스"), ("/agents/runs", "에이전트 실행"), ("/agents/presets", "프리셋 · 예약"),
+    links = (("/approvals", "승인 · 샌드박스"), ("/agents/", "에이전트 실행"), ("/agents/presets", "프리셋 · 예약"),
              ("/agents/files", "파일"), ("/agents/keys", "API 키"))
     return "<nav class='chips'>" + "".join(
         f"<a class='chip{' warn' if href == here else ''}' href='{href}'>{label}</a>" for href, label in links) + "</nav>"
@@ -74,55 +72,17 @@ def _select(name: str, options: list[tuple[str, str]], value: str = "", attrs: s
         + "</select>")
 
 
-# ── keys ─────────────────────────────────────────────────────────────────
-
-
-def keys_page(uid: str, keys: list[KeyInfo], hidden: str, q: Any, can_add: str | None) -> str:
-    rows = "".join(
-        f"<tr><td><b>{_e(k.ref)}</b></td><td>{_e(FORMAT_NAMES.get(k.format, k.format))}"
-        + (f"<br><span class='muted small'>{_e(k.base_url)}</span>" if k.base_url else "")
-        + f"</td><td><code>{_e(k.fingerprint)}</code></td>"
-        f"<td><span class='tag {'ok' if k.status == 'ok' else 'warn' if k.status == 'unchecked' else 'bad'}'>"
-        f"{_e(k.status)}</span></td><td>{len(k.models) or '-'}</td><td>{_day(k.created)}</td><td>{_day(k.last_used)}</td>"
-        f"<td><form class=inline method=post action='/agents/keys/delete'>{hidden}"
-        f"<input type=hidden name=ref value='{_e(k.ref)}'><button class=secondary>삭제</button></form></td></tr>"
-        for k in keys)
-    table = ("<div class='table-wrap'><table><thead><tr><th>키</th><th>형식</th><th>지문</th><th>상태</th><th>모델</th>"
-             f"<th>등록</th><th>마지막 사용</th><th></th></tr></thead><tbody>{rows}</tbody></table></div>"
-             if keys else "<p class='empty muted'>등록한 키가 없습니다.</p>")
-    if can_add:
-        add = f"<p class='flash error'>지금은 키를 등록할 수 없습니다: {_e(can_add)}</p>"
-    else:
-        add = (f"<form method=post action='/agents/keys/add' autocomplete=off>{hidden}"
-               "<div class='cols'><label>제공자 "
-               + _select("provider", [(p, PROVIDER_NAMES[p]) for p in PROVIDERS])
-               + "</label><label>이름 <span class='muted small'>영문·숫자·.-_ (예: main, work)</span>"
-               "<input name=label required pattern='[A-Za-z0-9._-]{1,32}' value='main'></label></div>"
-               "<label>API 키 <span class='muted small'>Custom 서버가 인증을 받지 않으면 비워 두세요</span>"
-               "<input name=secret type=password autocomplete=new-password></label>"
-               "<details><summary>Custom 서버 설정</summary><div class='cols'><label>형식 "
-               + _select("format", [(f, FORMAT_NAMES[f]) for f in FORMATS], "openai-chat")
-               + "</label><label>Base URL <span class='muted small'>버전 경로까지 (예: https://openrouter.ai/api/v1)"
-               "</span><input name=base_url placeholder='https://…/v1'></label></div>"
-               "<p class='muted small'>사설 주소나 http 서버는 관리자가 허용한 곳만 쓸 수 "
-               "있습니다.</p></details>"
-               "<div class='actions'><button>확인하고 등록</button></div></form>")
-    return (_head("API 키", "에이전트가 쓰는 본인의 키입니다. 키는 등록 즉시 암호화되어 에이전트 실행에만 쓰이고, "
-                  "모델에게는 보이지 않습니다.", "/agents/keys", uid)
-            + _flash(q)
-            + f"<section class='card section'><h2>등록된 키 ({len(keys)})</h2>{table}</section>"
-            + "<section class='card section'><h2>키 등록</h2><p class='muted small'>등록할 때 제공자의 모델 목록을 한 번 "
-              f"불러와 키를 확인합니다. 그 목록은 실행 화면의 모델 선택에 쓰입니다.</p>{add}</section>")
-
-
 # ── runs ─────────────────────────────────────────────────────────────────
 
 
 def _models(keys: list[KeyInfo]) -> str:
-    names: set[str] = set()
-    for k in keys:
-        names |= set(k.models) or set(SUGGESTED.get(k.format if k.provider == "custom" else k.provider, []))
-    return "<datalist id=models>" + "".join(f"<option value='{_e(m)}'>" for m in sorted(names)) + "</datalist>"
+    """A list of models per key (a row's model field offers its key's), and one of them all, each
+    labelled with its key, for a row with no key yet."""
+    out = [f"<datalist id='models-{_e(k.ref)}'>" + "".join(f"<option value='{_e(m)}'>" for m in k.offered)
+           + "</datalist>" for k in keys]
+    out.append("<datalist id='models'>" + "".join(f"<option value='{_e(m)}' label='{_e(k.ref)}'>"
+                                                  for k in keys for m in k.offered) + "</datalist>")
+    return "".join(out)
 
 
 def _routes_prefill(keys: list[KeyInfo], proposal: dict[str, Any]) -> list[dict[str, Any]]:
@@ -131,7 +91,7 @@ def _routes_prefill(keys: list[KeyInfo], proposal: dict[str, Any]) -> list[dict[
     if not keys:
         return []
     if isinstance(proposal.get("routes"), list) and proposal["routes"]:
-        return [dict(r) for r in proposal["routes"]][:ROUTE_ROWS]
+        return [dict(r) for r in proposal["routes"]][:MAX_ROUTES]
     roles = proposal.get("roles") if isinstance(proposal.get("roles"), dict) else {}
     by_model: dict[str, list[str]] = {}
     for role, model in roles.items():
@@ -144,7 +104,7 @@ def _routes_prefill(keys: list[KeyInfo], proposal: dict[str, Any]) -> list[dict[
         out[0]["roles"].append("lead")
     if not out:
         k = keys[0]
-        model = (SUGGESTED.get(k.provider) or sorted(k.models) or [""])[0]
+        model = (k.offered or [""])[0]
         out = [{"key": k.ref, "model": model, "roles": list(ROLES)}]
     return out
 
@@ -162,12 +122,13 @@ def grant_form(action: str, keys: list[KeyInfo], policies: list[str], hidden: st
     pre = _routes_prefill(keys, proposal)
     key_opts = [("", "—")] + [(k.ref, f"{k.ref} ({PROVIDER_NAMES[k.provider].split(' ')[0]})") for k in keys]
     rows = []
-    for i in range(ROUTE_ROWS):
+    for i in range(min(MAX_ROUTES, max(ROUTE_ROWS, len(pre) + 2))):  # no script here: the rows are drawn
         r = pre[i] if i < len(pre) else {"key": "", "model": "", "roles": []}
         checks = "".join(f"<label class='check'><input type=checkbox name=route{i}_{role}"
                          f"{' checked' if role in r['roles'] else ''}> {ROLE_NAMES[role]}</label>" for role in ROLES)
         rows.append(f"<tr><td>{i + 1}</td><td>{_select(f'route{i}_key', key_opts, r['key'])}</td>"
-                    f"<td><input name=route{i}_model list=models value='{_e(r['model'])}' placeholder='모델'></td>"
+                    f"<td><input name=route{i}_model list='{'models-' + _e(r['key']) if r['key'] else 'models'}' "
+                    f"value='{_e(r['model'])}' placeholder='모델'></td>"
                     f"<td class='roles'>{checks}</td></tr>")
     routes = ("<div class='table-wrap'><table class='routes'><thead><tr><th>순서</th><th>키</th><th>모델</th><th>역할</th>"
               f"</tr></thead><tbody>{''.join(rows)}</tbody></table></div>{_models(keys)}")
@@ -203,7 +164,7 @@ def parse_grant(f: dict[str, str], keys: list[KeyInfo]) -> dict[str, Any]:
     """The grant from the form; the keys must be the user's (Team.approve checks the rest)."""
     mine = {k.ref for k in keys}
     routes = []
-    for i in range(ROUTE_ROWS):
+    for i in range(MAX_ROUTES):
         key, model = f.get(f"route{i}_key", "").strip(), f.get(f"route{i}_model", "").strip()
         if not key and not model:
             continue
@@ -223,34 +184,6 @@ def parse_grant(f: dict[str, str], keys: list[KeyInfo]) -> dict[str, Any]:
         if k in f:
             grant[k] = f[k]
     return grant
-
-
-def runs_page(uid: str, t: Team, keys: list[KeyInfo], policies: list[str], hidden: str, q: Any) -> str:
-    runs = t.runs()
-    rows = []
-    for r in runs[:100]:
-        a = r["attrs"]
-        phase = a.get("phase", "")
-        rows.append(f"<tr><td><a href='/agents/runs/{_e(r['id'])}'><code>{_e(r['id'])}</code></a></td>"
-                    f"<td class='wrap'>{_e(a.get('title', ''))}</td>"
-                    f"<td><span class='tag {PHASE_TAGS.get(phase, '')}'>{_e(PHASE_NAMES.get(phase, phase))}</span></td>"
-                    f"<td>{len(t.agents(r['id']))}</td><td>{_e(_tokens(t.run_usage(r['id'])))}</td>"
-                    f"<td>{_e(r['author'] if r['author'] != 'kernel' else r.get('origin', ''))}</td></tr>")
-    table = ("<div class='table-wrap'><table><thead><tr><th>실행</th><th>제목</th><th>상태</th><th>에이전트</th>"
-             f"<th>토큰</th><th>요청</th></tr></thead><tbody>{''.join(rows)}</tbody></table></div>"
-             if rows else "<p class='empty muted'>아직 실행이 없습니다.</p>")
-    waiting = sum(1 for r in runs if r["attrs"].get("phase") == "requested")
-    return (_head("에이전트 실행", "목표와 한도를 정해 에이전트 팀을 띄웁니다. Claude가 agent_run으로 요청한 실행도 "
-                  "여기서 승인해야 시작됩니다.", "/agents/runs", uid)
-            + _flash(q)
-            + (f"<p class='flash'>승인을 기다리는 요청이 {waiting}건 있습니다.</p>" if waiting else "")
-            + f"<section class='card section'><h2>실행 목록 ({len(runs)})</h2>{table}</section>"
-            + "<section class='card section' id='new'><h2>새 실행</h2>"
-            + grant_form("/agents/runs/new", keys, policies, hidden, goal=True, submit="시작",
-                         head="<label>프리셋으로도 저장 <span class='muted small'>이름을 적으면 같은 설정을 프리셋으로 "
-                              "남깁니다 (선택)</span><input name=preset pattern='[a-z0-9][a-z0-9._\\-]*' "
-                              "placeholder='예: daily-report'></label>")
-            + "</section>")
 
 
 def _tokens(u: dict[str, int]) -> str:
@@ -281,19 +214,19 @@ def run_page(uid: str, t: Team, run: str, keys: list[KeyInfo], policies: list[st
     head = (f"<div class='page-head'><h1>{_e(a.get('title') or run)}</h1>"
             f"<p class='muted'><code>{_e(run)}</code> <span class='tag {PHASE_TAGS.get(phase, '')}'>"
             f"{_e(PHASE_NAMES.get(phase, phase))}</span> · 요청 {_e(r.get('origin') or r['author'])}</p>"
-            f"{nav('/agents/runs')}</div>")
+            f"{nav('/approvals')}</div>")
     out = [head, _flash(q), f"<section class='card section'><h2>목표</h2><p>{_e(r['content'])}</p>"]
     if a.get("error"):
         out.append(f"<p class='flash error'>{_e(a['error'])}</p>")
     out.append("</section>")
-    cancel = (f"<form class=inline method=post action='/agents/runs/{_e(run)}/cancel'>{hidden}"
+    cancel = (f"<form class=inline method=post action='/approvals/runs/{_e(run)}/reject'>{hidden}"
               "<button class=secondary>{label}</button></form>")
     if phase == "requested" and r["state"] == "open":
         sugg = a.get("proposal") or {}
         out.append("<section class='card section'><h2>승인</h2><p class='muted small'>모델이 제안한 값으로 채워져 "
                    "있습니다. 키·모델·한도를 정해 승인하면 시작합니다.</p>"
-                   + (grant_form(f"/agents/runs/{run}/approve", keys, policies, hidden, goal=False, proposal=sugg,
-                                 reject=f"/agents/runs/{run}/cancel") if keys
+                   + (grant_form(f"/approvals/runs/{run}/approve", keys, policies, hidden, goal=False, proposal=sugg,
+                                 reject=f"/approvals/runs/{run}/reject") if keys
                       else grant_form("", keys, policies, hidden, goal=False)
                       + f"<div class='actions'>{cancel.replace('{label}', '거절')}</div>")
                    + "</section>")
@@ -329,94 +262,3 @@ def run_page(uid: str, t: Team, run: str, keys: list[KeyInfo], policies: list[st
     return "".join(out)
 
 
-# ── presets and schedules ────────────────────────────────────────────────
-
-
-def _when(ts: float | None) -> str:
-    return time.strftime("%m-%d %H:%M", time.localtime(ts)) if ts else "-"
-
-
-PRESET_NAME = "<label>이름 <span class='muted small'>영문 소문자·숫자·.-_</span><input name=name required " \
-              "pattern='[a-z0-9][a-z0-9._\\-]*' value='{v}' {ro}></label>"
-
-
-def presets_page(uid: str, presets: list[dict[str, Any]], schedules: list[dict[str, Any]], keys: list[KeyInfo],
-                 policies: list[str], hidden: str, q: Any) -> str:
-    cards = []
-    for p in presets:
-        a = p["attrs"]
-        name = a["name"]
-        g = a["grant"]
-        routes = ", ".join(f"{r['model']} ({'/'.join(ROLE_NAMES[x] for x in r['roles'])})" for r in g["routes"])
-        mine = [s for s in schedules if s["attrs"]["preset"] == name]
-        rows = "".join(
-            f"<tr><td><code>{_e(s['attrs']['cron'])}</code></td>"
-            f"<td><span class='tag {'ok' if s['attrs'].get('enabled') else ''}'>{'켜짐' if s['attrs'].get('enabled') else '꺼짐'}"
-            f"</span></td><td>{_when(s['attrs'].get('next_at')) if s['attrs'].get('enabled') else '-'}</td>"
-            f"<td>{_when(s['attrs'].get('last_at'))}"
-            + (f" <a href='/agents/runs/{_e(s['attrs']['last_run'])}'>실행</a>" if s['attrs'].get('last_run') else "")
-            + f"</td><td class='wrap muted small'>{_e(s['attrs'].get('last_note', ''))}</td><td>"
-            f"<form class=inline method=post action='/agents/schedules/{_e(s['id'])}/toggle'>{hidden}"
-            f"<input type=hidden name=enabled value='{'0' if s['attrs'].get('enabled') else '1'}'>"
-            f"<button class=secondary>{'끄기' if s['attrs'].get('enabled') else '켜기'}</button></form> "
-            f"<form class=inline method=post action='/agents/schedules/{_e(s['id'])}/delete'>{hidden}"
-            f"<button class=secondary>삭제</button></form></td></tr>" for s in mine)
-        sched = ((f"<div class='table-wrap'><table><thead><tr><th>cron</th><th>상태</th><th>다음</th><th>마지막</th>"
-                  f"<th>메모</th><th></th></tr></thead><tbody>{rows}</tbody></table></div>") if mine else "")
-        edit = grant_form(f"/agents/presets/save", keys, policies, hidden, goal=True, proposal=g, submit="저장",
-                          values={"goal": p["content"], "title": a["title"]},
-                          head=PRESET_NAME.format(v=_e(name), ro="readonly")) if keys else ""
-        cards.append(
-            f"<div class='item'><div class='item-head'><b>{_e(a['title'])}</b><code>{_e(name)}</code>"
-            f"<span class='muted small'>{_e(routes)} · 동시 {g['max_agents']} · 턴 {g['max_steps']}</span></div>"
-            f"<p class='small'>{_e(p['content'])}</p>"
-            f"<div class='actions'><form class=inline method=post action='/agents/presets/{_e(name)}/run'>{hidden}"
-            f"<button>지금 실행</button></form>"
-            f"<form class=inline method=post action='/agents/presets/{_e(name)}/schedule'>{hidden}"
-            f"<input name=cron required placeholder='0 9 * * mon-fri' class='cron'><button class=secondary>예약 추가</button>"
-            f"</form>"
-            f"<form class=inline method=post action='/agents/presets/{_e(name)}/delete'>{hidden}"
-            f"<button class=secondary>삭제</button></form></div>{sched}"
-            f"<details class='panel'><summary>설정 고치기</summary>{edit}</details></div>")
-    body = "".join(cards) or "<p class='empty muted'>아직 프리셋이 없습니다. 아래에서 만들거나, 새 실행을 시작할 때 "\
-                              "이름을 적어 저장하세요.</p>"
-    return (_head("프리셋 · 예약", "자주 하는 실행을 목표와 허가째로 저장해 두고, 한 번에 실행하거나 정해진 때에 저절로 "
-                  "실행되게 합니다. 예약은 미리 해 둔 승인입니다: 때가 되면 이 설정 그대로 실행이 시작됩니다.",
-                  "/agents/presets", uid)
-            + _flash(q)
-            + f"<section class='card section'><h2>프리셋 ({len(presets)})</h2>"
-              "<p class='muted small'>예약은 cron 다섯 칸(분 시 일 월 요일, 서버 시간)입니다. 예: <code>0 9 * * mon-fri</code> "
-              "평일 9시, <code>*/30 * * * *</code> 30분마다, <code>@daily</code> 매일 0시. 목표에 <code>{date}</code>, "
-              "<code>{time}</code>을 쓰면 실행한 때로 바뀝니다. 앞 실행이 아직 돌고 있으면 그 회차는 건너뜁니다.</p>"
-              f"{body}</section>"
-            + "<section class='card section'><h2>새 프리셋</h2>"
-            + grant_form("/agents/presets/save", keys, policies, hidden, goal=True, submit="저장",
-                         head=PRESET_NAME.format(v="", ro=""),
-                         buttons="<button class=secondary name=then value=run>저장하고 실행</button>")
-            + "</section>")
-
-
-# ── the workspace's files ────────────────────────────────────────────────
-
-
-def files_page(uid: str, rel: str, rows: list[tuple[str, str, int]] | None, text: str | None, size: int,
-               q: Any) -> str:
-    """A directory listing (`rows`) or a file (`text`, None when it is not text) of the workspace."""
-    parts = [x for x in rel.split("/") if x not in ("", ".")]
-    crumbs = ["<a href='/agents/files'>/work</a>"] + [
-        f"<a href='/agents/files?path={_e('/'.join(parts[:i + 1]))}'>{_e(x)}</a>" for i, x in enumerate(parts)]
-    head = (_head("파일", "샌드박스의 <code>/work</code>: 스크립트와 에이전트가 쓰는 작업 공간입니다(읽기 전용으로 "
-                  "보여 줍니다). 에이전트 실행은 <code>/work/runs/&lt;실행&gt;</code>에서 일합니다.", "/agents/files", uid)
-            + _flash(q)
-            + f"<section class='card section'><h2>{' / '.join(crumbs)}</h2>")
-    if rows is not None:
-        base = "/".join(parts)
-        items = "".join(
-            f"<tr><td class='wrap'><a href='/agents/files?path="
-            f"{_e((base + '/' if base else '') + name)}'>{_e(name)}{'/' if k == 'dir' else ''}</a></td>"
-            f"<td class='muted small num'>{'' if k == 'dir' else f'{n:,} B'}</td></tr>" for name, k, n in rows)
-        return head + (f"<div class='table-wrap'><table><tbody>{items}</tbody></table></div>" if rows
-                       else "<p class='empty muted'>비어 있습니다.</p>") + "</section>"
-    if text is None:
-        return head + f"<p class='muted'>텍스트가 아닌 파일입니다 ({size:,} B).</p></section>"
-    return head + f"<p class='muted small'>{size:,} B</p><pre class='wrap'>{_e(text)}</pre></section>"

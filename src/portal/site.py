@@ -59,6 +59,7 @@ class Route:
     #                      WWW-Authenticate through (for clients that answer it themselves)
     nginx: str = ""
     note: str = ""
+    page: bool = False  # one of a pages app's paths (served only once that app is published)
 
 
 @dataclass(frozen=True)
@@ -79,6 +80,11 @@ class App:
     # /apps/<id>/api/. Their routes are generated; the app's audience is its id.
     static: bool | str = False
     storage: bool = False
+    # A static app that is the site's pages: every path here (and below, but "/" exactly) serves its
+    # index.html; it reads the services' APIs. `public`: its files need no sign-in (the APIs do).
+    pages: tuple[str, ...] = ()
+    public: bool = False
+    build: str = ""  # its built files in the code tree (web/dist): the installer publishes them when there
     routes: tuple[Route, ...] = ()
 
 
@@ -149,6 +155,7 @@ def load(path: str | Path, f=None) -> Site:  # noqa: ANN001 — f: portal.facts.
         routes = tuple(_route(d.get("id", "?"), r) for r in d.pop("route", []))
         links = tuple(Link(**{**ln, "groups": tuple(ln.get("groups", ()))}) for ln in d.pop("link", []))
         d["groups"] = tuple(d.get("groups", ()))
+        d["pages"] = tuple(d.get("pages", ()))
         known = set(App.__dataclass_fields__) - {"routes", "links"}
         bad = set(d) - known
         if bad:
@@ -164,12 +171,12 @@ def load(path: str | Path, f=None) -> Site:  # noqa: ANN001 — f: portal.facts.
             raise SiteError(f"app {a.id} is declared twice")
         seen_ids.add(a.id)
         for r in a.routes:
-            key = (r.match, r.path)
+            key = (r.match, r.path, r.page)  # a page path stands in for another route once its app is live
             if key in seen_paths:
                 raise SiteError(f"route {r.match} {r.path} is declared twice")
             seen_paths.add(key)
-            if not (r.upstream or a.upstream) and "alias" not in r.nginx and "return" not in r.nginx:
-                raise SiteError(f"app {a.id}: route {r.path} has no upstream (and no alias/return of its own)")
+            if not (r.upstream or a.upstream) and not any(d in r.nginx for d in ("alias", "return", "rewrite")):
+                raise SiteError(f"app {a.id}: route {r.path} has no upstream (and no alias/return/rewrite of its own)")
         apps.append(a)
     return Site(tuple(apps))
 
@@ -180,6 +187,8 @@ def _hosted(a: App, f) -> App:  # noqa: ANN001 — f: portal.facts.Facts
 
     if a.audience and a.audience != a.id:
         raise SiteError(f"app {a.id}: a hosted app's audience is its id ({a.id}), not {a.audience!r}")
+    # a public app (the site's pages) reads the services' own APIs: no token is minted for it
+    audience = "" if a.public and not a.storage else a.id
     base = f"/apps/{a.id}"
     routes = []
     if a.storage:
@@ -190,11 +199,17 @@ def _hosted(a: App, f) -> App:  # noqa: ANN001 — f: portal.facts.Facts
         if not root.startswith("/") or any(c in root for c in "{};\n "):
             raise SiteError(f"app {a.id}: static is true or an absolute directory, not {root!r}")
         routes += [Route(path=base, match="exact", auth="public", nginx=f"return 301 {base}/$is_args$args;"),
-                   Route(path=f"{base}/", nginx=f"alias {root.rstrip('/')}/;\nindex index.html;\n"
-                                                f"try_files $uri {base}/index.html;",
+                   Route(path=f"{base}/", auth="public" if a.public else "site",
+                         nginx=f"alias {root.rstrip('/')}/;\nindex index.html;\ntry_files $uri {base}/index.html;",
                          note="its built files")]
+    for page in a.pages:
+        if not a.static or not page.startswith("/") or any(c in page for c in "{};\n "):
+            raise SiteError(f"app {a.id}: pages are paths (/, /account/) of a static app")
+        # the page's address stays; nginx answers it with the app's index.html, which routes itself
+        routes.append(Route(path=page, match="exact" if page == "/" else "prefix", auth="public", page=True,
+                            nginx=f"rewrite ^ {base}/index.html last;", note="the site's pages (an app)"))
     links = a.links or ((Link("열기", f"{base}/"),) if a.static else ())
-    return replace(a, audience=a.id, links=links, routes=(*routes, *a.routes))
+    return replace(a, audience=audience, links=links, routes=(*routes, *a.routes))
 
 
 # ── nginx ────────────────────────────────────────────────────────────────
@@ -253,13 +268,23 @@ def _location(a: App, r: Route, name: str) -> list[str]:
     return [f"{head} {{{note}", *[f"    {b}" for b in body], "}"]
 
 
-def render_locations(site: Site, name: str) -> str:
+def page_paths(site: Site, live: set[str] | None = None) -> set[str]:
+    """The paths the site's pages apps answer (of those `live`: published; None: every one)."""
+    return {r.path for a in site.apps if live is None or a.id in live for r in a.routes if r.page}
+
+
+def render_locations(site: Site, name: str, live: set[str] | None = None) -> str:
+    """Every app's locations. A pages app's page paths only if it is `live` (its build is published:
+    until then those paths stay with whatever served them before). None: every one."""
     out = ["# Generated by the installer (portal/deploy.py) from the site file: edit that, not this.",
            "# Included inside the site's server block."]
+    taken = page_paths(site, live)
     for a in site.apps:
-        if not a.routes:
+        routes = [r for r in a.routes if (not r.page or live is None or a.id in live)
+                  and (r.page or (r.match, r.path) not in {("prefix", p) for p in taken})]
+        if not routes:
             continue
         out += ["", f"# ── {a.id}: {a.title} " + "─" * max(0, 60 - len(a.id) - len(a.title))]
-        for r in a.routes:
+        for r in routes:
             out += _location(a, r, name)
     return "\n".join(out) + "\n"

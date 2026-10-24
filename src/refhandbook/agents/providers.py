@@ -35,7 +35,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from .http import Client, Response
+from .http import Client, HttpError, Response
 
 ANTHROPIC_URL = "https://api.anthropic.com/v1"
 OPENAI_URL = "https://api.openai.com/v1"
@@ -549,3 +549,35 @@ def adapter(fmt: str, base_url: str = "") -> Adapter:
         return ADAPTERS[fmt](base_url or None)
     except KeyError as e:
         raise ProviderError(f"no adapter for format {fmt!r}") from e
+
+
+async def check_key(provider: str, secret: str, fmt: str, base: str) -> tuple[list[str], str]:
+    """Check a key once with the provider's model list: (models, "ok"); a refused key raises; a
+    provider that cannot be reached now gives ([], "unchecked") (the runner finds out on use)."""
+    from . import keys as K
+    from .http import Client
+
+    if provider not in K.PROVIDERS:
+        raise K.KeyError_("제공자를 고르세요")
+    if provider == "custom":
+        if fmt not in K.FORMATS:
+            raise K.KeyError_("Custom 서버의 형식을 고르세요")
+        base = K.check_base_url(base)
+        try:
+            await check_endpoint(base)
+        except EndpointRefused as e:
+            raise K.KeyError_(f"이 주소는 쓸 수 없습니다: {e}") from e
+    else:
+        fmt, base = K.NATIVE_FORMAT[provider], ""
+    try:
+        async with Client(timeout=15.0, workers=2) as http:
+            models = await adapter(fmt, base).models(http, secret)
+        return models, "ok"
+    except ProviderError as e:
+        if e.auth:
+            raise K.KeyError_(f"제공자가 키를 거부했습니다 ({e.status})") from e
+        if e.status == 404:  # no model list on this server: the key is not refused
+            return [], "unchecked"
+        raise K.KeyError_(K.scrub(f"키를 확인하지 못했습니다: {e}", [secret])[:300]) from e
+    except (HttpError, ValueError):
+        return [], "unchecked"

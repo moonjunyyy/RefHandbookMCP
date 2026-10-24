@@ -483,11 +483,11 @@ def _csrf(page):
 
 def test_the_approval_page_needs_the_site_sign_in_and_an_allowed_account(client):
     c, key = client, client.key
-    r = c.get("/agents", follow_redirects=False)
-    assert r.status_code == 303 and r.headers["location"] == "/auth/login?next=/agents"
-    r = c.get("/agents", headers={"X-Auth-Token": site_token(key, uid="nobody")}, follow_redirects=False)
+    r = c.get("/approvals", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/auth/login?next=/approvals"
+    r = c.get("/approvals", headers={"X-Auth-Token": site_token(key, uid="nobody")}, follow_redirects=False)
     assert r.status_code == 303  # signed in, but not an account of this server
-    page = c.get("/agents", headers={"X-Auth-Token": site_token(key)}).text
+    page = c.get("/approvals", headers={"X-Auth-Token": site_token(key)}).text
     assert "<b>moon</b>" in page and "제안된 규칙 (0)" in page and "default" in page
 
 
@@ -500,17 +500,17 @@ def test_a_proposal_is_approved_only_by_the_user_on_the_page(client):
     with g.tx():
         g.define_rule("rv_page", "check", 'rv_page(R) :- rs_row(Self, X, R, "H").', actor="model",
                       applies_to="ledger", message="{R}")
-    page = c.get("/agents", headers=tok).text
+    page = c.get("/approvals", headers=tok).text
     sha = proposals.approval_sha(g, "rv_page")[:12]
     assert "rv_page" in page and f"승인 해시 {sha}" in page
     form = {"rule": "rv_page", "seen": sha, "csrf": _csrf(page)}
-    r = c.post("/agents/approve", data={**form, "csrf": "0" * 64}, headers={**tok, "Origin": BASE}, follow_redirects=False)
+    r = c.post("/approvals/approve", data={**form, "csrf": "0" * 64}, headers={**tok, "Origin": BASE}, follow_redirects=False)
     assert r.status_code == 403
-    r = c.post("/agents/approve", data=form, headers={**tok, "Origin": "https://evil.example"}, follow_redirects=False)
+    r = c.post("/approvals/approve", data=form, headers={**tok, "Origin": "https://evil.example"}, follow_redirects=False)
     assert r.status_code == 403
-    r = c.post("/agents/approve", data=form, headers=tok, follow_redirects=False)  # no Origin: refused
+    r = c.post("/approvals/approve", data=form, headers=tok, follow_redirects=False)  # no Origin: refused
     assert r.status_code == 403
-    r = c.post("/agents/approve", data=form, headers={**tok, "Origin": BASE}, follow_redirects=False)
+    r = c.post("/approvals/approve", data=form, headers={**tok, "Origin": BASE}, follow_redirects=False)
     assert r.status_code == 303 and "ok=" in r.headers["location"]
     assert g.get_rule("rv_page")["authority"] == "sealed"
 
@@ -520,19 +520,19 @@ def test_a_policy_is_granted_on_the_page(client):
 
     c, key = client, client.key
     tok = {"X-Auth-Token": site_token(key), "Origin": BASE}
-    page = c.get("/agents", headers=tok).text
-    r = c.post("/agents/policy", data={"name": "net", "commands": "sh cat", "network": "on", "timeout": "30",
+    page = c.get("/approvals", headers=tok).text
+    r = c.post("/approvals/policy", data={"name": "net", "commands": "sh cat", "network": "on", "timeout": "30",
                                        "csrf": _csrf(page)}, headers=tok, follow_redirects=False)
     assert r.status_code == 303 and "ok=" in r.headers["location"]
     w = Workspace(server._user_store("moon"))
     p = w.policy("net")
     assert w.caps.get("policy", "net")["author"] == "user" and p["attrs"]["network"] is True and p["attrs"]["commands"] == ["sh", "cat"]
     assert p["attrs"]["exec_work"] is False and "name=exec_work" in page
-    r = c.post("/agents/policy", data={"name": "net", "commands": "sh cat", "exec_work": "on", "csrf": _csrf(page)},
+    r = c.post("/approvals/policy", data={"name": "net", "commands": "sh cat", "exec_work": "on", "csrf": _csrf(page)},
                headers=tok, follow_redirects=False)
     assert "ok=" in r.headers["location"] and w.policy("net")["attrs"]["exec_work"] is True
-    assert "빌드 실행" in c.get("/agents", headers=tok).text
-    r = c.post("/agents/policy", data={"name": "bad", "commands": "no-such-tool-xyz", "csrf": _csrf(page)},
+    assert "빌드 실행" in c.get("/approvals", headers=tok).text
+    r = c.post("/approvals/policy", data={"name": "bad", "commands": "no-such-tool-xyz", "csrf": _csrf(page)},
                headers=tok, follow_redirects=False)
     assert "err=" in r.headers["location"]
 
@@ -544,15 +544,15 @@ def test_a_grant_the_model_asked_for_is_approved_on_the_page(client):
     tok = {"X-Auth-Token": site_token(key), "Origin": BASE}
     w = Workspace(server._user_store("moon"))
     w.caps.add("policy", "wider", spec={"network": True, "commands": ["sh", "cat"]}, actor="model")
-    page = c.get("/agents", headers=tok).text
+    page = c.get("/approvals", headers=tok).text
     assert "승인 대기 중인 권한 (1)" in page and "policy wider" in page and "the network" in page
     form = {"kind": "policy", "name": "wider", "version": "1", "csrf": _csrf(page)}
-    r = c.post("/agents/cap/approve", data=form, headers={**tok, "Origin": "https://evil.example"}, follow_redirects=False)
+    r = c.post("/approvals/cap/approve", data=form, headers={**tok, "Origin": "https://evil.example"}, follow_redirects=False)
     assert r.status_code == 403
-    r = c.post("/agents/cap/approve", data=form, headers=tok, follow_redirects=False)
+    r = c.post("/approvals/cap/approve", data=form, headers=tok, follow_redirects=False)
     assert r.status_code == 303 and "ok=" in r.headers["location"]
     assert Workspace(server._user_store("moon")).policy("wider")["attrs"]["network"] is True
-    r = c.post("/agents/cap/approve", data=form, headers=tok, follow_redirects=False)  # nothing waits any more
+    r = c.post("/approvals/cap/approve", data=form, headers=tok, follow_redirects=False)  # nothing waits any more
     assert "err=" in r.headers["location"]
 
 
@@ -566,6 +566,6 @@ def test_the_approval_page_opens_without_the_default_policy(client):
     w.set_policy("dev", actor="user", commands=["sh", "cat"])
     w.caps.remove("policy", DEFAULT_POLICY, actor="user")
     assert w.policies() == ["dev"]
-    page = c.get("/agents", headers={"X-Auth-Token": site_token(key)})
+    page = c.get("/approvals", headers={"X-Auth-Token": site_token(key)})
     assert page.status_code == 200 and "새 정책" in page.text and "<b>dev</b>" in page.text
     assert w.base_policy() == Workspace.default_policy_spec()

@@ -10,3 +10,5 @@ node_modules/
 .DS_Store
 # host-specific [site] keys (portal/facts.py: local_file)
 deploy/site.local.toml
+web/dist/
+web/node_modules/

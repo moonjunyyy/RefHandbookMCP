@@ -264,12 +264,31 @@ Check: `/account/` while signed out redirects to `/auth/login`.
 
 ## APIs and pages, and updates without downtime
 
-The site is moving to one shape for every service: the backends answer JSON at `/<service>/api/v1/…`,
-and the pages are a front-end app of their own, built and published apart from the backends
-(`deploy/install.sh --app <id> <dist>`). A change to the pages then needs no backend restart, and
-a backend change none to the pages, as long as the API keeps its version. The pages that decide who
-someone is or what a model may do stay server-rendered, with no script at all: the sign-in
-(`/auth/login`, `/auth/expired`), Claude's consent (`/login`) and the approvals on `/agents`.
+Every service answers JSON at `/<service>/api/v1/…` (one convention: `portal/api.py`), and the pages
+are an app of their own, `web/` (TypeScript, built with vite; no framework), published apart from
+the services. A change to the pages needs no service restart, and a service change none to the
+pages, as long as the API keeps its version.
+
+| path | who answers |
+|---|---|
+| `/`, `/account/…`, `/agents/…` | the pages app (`[[app]] id = "site"`, `pages = [...]`): nginx answers each with its `index.html` |
+| `/auth/api/v1/me`, `/account/api/v1/…`, `/agents/api/v1/…` | the sign-in, the portal (`portal/account_api.py`), the handbook (`refhandbook/agents/api.py`) |
+| `/auth/login`, `/auth/expired`, `/login` (Claude's consent), `/approvals/…` | server pages with no script: who someone is, and what a model may do, are decided there |
+| `/account/request`, `/account/join/…` | the portal's public pages (no account yet) |
+
+The portal's operations live once, in `portal/accounts.py` (permission, validation, audit); its pages
+and its API both call them.
+
+Building and publishing the pages:
+
+```sh
+cd web && npm ci && npm run build        # web/dist
+sudo deploy/install.sh                   # publishes web/dist with everything else, or alone:
+sudo deploy/install.sh --app site web/dist
+```
+
+Until the pages app is published, its paths stay with the services that answered them before (the
+installer renders nginx from what is published), so an update never leaves a path unanswered.
 
 Updates do not refuse anyone:
 

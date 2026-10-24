@@ -312,3 +312,19 @@ def test_the_handbook_takes_its_settings_from_the_sites_facts(fresh, tmp_path):
                  '[[app]]\nid = "b"\ntitle = "B"\naudience = "two"\nupstream = "@@upstream:handbook@@"\n')
     with pytest.raises(site.SiteError, match="disagree"):
         deploy.rendered(f, s)
+
+
+def test_the_pages_take_over_their_paths_once_published_and_not_before(fresh, tmp_path):
+    f = facts(str(SITE))
+    before = deploy.rendered(f, SITE, root=tmp_path)
+    site_conf = before[f"/etc/nginx/sites-available/{f.domain}.conf"][0]
+    assert "location = / {   # the main page: the SSO's" in site_conf  # nothing published: the sign-in's page
+    assert "rewrite ^ /apps/site/index.html" not in before[f"/etc/nginx/snippets/{f.name}-apps.conf"][0]
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<p>pages</p>")
+    assert deploy.install_app(f, SITE, "site", dist, tmp_path) == 0
+    after = deploy.rendered(f, SITE, root=tmp_path)
+    assert "location = / {" not in after[f"/etc/nginx/sites-available/{f.domain}.conf"][0]
+    apps = after[f"/etc/nginx/snippets/{f.name}-apps.conf"][0]
+    assert "location = / {" in apps and apps.count("rewrite ^ /apps/site/index.html last;") == 3
