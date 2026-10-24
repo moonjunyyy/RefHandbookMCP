@@ -23,31 +23,55 @@ async function basics(): Promise<{ keys: Key[]; opts: Options }> {
 
 // ── runs ────────────────────────────────────────────────────────────────
 
+/** What a run was started with, to start it again: its goal, title, grant and flow. */
+export interface Recipe { goal: string; title: string; grant: Json; flow: Json | null }
+
+export function recipeOf(r: Json): Recipe {
+  const { run: _run, approved: _approved, ...grant } = r.grant ?? {};
+  void _run; void _approved;
+  return { goal: r.goal, title: String(r.title ?? '').replace(/ · \d\d-\d\d \d\d:\d\d$/, ''),  // not the time it ran
+           grant, flow: r.flow ?? null };
+}
+
 export async function runs(): Promise<void> {
-  const [{ keys, opts }, list] = await Promise.all([basics(), agents.get('/runs') as Promise<Json[]>]);
+  const from = new URLSearchParams(location.search).get('from');
+  const [{ keys, opts }, list, source] = await Promise.all([basics(), agents.get('/runs') as Promise<Json[]>,
+    from ? agents.get(`/runs/${encodeURIComponent(from)}`) : Promise.resolve(null)]);
+  const recipe = source ? recipeOf(source) : null;
   const waiting = list.filter(r => r.phase === 'requested').length;
-  const gf = grantForm(keys, opts);
+  const gf = grantForm(keys, opts, recipe?.grant);
+  const fresh = form({}, async (f, b) => {
+    const v = values(f);
+    const r = await act(b, () => agents.post('/runs', { goal: v.goal, title: v.title, save_as: v.save_as, grant: gf.grant(),
+                                                        flow: recipe?.flow ?? undefined }));
+    if (r) { flashNext('ok', '시작했습니다. 곧 에이전트가 일을 시작합니다.'); go(`/agents/runs/${r.id}`); }
+  },
+    recipe && h('p', { class: 'flash ok' }, '실행 ', link(`/agents/runs/${source.id}`, source.title || source.id),
+      '의 설정을 불러왔습니다. 고쳐서 시작하세요.', recipe.flow ? ' (같은 순서도로 실행합니다)' : ''),
+    h('label', null, '목표 ', h('span', { class: 'muted small' }, '무엇을 이루면 끝인지까지'),
+      h('textarea', { name: 'goal', rows: 4, required: true }, recipe?.goal ?? '')),
+    h('div', { class: 'cols' }, h('label', null, '제목', h('input', { name: 'title', value: recipe?.title ?? '' })),
+      h('label', null, '프리셋으로도 저장 ', h('span', { class: 'muted small' }, '이름을 적으면 같은 설정을 남깁니다'),
+        h('input', { name: 'save_as', pattern: '[a-z0-9][a-z0-9._\\-]*', placeholder: '예: daily-report' }))),
+    gf.el,
+    h('div', { class: 'actions' }, h('button', { disabled: !keys.length }, '시작'),
+      recipe && link('/agents/', '불러온 설정 지우기')));
+  // the form first (open when there is nothing yet, or when a run's settings were loaded), the runs after
+  const open = !list.length || !!recipe;
   replace(main(),
-    pageHead('에이전트', '목표와 한도를 정해 에이전트 팀을 띄웁니다. Claude가 요청한 실행은 승인 화면에서 승인해야 시작됩니다.', TABS),
+    pageHead('에이전트', '목표와 한도를 정해 에이전트 팀을 띄웁니다. 지난 실행은 그 설정 그대로 다시 불러올 수 있습니다. ' +
+      'Claude가 요청한 실행은 승인 화면에서 승인해야 시작됩니다.', TABS),
     waiting > 0 && h('p', { class: 'flash' }, `승인을 기다리는 요청이 ${waiting}건 있습니다. `, h('a', { href: '/approvals' }, '승인 화면으로')),
+    h('details', { class: 'panel new-run', open }, h('summary', null, h('b', null, recipe ? '불러온 설정으로 새 실행' : '새 실행')), fresh),
     section(`실행 (${list.length})`, list.length ? h('div', { class: 'table-wrap' }, h('table', null,
-      h('thead', null, h('tr', null, ['실행', '상태', '에이전트', '토큰', '요청', '시작'].map(t => h('th', null, t)))),
+      h('thead', null, h('tr', null, ['실행', '상태', '에이전트', '토큰', '요청', '시작', ''].map(t => h('th', null, t)))),
       h('tbody', null, list.map(r => h('tr', null,
         h('td', { class: 'wrap' }, link(`/agents/runs/${r.id}`, r.title || r.id), r.preset && h('span', { class: 'muted small' }, ` · ${r.preset}`)),
         h('td', null, phase(r.phase)), h('td', { class: 'num' }, String(r.agents)), h('td', { class: 'num' }, num(r.tokens)),
-        h('td', null, r.requested_by === 'model' ? 'Claude' : '나'), h('td', null, when(r.requested)))))))
-      : empty('아직 실행이 없습니다.')),
-    section('새 실행', form({}, async (f, b) => {
-      const v = values(f);
-      const r = await act(b, () => agents.post('/runs', { goal: v.goal, title: v.title, save_as: v.save_as, grant: gf.grant() }));
-      if (r) { flashNext('ok', '시작했습니다. 곧 리드 에이전트가 일을 시작합니다.'); go(`/agents/runs/${r.id}`); }
-    },
-      h('label', null, '목표 ', h('span', { class: 'muted small' }, '무엇을 이루면 끝인지까지'), h('textarea', { name: 'goal', rows: 4, required: true })),
-      h('div', { class: 'cols' }, h('label', null, '제목', h('input', { name: 'title' })),
-        h('label', null, '프리셋으로도 저장 ', h('span', { class: 'muted small' }, '이름을 적으면 같은 설정을 남깁니다'),
-          h('input', { name: 'save_as', pattern: '[a-z0-9][a-z0-9._\\-]*', placeholder: '예: daily-report' }))),
-      gf.el,
-      h('div', { class: 'actions' }, h('button', { disabled: !keys.length }, '시작')))));
+        h('td', null, r.requested_by === 'model' ? 'Claude' : '나'), h('td', null, when(r.requested)),
+        h('td', null, r.phase === 'requested' ? h('a', { href: `/approvals/runs/${r.id}` }, '승인')
+          : link(`/agents/?from=${encodeURIComponent(r.id)}`, '다시'))))))) : empty('아직 실행이 없습니다.')));
+  if (recipe) window.scrollTo({ top: 0 });
 }
 
 function tree(nodes: Json[]): Child {
@@ -86,6 +110,21 @@ export async function run(id: string): Promise<void> {
       r.state === 'open' && h('div', { class: 'actions' }, h('button', { class: 'secondary', onclick: async (e: Event) => {
         if (await act(e.target as HTMLButtonElement, () => agents.post(`/runs/${r.id}/cancel`), '취소를 요청했습니다.')) void run(id);
       } }, '실행 취소'))),
+    r.grant && section('다시 쓰기',
+      h('p', { class: 'muted small' }, '이 실행의 목표·라우팅·한도' + (r.flow ? '·순서도' : '') + '를 그대로 씁니다.'),
+      h('div', { class: 'actions' },
+        link(`/agents/?from=${encodeURIComponent(r.id)}`, h('span', { class: 'button' }, '이 설정으로 새 실행')),
+        h('button', { class: 'secondary', onclick: async (e: Event) => {
+          const rc = recipeOf(r);
+          const again = await act(e.target as HTMLButtonElement, () => agents.post('/runs', rc));
+          if (again) { flashNext('ok', '같은 설정으로 다시 시작했습니다.'); go(`/agents/runs/${again.id}`); }
+        } }, '바로 다시 실행'),
+        form({ class: 'inline' }, async (f, b) => {
+          const rc = recipeOf(r);
+          const name = String(values(f).name);
+          if (await act(b, () => agents.put(`/presets/${encodeURIComponent(name)}`, rc), `프리셋 ${name}으로 저장했습니다.`)) f.reset();
+        }, h('input', { name: 'name', required: true, pattern: '[a-z0-9][a-z0-9._\\-]*', placeholder: '프리셋 이름' }),
+          h('button', { class: 'secondary' }, '프리셋으로 저장')))),
     r.result && section(h('span', null, '결과 ', tag(r.result.outcome)), h('pre', { class: 'wrap' }, r.result.text),
       r.result.notes.map((n: Json) => h('p', { class: 'small' }, `[${n.id}] ${n.text}`))),
     r.board.length > 0 && section('공유된 노트', r.board.map((n: Json) =>
