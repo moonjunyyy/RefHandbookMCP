@@ -66,7 +66,8 @@ def _schedule(s: dict[str, Any]) -> dict[str, Any]:
 
 def _preset(p: dict[str, Any], schedules: list[dict[str, Any]]) -> dict[str, Any]:
     a = p["attrs"]
-    return {"name": a["name"], "title": a["title"], "goal": p["content"], "grant": a["grant"], "saved": a.get("saved"),
+    return {"name": a["name"], "title": a["title"], "goal": p["content"], "grant": a["grant"], "flow": a.get("flow"),
+            "saved": a.get("saved"),
             "schedules": [_schedule(s) for s in schedules if s["attrs"]["preset"] == a["name"]]}
 
 
@@ -205,13 +206,9 @@ def install(m: Any, *, stores: Callable[[str], Handbook], who: Callable[[Request
         def act() -> Any:
             ws, t, ps = space(uid)
             if str(d.get("save_as", "")).strip():
-                ps.save(str(d["save_as"]), str(d.get("goal", "")), grant, title=str(d.get("title", "")))
-            run = t.request_run(str(d.get("goal", "")), actor="user", title=str(d.get("title", "")).strip())
-            try:
-                t.approve(run, grant, actor="user")
-            except HandbookError:
-                t.cancel_run(run, "the grant was refused", actor="user")
-                raise
+                ps.save(str(d["save_as"]), str(d.get("goal", "")), grant, title=str(d.get("title", "")),
+                        flow=d.get("flow"))
+            run = t.begin(str(d.get("goal", "")), grant, title=str(d.get("title", "")).strip(), flow=d.get("flow"))
             crew.mark(ws, run)
             return _run_summary(t, t.g.node(run))
         return answer(await locked(act), 201)
@@ -230,7 +227,11 @@ def install(m: Any, *, stores: Callable[[str], Handbook], who: Callable[[Request
             except TeamError:
                 grant = None
             res = t.result(run)
+            root = t.root(run)
+            ra = t.g.node(root)["attrs"] if root else {}
             return {**_run_summary(t, r), "goal": r["content"], "error": a.get("error"), "grant": grant,
+                    "flow": a.get("flow"), "flow_agents": ra.get("flow_agents") or {},
+                    "flow_skipped": ra.get("flow_skipped") or {},
                     "proposal": a.get("proposal") if a.get("phase") == "requested" else None,
                     "approve_url": approve_url(run) if a.get("phase") == "requested" else None,
                     "usage": t.run_usage(run), "tree": t.tree(run),
@@ -271,7 +272,8 @@ def install(m: Any, *, stores: Callable[[str], Handbook], who: Callable[[Request
 
         def act() -> Any:
             _, _, ps = space(uid)
-            p = ps.save(request.path_params["name"], str(d.get("goal", "")), grant, title=str(d.get("title", "")))
+            p = ps.save(request.path_params["name"], str(d.get("goal", "")), grant, title=str(d.get("title", "")),
+                        flow=d.get("flow"))
             return _preset(p, ps.schedules())
         return await locked(act)
 

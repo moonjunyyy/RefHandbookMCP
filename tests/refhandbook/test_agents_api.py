@@ -137,3 +137,25 @@ def test_the_workspace_read_only(api):
                                                                  "text": "hello"}
     assert call(api, "GET", "/files?path=../../etc/passwd").status_code == 404
     assert str(ws.work) not in call(api, "GET", "/files").text  # no server paths
+
+
+def test_a_flow_preset_and_a_flow_run(api):
+    flow = {"steps": [{"id": "plan", "title": "계획", "role": "lead", "goal": "plan it", "x": 10, "y": 20},
+                      {"id": "do", "title": "실행", "role": "worker", "model": "qwen3-32b", "goal": "do it", "x": 200}],
+            "edges": [{"from": "plan", "to": "do"}]}
+    g = grant(("anthropic/main", "claude-opus-5-5", ["lead"]), ("custom/gpu", "qwen3-32b", ["worker"]), max_agents=1)
+    r = call(api, "PUT", "/presets/pipeline", {"goal": "a pipeline", "grant": g, "flow": flow})
+    assert r.status_code == 200, r.text
+    p = r.json()
+    assert p["flow"]["steps"][0] == {"id": "plan", "title": "계획", "role": "lead", "model": "", "goal": "plan it",
+                                     "x": 10.0, "y": 20.0}
+    assert p["grant"]["max_agents"] == 2 and p["grant"]["max_spawns"] >= 3  # raised to what the flow needs
+    bad = {**flow, "steps": [*flow["steps"][:1], {**flow["steps"][1], "model": "gpt-9"}]}
+    r = call(api, "PUT", "/presets/pipeline", {"goal": "x", "grant": g, "flow": bad})
+    assert r.status_code == 400 and "its models: qwen3-32b" in r.json()["error"]["message"]
+    r = call(api, "POST", "/presets/pipeline/run")
+    run = r.json()["id"]
+    d = call(api, "GET", f"/runs/{run}").json()
+    assert d["flow"]["edges"] == [{"from": "plan", "to": "do"}] and d["phase"] == "approved"
+    r = call(api, "POST", "/runs", {"goal": "ad hoc", "grant": g, "flow": flow})
+    assert r.status_code == 201

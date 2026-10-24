@@ -23,7 +23,7 @@ import time
 from typing import Any
 
 from ..kernel.graph import Graph
-from . import cron, package
+from . import cron, flows, package
 from .team import Team, TeamError, check_grant
 
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,47}$")
@@ -51,7 +51,10 @@ class Presets:
 
     # ── presets ──────────────────────────────────────────────────────────
 
-    def save(self, name: str, goal: str, grant: dict[str, Any], *, title: str = "", actor: str = U) -> dict[str, Any]:
+    def save(self, name: str, goal: str, grant: dict[str, Any], *, title: str = "", actor: str = U,
+             flow: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Keep a preset; with a flow (agents/flows.py), a flow preset: checked against its grant, the
+        grant raised to what the flow needs."""
         if actor != U:
             raise TeamError("only the user saves a preset (on the page)")
         name = name.strip().lower()
@@ -60,9 +63,12 @@ class Presets:
         if not goal.strip():
             raise TeamError("a preset needs a goal")
         cfg = check_grant(grant)
+        if flow is not None:
+            flow = flows.check(flow, cfg)
+            cfg = check_grant(flows.fit(cfg, flow))
         nid = f"preset:{name}"
         attrs = {"name": name, "title": title.strip() or goal.strip().splitlines()[0][:80], "grant": cfg,
-                 "saved": _now()}
+                 "flow": flow, "saved": _now()}
         if self.g.get_node(nid) is None:
             self.g.put_node(nid, "preset", actor=U, content=goal.strip(), attrs=attrs)
         else:
@@ -96,16 +102,9 @@ class Presets:
             raise TeamError("only the user starts a run from a preset; the model asks with agent_run")
         p = self.get(name)
         at = at or dt.datetime.now()
-        t = Team(self.g)
         a = p["attrs"]
-        run = t.request_run(fill(p["content"], at), actor=U, title=f"{a['title']} · {at:%m-%d %H:%M}")
-        try:
-            t.approve(run, a["grant"], actor=U)
-        except TeamError:
-            t.cancel_run(run, "the preset's grant was refused", actor=U)
-            raise
-        self.g.update_node(run, actor="kernel", attrs={"preset": name, **attrs})
-        return run
+        return Team(self.g).begin(fill(p["content"], at), a["grant"], title=f"{a['title']} · {at:%m-%d %H:%M}",
+                                  flow=a.get("flow"), actor=U, preset=name, **attrs)
 
     # ── schedules ────────────────────────────────────────────────────────
 

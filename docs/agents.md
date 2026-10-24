@@ -306,6 +306,19 @@ anywhere. Model calls per key are limited to four in flight.
 On the Claude API, requests to the models that take it carry the server-side refusal fallback
 (`fallbacks: "default"`), dropped for a model or account that refuses it.
 
+### Flows
+
+A run can follow a flow drawn on the pages (`/agents/flows`, `agents/flows.py`) instead of being led:
+blocks are steps (one agent each: a title, a role, a model the grant offers that role or the role's
+first route, a goal), arrows pass a step's result (its text and the notes it carried) to the next.
+The flow has no cycles and is checked against the grant when it is saved; the grant is raised to
+what it needs (the conductor and one step at once, a ticket per step, depth 1).
+
+The run's root agent is then the crew's conductor, which calls no model: it opens each step once the
+steps before it have finished, skips a step when one before it failed or was skipped, and when
+every step is settled returns them all, in order, as the run's result (outcome done, partial or
+failed). A flow is kept in a preset (`flow`), so it runs now or on a schedule as any preset does.
+
 ## 7. The sandbox: Linux primitives only
 
 The sandbox needs no Docker, bubblewrap or gVisor: only the kernel, libc (through `ctypes`) and

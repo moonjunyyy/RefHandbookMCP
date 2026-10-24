@@ -140,6 +140,27 @@ class Team:
             self.g.log(actor, "run approved", run)
         return cfg
 
+    def begin(self, goal: str, grant: dict[str, Any], *, title: str = "", flow: dict[str, Any] | None = None,
+              actor: str = "user", **attrs: Any) -> str:
+        """Open a run and approve it at once, as the user (a run the user starts: the pages, a preset, a
+        schedule). With a flow (agents/flows.py) the run is conducted along it, and the grant is
+        raised to what the flow needs."""
+        from . import flows
+
+        cfg = check_grant(grant)
+        if flow is not None:
+            flow = flows.check(flow, cfg)
+            cfg = check_grant(flows.fit(cfg, flow))
+        run = self.request_run(goal, actor=actor, title=title)
+        try:
+            self.approve(run, cfg, actor=actor)
+        except TeamError:
+            self.cancel_run(run, "the grant was refused", actor=actor)
+            raise
+        if flow is not None or attrs:
+            self.g.update_node(run, actor=K, attrs={**({"flow": flow} if flow is not None else {}), **attrs})
+        return run
+
     def grant(self, run: str) -> dict[str, Any]:
         n = self.g.get_node(f"{run}:grant")
         if n is None or n["author"] != "user":

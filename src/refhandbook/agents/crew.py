@@ -51,6 +51,7 @@ from ..store import HandbookError
 from . import providers as P
 from .http import Client, HttpError
 from .keys import Key, KeyError_, KeyStore, scrub
+from . import flows
 from .presets import Presets
 from .team import NOTE_KINDS, ROLES, Team, TeamError, render_note
 from .workspace import Workspace
@@ -376,6 +377,102 @@ class Crew:
                 if n is not None and n["state"] == "open":
                     self.team.release(aid, self.rid)
 
+    # ── a flow's conductor (agents/flows.py): the root of a run with a flow, which calls no model ──
+
+    async def _conduct(self, aid: str, flow: dict[str, Any]) -> None:
+        while True:
+            with self.lock:
+                if not self.team.lease(aid, self.rid, LEASE) or self.g.node(aid)["state"] != "open":
+                    return
+                if self._conduct_step(aid, flow):
+                    return
+            await asyncio.sleep(POLL)
+
+    def _exit(self, root: str, child: str) -> dict[str, Any] | None:
+        for e in self.g.edges(dst=root, type_="to"):
+            p = self.g.node(e["src"])
+            if p["attrs"].get("from") == child and p["attrs"].get("kind") == "exit":
+                return p
+        return None
+
+    def _conduct_step(self, aid: str, flow: dict[str, Any]) -> bool:
+        """One look at the flow: open what can start, skip what cannot run; True once it is finished."""
+        t, g = self.team, self.g
+        root = g.node(aid)
+        run = root["attrs"]["run"]
+        placed: dict[str, str] = dict(root["attrs"].get("flow_agents") or {})  # step → agent
+        skipped: dict[str, str] = dict(root["attrs"].get("flow_skipped") or {})  # step → why
+        steps = {s["id"]: s for s in flow["steps"]}
+
+        def outcome(sid: str) -> str | None:  # done, partial, failed, cancelled; None while not settled
+            if sid in skipped:
+                return "skipped"
+            a = placed.get(sid)
+            if a is None:
+                return None
+            n = g.node(a)
+            return (n["attrs"].get("outcome") or "failed") if n["state"] == "closed" else None
+
+        changed = False
+        for sid in flows.order(flow["steps"], flow["edges"]):
+            if sid in placed or sid in skipped:
+                continue
+            before = flows.inputs(flow, sid)
+            got = {b: outcome(b) for b in before}
+            if any(o in ("failed", "cancelled", "skipped") for o in got.values()):
+                bad = [b for b, o in got.items() if o in ("failed", "cancelled", "skipped")]
+                skipped[sid] = f"after {', '.join(steps[b]['title'] for b in bad)} did not finish"
+                changed = True
+                continue
+            if any(o is None for o in got.values()):
+                continue  # still waiting on a step before it
+            if t.free_slot(run) is None:
+                continue  # every slot busy: next look
+            s = steps[sid]
+            given, lines = [], []
+            for b in before:
+                p = self._exit(aid, placed[b])
+                if p is not None:
+                    lines.append(f"From step '{steps[b]['title']}' ({got[b]}): {p['content']}")
+                    given += [n["id"] for n in t.carried(p["id"])]
+            goal = s["goal"] + (("\n\nWhat the steps before this one returned:\n" + "\n\n".join(lines)) if lines else "")
+            try:
+                child = t.open_agent(run, role=s["role"], goal=goal, parent=aid, model=s["model"] or None,
+                                     give=list(dict.fromkeys(given)), actor=K, variant=s["title"])
+            except ScopeRefused:
+                continue  # no slot or ticket just now
+            except (KernelError, HandbookError) as e:
+                skipped[sid] = f"could not start: {e}"
+                changed = True
+                continue
+            t.update_agent(child, step=sid)
+            placed[sid] = child
+            changed = True
+        if changed:
+            t.update_agent(aid, flow_agents=placed, flow_skipped=skipped, status="waiting")
+        if any(outcome(sid) is None for sid in steps):
+            return False
+        # every step settled: read each one's result, and return them all
+        parts, refs, done = [], [], 0
+        for sid in flows.order(flow["steps"], flow["edges"]):
+            o = outcome(sid)
+            if sid in skipped:
+                parts.append(f"## {steps[sid]['title']} (skipped: {skipped[sid]})")
+                continue
+            p = self._exit(aid, placed[sid])
+            if p is not None and p["state"] == "sent":
+                t.read(aid, p["id"])
+            parts.append(f"## {steps[sid]['title']} ({o})\n{p['content'] if p else ''}")
+            done += o in ("done", "partial")
+            if sid in flows.sinks(flow) and p is not None:
+                refs += [n["id"] for n in t.carried(p["id"])]
+        for p in t.inbox(aid):  # anything else addressed to the conductor
+            t.read(aid, p["id"])
+        total = len(steps)
+        result = "done" if done == total else "partial" if done else "failed"
+        t.finish(aid, result, "\n\n".join(parts), list(dict.fromkeys(refs)), actor=K)
+        return True
+
     def _fail(self, aid: str, why: str) -> None:
         with self.lock:
             n = self.g.get_node(aid)
@@ -429,6 +526,11 @@ class Crew:
         return n, grant, i
 
     async def _live(self, aid: str) -> None:
+        with self.lock:
+            n = self.g.node(aid)
+            flow = None if n["attrs"].get("parent") else self.g.node(n["attrs"]["run"])["attrs"].get("flow")
+        if flow:
+            return await self._conduct(aid, flow)
         with self.lock:
             n, grant, i = self._route(aid)
             a = n["attrs"]

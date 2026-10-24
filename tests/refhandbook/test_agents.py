@@ -709,3 +709,72 @@ def test_no_approval_page_tells_how_the_site_is_built(client, keyed):
         page = c.get(path, headers=tok).text
         found = BACKEND_WORDS.search(page)
         assert not found, (path, found and page[max(0, found.start() - 80):found.end() + 40])
+
+
+# ── flows ────────────────────────────────────────────────────────────────
+
+from refhandbook.agents import flows  # noqa: E402
+
+DIAMOND = {"steps": [{"id": "a", "title": "A", "role": "worker", "goal": "count a"},
+                     {"id": "b", "title": "B", "role": "worker", "goal": "count b"},
+                     {"id": "c", "title": "C", "role": "worker", "goal": "add them up"}],
+           "edges": [{"from": "a", "to": "c"}, {"from": "b", "to": "c"}]}
+
+
+def test_a_flow_is_checked_against_itself_and_the_grant():
+    g = {"routes": [{"key": "anthropic/main", "model": "claude-opus-5-5", "roles": ["lead", "worker"]},
+                    {"key": "anthropic/main", "model": "claude-haiku-5-5", "roles": ["worker"]}]}
+    f = flows.check(DIAMOND, g)
+    assert flows.order(f["steps"], f["edges"]) == ["a", "b", "c"] and flows.sinks(f) == ["c"]
+    assert flows.fit({"max_agents": 1, "max_spawns": 1, "max_depth": 0}, f) == \
+        {"max_agents": 2, "max_spawns": 4, "max_depth": 1}
+    for bad, why in (({"steps": []}, "at least one step"),
+                     ({**DIAMOND, "edges": DIAMOND["edges"] + [{"from": "c", "to": "a"}]}, "circle"),
+                     ({**DIAMOND, "edges": [{"from": "a", "to": "zz"}]}, "not in the flow"),
+                     ({"steps": [{"id": "a", "role": "verifier", "goal": "x"}]}, "no route of the grant runs a verifier"),
+                     ({"steps": [{"id": "a", "role": "worker", "model": "gpt-9", "goal": "x"}]}, "its models: claude"),
+                     ({"steps": [{"id": "A B", "goal": "x"}]}, "unique id"),
+                     ({"steps": [{"id": "a", "goal": ""}]}, "a goal")):
+        with pytest.raises(TeamError, match=why):
+            flows.check(bad, g)
+
+
+def flow_policy(fail=()):
+    def policy(agent, history, system):
+        goal = agent["goal"]
+        if any(goal.startswith(x) for x in fail):
+            return {"calls": [("finish", {"outcome": "failed", "text": "could not"})]}
+        if _turns(history) == 0:
+            return {"calls": [("note", {"text": f"{goal.splitlines()[0]}: 3"})]}
+        return {"calls": [("finish", {"outcome": "done", "text": f"did: {goal}", "refs": [_results(history)[-1]["text"]]})]}
+    return policy
+
+
+def test_a_flow_runs_each_step_after_the_ones_before_it(tmp_path, ks):
+    ks.put("moon", "anthropic", "main", "sk-ant-api03-abcdefghijklmnop")
+    crew = _crew(tmp_path, ks, flow_policy())
+    run = crew.team.begin("count and add", _grant(max_agents=2), flow=DIAMOND)
+    C.mark(crew.ws, run)
+    asyncio.run(_drive(crew, run))
+    t = crew.team
+    root = crew.g.node(t.root(run))["attrs"]
+    placed = root["flow_agents"]
+    c = crew.g.node(placed["c"])
+    assert "From step 'A' (done): did: count a" in c["content"] and "From step 'B' (done)" in c["content"]
+    assert {n["content"] for n, _ in t.held(placed["c"])} >= {"count a: 3", "count b: 3"}  # the notes came along
+    assert c["attrs"]["created_at"] >= max(crew.g.node(placed[x])["attrs"]["ended"] for x in "ab")
+    res = t.result(run)
+    assert res["attrs"]["outcome"] == "done" and res["content"].index("## A") < res["content"].index("## C")
+    assert crew.g.node(run)["attrs"]["phase"] == "done"
+    assert crew.g.node(placed["a"])["attrs"]["variant"] == "A"  # each step agent says which step it is
+
+
+def test_a_failed_step_skips_the_ones_after_it(tmp_path, ks):
+    ks.put("moon", "anthropic", "main", "sk-ant-api03-abcdefghijklmnop")
+    crew = _crew(tmp_path, ks, flow_policy(fail=("count a",)))
+    run = crew.team.begin("count and add", _grant(), flow=DIAMOND)
+    C.mark(crew.ws, run)
+    asyncio.run(_drive(crew, run))
+    res = crew.team.result(run)
+    assert res["attrs"]["outcome"] == "partial" and "## C (skipped: after A did not finish)" in res["content"]
+    assert "c" not in crew.g.node(crew.team.root(run))["attrs"]["flow_agents"]
