@@ -219,6 +219,18 @@ ul.groups li { display: inline-flex; align-items: center; gap: 6px; margin: 0 10
 .flow-block.st-failed rect, .flow-block.st-cancelled rect { stroke: var(--bad); }
 .flow-block.st-skipped { opacity: .55; }
 .flow-panel h3 { margin-top: 0; }
+.flow-panel .next-actions h3 { margin-top: 18px; }
+.next-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; align-items: center; margin: 6px 0; }
+.flow-block.incomplete rect { stroke: var(--bad); stroke-dasharray: 5 4; }
+.flow-block.incomplete .flow-goal { fill: var(--bad); }
+.flow-block.st-idle rect { stroke-dasharray: 2 4; }
+.flow-label rect { fill: var(--card); stroke: var(--line); }
+.flow-label text { fill: var(--text); font: 12px var(--sans); }
+.flow-edge-g.selected .flow-label rect, .flow-edge-g.taken .flow-label rect { stroke: var(--accent); }
+.flow-edge-g.taken .flow-edge { stroke: var(--ok); stroke-width: 3; }
+.flow-label { cursor: pointer; }
+.inline-field { display: inline-flex; align-items: center; gap: 6px; margin: 0; }
+input.short { width: 5em; }
 /* a narrow screen: each route of the grant form is a small card (key, model, roles, tools), not a row */
 @media (max-width: 640px) {
   table.routes thead { display: none; }

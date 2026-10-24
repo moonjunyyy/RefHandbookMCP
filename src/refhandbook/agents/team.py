@@ -143,14 +143,17 @@ class Team:
     def begin(self, goal: str, grant: dict[str, Any], *, title: str = "", flow: dict[str, Any] | None = None,
               actor: str = "user", **attrs: Any) -> str:
         """Open a run and approve it at once, as the user (a run the user starts: the pages, a preset, a
-        schedule). With a flow (agents/flows.py) the run is conducted along it, and the grant is
-        raised to what the flow needs."""
+        schedule). With a flow (agents/flows.py) the run is conducted along it: its routing is the
+        blocks' keys and models, and the grant is raised to what the flow needs."""
         from . import flows
 
-        cfg = check_grant(grant)
         if flow is not None:
-            flow = flows.check(flow, cfg)
-            cfg = check_grant(flows.fit(cfg, flow))
+            flow = flows.check(flow)
+            cfg = flows.fit(grant, flow)
+            if not goal.strip():  # a flow's input may be none: the run is named, and says it had none
+                goal, attrs = title.strip() or flow["steps"][0]["title"], {**attrs, "no_input": True}
+        else:
+            cfg = check_grant(grant)
         run = self.request_run(goal, actor=actor, title=title)
         try:
             self.approve(run, cfg, actor=actor)
@@ -250,16 +253,17 @@ class Team:
 
     def open_agent(self, run: str, *, role: str, goal: str, parent: str | None = None, model: str | None = None,
                    mode: str = "fresh", give: list[str] | None = None, context: str | None = None,
-                   handoff: str | None = None, actor: str = "model", variant: str = "") -> str:
+                   handoff: str | None = None, actor: str = "model", variant: str = "", key: str | None = None) -> str:
         """Open an agent scope, claiming a free slot and an unused ticket. The kernel's gates decide:
         no slot, no ticket, too deep, or no grant raise ScopeRefused with the reasons. The agent
-        starts on the first of the grant's routes for its role (with `model`, the first that runs it)."""
+        starts on the first of the grant's routes for its role (with `model`, the first that runs it; with
+        `key` too, on that key only)."""
         grant = self.grant(run)
         if mode not in ("fresh", "split", "clone", "root"):
             raise TeamError("mode: fresh, split or clone")
         if role not in ROLES:
             raise TeamError(f"role: {', '.join(ROLES)}")
-        routes = routes_for(grant, role, model)
+        routes = routes_for(grant, role, model, key)
         if not routes:
             have = ", ".join(f"{r['model']} ({'/'.join(r['roles'])})" for r in grant["routes"])
             raise TeamError(f"no route of the grant serves a {role}{' on ' + model if model else ''}; routes: {have}")
@@ -653,9 +657,10 @@ def check_routes(routes: Any) -> list[dict[str, Any]]:
     return out
 
 
-def routes_for(grant: dict[str, Any], role: str, model: str | None = None) -> list[int]:
-    """The grant's routes for a role, in order (indices); with `model`, those that run it."""
-    return [i for i, r in enumerate(grant["routes"]) if role in r["roles"] and (model is None or r["model"] == model)]
+def routes_for(grant: dict[str, Any], role: str, model: str | None = None, key: str | None = None) -> list[int]:
+    """The grant's routes for a role, in order (indices); with `model` (and `key`), those that run it."""
+    return [i for i, r in enumerate(grant["routes"]) if role in r["roles"] and (model is None or r["model"] == model)
+            and (key is None or r["key"] == key)]
 
 
 def _title(text: str) -> str:

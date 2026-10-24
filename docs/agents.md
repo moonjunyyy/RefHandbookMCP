@@ -308,16 +308,25 @@ On the Claude API, requests to the models that take it carry the server-side ref
 
 ### Flows
 
-A run can follow a flow drawn on the pages (`/agents/flows`, `agents/flows.py`) instead of being led:
-blocks are steps (one agent each: a title, a role, a model the grant offers that role or the role's
-first route, a goal), arrows pass a step's result (its text and the notes it carried) to the next.
-The flow has no cycles and is checked against the grant when it is saved; the grant is raised to
-what it needs (the conductor and one step at once, a ticket per step, depth 1).
+A run can follow a flow drawn on the pages (`/agents/flows`, `agents/flows.py`) instead of being led.
+A block is one agent: a title, one of the user's keys, a model on it, and a command (what it is
+told to do). An arrow is a next action with a name ("고쳐", "통과"; unnamed, it is named for the
+block it leads to). One block is the start (the first, unless another is marked).
 
-The run's root agent is then the crew's conductor, which calls no model: it opens each step once the
-steps before it have finished, skips a step when one before it failed or was skipped, and when
-every step is settled returns them all, in order, as the run's result (outcome done, partial or
-failed). A flow is kept in a preset (`flow`), so it runs now or on a schedule as any preset does.
+The run's root agent is then the crew's conductor, which calls no model. It opens the start block;
+when a block's agent finishes, it follows the arrow the agent chose, `finish(next=<name>)`. With one
+arrow out there is nothing to choose; with several, finish is refused until the agent names one of
+them (its brief lists them; a plain-text answer that names exactly one counts); with none, the flow
+ends there. The next block's goal is its command, then the previous block's result text, and it
+holds the notes that result carried. Arrows may lead back (a review that sends a draft back): a
+block runs at most `max_visits` times (default 3), and the flow stops when one would run once more.
+A failed block stops the flow unless its agent chose an arrow (a "실패" arrow is a choice too).
+
+The result is the last block's text after the path taken; the conductor keeps the path
+(`flow_path`: step, agent, the arrow taken) and why it stopped (`flow_end`). The run's routing is
+the blocks' keys and models, so a flow needs no route table; the grant is raised to what it needs
+(the conductor and one block at once, a ticket per block run, depth 1). A flow is kept in a preset
+(`flow`), with an optional input (the goal), so it runs now or on a schedule as any preset does.
 
 ## 7. The sandbox: Linux primitives only
 

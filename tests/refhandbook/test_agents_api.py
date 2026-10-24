@@ -140,22 +140,29 @@ def test_the_workspace_read_only(api):
 
 
 def test_a_flow_preset_and_a_flow_run(api):
-    flow = {"steps": [{"id": "plan", "title": "계획", "role": "lead", "goal": "plan it", "x": 10, "y": 20},
-                      {"id": "do", "title": "실행", "role": "worker", "model": "qwen3-32b", "goal": "do it", "x": 200}],
-            "edges": [{"from": "plan", "to": "do"}]}
-    g = grant(("anthropic/main", "claude-opus-5-5", ["lead"]), ("custom/gpu", "qwen3-32b", ["worker"]), max_agents=1)
-    r = call(api, "PUT", "/presets/pipeline", {"goal": "a pipeline", "grant": g, "flow": flow})
+    """A flow is blocks (each its own key, model and command) and named arrows; its routing comes from
+    the blocks, so the request needs no routes; a block's key must be one the user registered."""
+    flow = {"steps": [{"id": "plan", "title": "계획", "key": "anthropic/main", "model": "claude-opus-5-5",
+                       "command": "plan it", "x": 10, "y": 20},
+                      {"id": "do", "title": "실행", "key": "custom/gpu", "model": "qwen3-32b", "command": "do it",
+                       "x": 200}],
+            "edges": [{"from": "plan", "to": "do", "label": "진행"}]}
+    r = call(api, "PUT", "/presets/pipeline", {"goal": "", "grant": {"max_agents": 1}, "flow": flow})
     assert r.status_code == 200, r.text
     p = r.json()
-    assert p["flow"]["steps"][0] == {"id": "plan", "title": "계획", "role": "lead", "model": "", "goal": "plan it",
-                                     "x": 10.0, "y": 20.0}
-    assert p["grant"]["max_agents"] == 2 and p["grant"]["max_spawns"] >= 3  # raised to what the flow needs
-    bad = {**flow, "steps": [*flow["steps"][:1], {**flow["steps"][1], "model": "gpt-9"}]}
-    r = call(api, "PUT", "/presets/pipeline", {"goal": "x", "grant": g, "flow": bad})
-    assert r.status_code == 400 and "its models: qwen3-32b" in r.json()["error"]["message"]
+    assert p["flow"]["steps"][0] == {"id": "plan", "title": "계획", "key": "anthropic/main",
+                                     "model": "claude-opus-5-5", "command": "plan it", "x": 10.0, "y": 20.0}
+    assert p["flow"]["start"] == "plan" and p["flow"]["max_visits"] == 3
+    assert [(x["key"], x["model"]) for x in p["grant"]["routes"]] == [("anthropic/main", "claude-opus-5-5"),
+                                                                       ("custom/gpu", "qwen3-32b")]
+    assert p["grant"]["max_agents"] == 2 and p["grant"]["max_spawns"] >= 7  # raised to what the flow needs
+    bad = {**flow, "steps": [*flow["steps"][:1], {**flow["steps"][1], "key": "openai/none"}]}
+    r = call(api, "PUT", "/presets/pipeline", {"grant": {}, "flow": bad})
+    assert r.status_code == 400 and "not a key you registered" in r.json()["error"]["message"]
     r = call(api, "POST", "/presets/pipeline/run")
     run = r.json()["id"]
     d = call(api, "GET", f"/runs/{run}").json()
-    assert d["flow"]["edges"] == [{"from": "plan", "to": "do"}] and d["phase"] == "approved"
-    r = call(api, "POST", "/runs", {"goal": "ad hoc", "grant": g, "flow": flow})
-    assert r.status_code == 201
+    assert d["flow"]["edges"] == [{"from": "plan", "to": "do", "label": "진행"}] and d["phase"] == "approved"
+    assert d["flow_path"] == [] and d["goal"].startswith("pipeline · ") and d["input"] == ""  # no input: named for the preset
+    r = call(api, "POST", "/runs", {"goal": "ad hoc", "flow": flow, "save_as": "again"})
+    assert r.status_code == 201 and call(api, "GET", "/presets").json()[0]["name"] == "again"

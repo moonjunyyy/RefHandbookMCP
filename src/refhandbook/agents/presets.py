@@ -53,21 +53,22 @@ class Presets:
 
     def save(self, name: str, goal: str, grant: dict[str, Any], *, title: str = "", actor: str = U,
              flow: dict[str, Any] | None = None) -> dict[str, Any]:
-        """Keep a preset; with a flow (agents/flows.py), a flow preset: checked against its grant, the
-        grant raised to what the flow needs."""
+        """Keep a preset; with a flow (agents/flows.py), a flow preset: its routing the blocks' keys and
+        models, the grant raised to what the flow needs, and the goal (the flow's input) optional."""
         if actor != U:
             raise TeamError("only the user saves a preset (on the page)")
         name = name.strip().lower()
         if not NAME_RE.match(name):
             raise TeamError("preset name: lowercase letters, digits, . _ - (up to 48)")
-        if not goal.strip():
-            raise TeamError("a preset needs a goal")
-        cfg = check_grant(grant)
         if flow is not None:
-            flow = flows.check(flow, cfg)
-            cfg = check_grant(flows.fit(cfg, flow))
+            flow = flows.check(flow)
+            cfg = flows.fit(grant, flow)
+        elif not goal.strip():
+            raise TeamError("a preset needs a goal")
+        else:
+            cfg = check_grant(grant)
         nid = f"preset:{name}"
-        attrs = {"name": name, "title": title.strip() or goal.strip().splitlines()[0][:80], "grant": cfg,
+        attrs = {"name": name, "title": title.strip() or (goal.strip() or name).splitlines()[0][:80], "grant": cfg,
                  "flow": flow, "saved": _now()}
         if self.g.get_node(nid) is None:
             self.g.put_node(nid, "preset", actor=U, content=goal.strip(), attrs=attrs)

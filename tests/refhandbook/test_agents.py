@@ -714,70 +714,111 @@ def test_no_approval_page_tells_how_the_site_is_built(client, keyed):
         assert not found, (path, found and page[max(0, found.start() - 80):found.end() + 40])
 
 
-# ── flows ────────────────────────────────────────────────────────────────
+# ── flows ──────────────────────────────────────────────────────────────
 
 from refhandbook.agents import flows  # noqa: E402
 
-DIAMOND = {"steps": [{"id": "a", "title": "A", "role": "worker", "goal": "count a"},
-                     {"id": "b", "title": "B", "role": "worker", "goal": "count b"},
-                     {"id": "c", "title": "C", "role": "worker", "goal": "add them up"}],
-           "edges": [{"from": "a", "to": "c"}, {"from": "b", "to": "c"}]}
+KEY = "anthropic/main"
 
 
-def test_a_flow_is_checked_against_itself_and_the_grant():
-    g = {"routes": [{"key": "anthropic/main", "model": "claude-opus-5-5", "roles": ["lead", "worker"]},
-                    {"key": "anthropic/main", "model": "claude-haiku-5-5", "roles": ["worker"]}]}
-    f = flows.check(DIAMOND, g)
-    assert flows.order(f["steps"], f["edges"]) == ["a", "b", "c"] and flows.sinks(f) == ["c"]
-    assert flows.fit({"max_agents": 1, "max_spawns": 1, "max_depth": 0}, f) == \
-        {"max_agents": 2, "max_spawns": 4, "max_depth": 1}
-    for bad, why in (({"steps": []}, "at least one step"),
-                     ({**DIAMOND, "edges": DIAMOND["edges"] + [{"from": "c", "to": "a"}]}, "circle"),
-                     ({**DIAMOND, "edges": [{"from": "a", "to": "zz"}]}, "not in the flow"),
-                     ({"steps": [{"id": "a", "role": "verifier", "goal": "x"}]}, "no route of the grant runs a verifier"),
-                     ({"steps": [{"id": "a", "role": "worker", "model": "gpt-9", "goal": "x"}]}, "its models: claude"),
-                     ({"steps": [{"id": "A B", "goal": "x"}]}, "unique id"),
-                     ({"steps": [{"id": "a", "goal": ""}]}, "a goal")):
+def block(sid, command, model="claude-opus-5-5", **kw):
+    return {"id": sid, "title": sid.upper(), "key": KEY, "model": model, "command": command, **kw}
+
+
+# write → review; review sends it back ("고쳐") or on ("통과") to publish
+REVIEW = {"steps": [block("write", "write a draft"), block("review", "review the draft", model="claude-haiku-5-5"),
+                    block("publish", "publish it")],
+          "edges": [{"from": "write", "to": "review"}, {"from": "review", "to": "write", "label": "고쳐"},
+                    {"from": "review", "to": "publish", "label": "통과"}]}
+
+
+def test_a_flow_is_blocks_and_named_arrows():
+    f = flows.check(REVIEW, {KEY})
+    assert f["start"] == "write" and f["max_visits"] == 3
+    assert f["edges"][0]["label"] == "REVIEW"  # an arrow with no name is named for where it leads
+    assert flows.routes(f) == [{"key": KEY, "model": "claude-opus-5-5", "roles": ["lead", "worker", "verifier"]},
+                               {"key": KEY, "model": "claude-haiku-5-5", "roles": ["lead", "worker", "verifier"]}]
+    g = flows.fit({"max_agents": "1", "max_spawns": 1, "max_depth": 0}, f)
+    assert (g["max_agents"], g["max_spawns"], g["max_depth"]) == (2, 10, 1)
+    assert flows.choose(f, "write", None)["to"] == "review"  # one arrow: nothing to choose
+    assert flows.choose(f, "review", " 통과 ")["to"] == "publish" and flows.choose(f, "review", None) is None
+    assert flows.choose(f, "publish", None) is None  # no arrow: the end
+    for bad, why in (({"steps": []}, "at least one block"),
+                     ({**REVIEW, "edges": [{"from": "write", "to": "zz"}]}, "not in the flow"),
+                     ({**REVIEW, "edges": REVIEW["edges"] + [{"from": "review", "to": "publish", "label": "통과"}]},
+                      "both named"),
+                     ({"steps": [block("a", "x", key="other/k")]}, "not a key you registered"),
+                     ({"steps": [block("a", "")]}, "a command"),
+                     ({"steps": [block("a", "x", model="")]}, "a model"),
+                     ({"steps": [block("A B", "x")]}, "unique id"),
+                     ({**REVIEW, "start": "nope"}, "start block"),
+                     ({**REVIEW, "max_visits": 99}, "max_visits")):
         with pytest.raises(TeamError, match=why):
-            flows.check(bad, g)
+            flows.check(bad, {KEY})
 
 
-def flow_policy(fail=()):
+def review_policy(rounds=1, choose=True):
+    """write: a note and a draft; review: sends it back `rounds` times, then on; publish: done."""
+    seen = {"review": 0}
+
     def policy(agent, history, system):
-        goal = agent["goal"]
-        if any(goal.startswith(x) for x in fail):
-            return {"calls": [("finish", {"outcome": "failed", "text": "could not"})]}
-        if _turns(history) == 0:
-            return {"calls": [("note", {"text": f"{goal.splitlines()[0]}: 3"})]}
-        return {"calls": [("finish", {"outcome": "done", "text": f"did: {goal}", "refs": [_results(history)[-1]["text"]]})]}
+        goal, t = agent["goal"], _turns(history)
+        if goal.startswith("write"):
+            if t == 0:
+                return {"calls": [("note", {"text": f"draft v{seen['review'] + 1}"})]}
+            return {"calls": [("finish", {"outcome": "done", "text": f"draft v{seen['review'] + 1}",
+                                          "refs": [_results(history)[-1]["text"]]})]}
+        if goal.startswith("review"):
+            assert agent["model"] == "claude-haiku-5-5"  # each block on its own model
+            if t == 0 and choose:  # finishing without a choice is refused, with the choices
+                return {"calls": [("finish", {"outcome": "done", "text": "looked"})]}
+            if t == 1 and choose:
+                assert "next=" in _results(history)[-1]["text"] and "'통과'" in _results(history)[-1]["text"]
+            seen["review"] += 1
+            nxt = "고쳐" if seen["review"] <= rounds else "통과"
+            return {"calls": [("finish", {"outcome": "done", "text": f"review {seen['review']}: {nxt}",
+                                          **({"next": nxt} if choose else {})})]}
+        return {"calls": [("finish", {"outcome": "done", "text": f"published ({goal.splitlines()[-1]})"})]}
     return policy
 
 
-def test_a_flow_runs_each_step_after_the_ones_before_it(tmp_path, ks):
+def test_a_flow_goes_where_each_blocks_model_chooses(tmp_path, ks):
     ks.put("moon", "anthropic", "main", "sk-ant-api03-abcdefghijklmnop")
-    crew = _crew(tmp_path, ks, flow_policy())
-    run = crew.team.begin("count and add", _grant(max_agents=2), flow=DIAMOND)
+    crew = _crew(tmp_path, ks, review_policy(rounds=1))
+    run = crew.team.begin("a post about otters", {}, flow=REVIEW)
     C.mark(crew.ws, run)
     asyncio.run(_drive(crew, run))
-    t = crew.team
-    root = crew.g.node(t.root(run))["attrs"]
-    placed = root["flow_agents"]
-    c = crew.g.node(placed["c"])
-    assert "From step 'A' (done): did: count a" in c["content"] and "From step 'B' (done)" in c["content"]
-    assert {n["content"] for n, _ in t.held(placed["c"])} >= {"count a: 3", "count b: 3"}  # the notes came along
-    assert c["attrs"]["created_at"] >= max(crew.g.node(placed[x])["attrs"]["ended"] for x in "ab")
+    t, g = crew.team, crew.g
+    root = g.node(t.root(run))["attrs"]
+    assert [(x["step"], x.get("next")) for x in root["flow_path"]] == [
+        ("write", "REVIEW"), ("review", "고쳐"), ("write", "REVIEW"), ("review", "통과"), ("publish", None)]
+    assert root["flow_end"] == "end"
+    second = g.node(root["flow_path"][2]["agent"])
+    assert second["content"].startswith("write a draft") and "previous step 'REVIEW' returned (done)" in second["content"]
+    review = g.node(root["flow_path"][1]["agent"])
+    assert {n["content"] for n, _ in t.held(review["id"])} == {"draft v1"}  # the notes came along
+    assert review["attrs"]["model"] == "claude-haiku-5-5" and review["attrs"]["variant"] == "REVIEW"
     res = t.result(run)
-    assert res["attrs"]["outcome"] == "done" and res["content"].index("## A") < res["content"].index("## C")
-    assert crew.g.node(run)["attrs"]["phase"] == "done"
-    assert crew.g.node(placed["a"])["attrs"]["variant"] == "A"  # each step agent says which step it is
+    assert res["attrs"]["outcome"] == "done"
+    assert res["content"].startswith("Path: WRITE → REVIEW → WRITE → REVIEW → PUBLISH") and "published" in res["content"]
+    assert g.node(run)["attrs"]["phase"] == "done"
 
 
-def test_a_failed_step_skips_the_ones_after_it(tmp_path, ks):
+def test_a_loop_stops_at_its_visits_and_a_missing_choice_ends_it(tmp_path, ks):
     ks.put("moon", "anthropic", "main", "sk-ant-api03-abcdefghijklmnop")
-    crew = _crew(tmp_path, ks, flow_policy(fail=("count a",)))
-    run = crew.team.begin("count and add", _grant(), flow=DIAMOND)
+    crew = _crew(tmp_path, ks, review_policy(rounds=99))
+    run = crew.team.begin("x", {}, flow={**REVIEW, "max_visits": 2})
     C.mark(crew.ws, run)
     asyncio.run(_drive(crew, run))
     res = crew.team.result(run)
-    assert res["attrs"]["outcome"] == "partial" and "## C (skipped: after A did not finish)" in res["content"]
-    assert "c" not in crew.g.node(crew.team.root(run))["attrs"]["flow_agents"]
+    assert res["attrs"]["outcome"] == "partial" and "Stopped: 'WRITE' would run more than 2 times" in res["content"]
+    # a plain-text answer that names one arrow chooses it; one that names none ends the flow
+    tmp2 = tmp_path / "b"
+    tmp2.mkdir()
+    crew = _crew(tmp2, ks, lambda agent, h, s: {"text": "all fine, 통과" if agent["goal"].startswith("review")
+                                                 else "done"})
+    run = crew.team.begin("x", {}, flow=REVIEW)
+    C.mark(crew.ws, run)
+    asyncio.run(_drive(crew, run))
+    path = crew.g.node(crew.team.root(run))["attrs"]["flow_path"]
+    assert [x["step"] for x in path] == ["write", "review", "publish"]

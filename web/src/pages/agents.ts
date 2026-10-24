@@ -3,9 +3,10 @@
 
 import { agents, Json } from '../lib/api';
 import { Child, h, replace, values } from '../lib/dom';
-import { act, empty, flashNext, form, go, link, main, num, pageHead, section, tag, title, when } from '../lib/ui';
-import { flowStates, flowView } from './flows';
+import { act, empty, flashNext, form, go, link, main, num, pageHead, section, showPending, tag, title, when } from '../lib/ui';
+import { flowProgress, flowView } from './flows';
 import { grantForm, Key, Options, providerName, roleName } from './grant';
+import { cronHelp, scheduling } from './schedule';
 
 const TABS = [{ href: '/agents/', label: '실행' }, { href: '/agents/flows', label: '순서도' },
   { href: '/agents/presets', label: '프리셋 · 예약' }, { href: '/agents/keys', label: 'API 키' },
@@ -29,7 +30,7 @@ export interface Recipe { goal: string; title: string; grant: Json; flow: Json |
 export function recipeOf(r: Json): Recipe {
   const { run: _run, approved: _approved, ...grant } = r.grant ?? {};
   void _run; void _approved;
-  return { goal: r.goal, title: String(r.title ?? '').replace(/ · \d\d-\d\d \d\d:\d\d$/, ''),  // not the time it ran
+  return { goal: r.input ?? r.goal, title: String(r.title ?? '').replace(/ · \d\d-\d\d \d\d:\d\d$/, ''),  // not the time it ran
            grant, flow: r.flow ?? null };
 }
 
@@ -39,7 +40,8 @@ export async function runs(): Promise<void> {
     from ? agents.get(`/runs/${encodeURIComponent(from)}`) : Promise.resolve(null)]);
   const recipe = source ? recipeOf(source) : null;
   const waiting = list.filter(r => r.phase === 'requested').length;
-  const gf = grantForm(keys, opts, recipe?.grant);
+  const flowRun = !!recipe?.flow;  // its routing is the flow's blocks': only the limits here
+  const gf = grantForm(keys, opts, recipe?.grant, { routes: !flowRun });
   const fresh = form({}, async (f, b) => {
     const v = values(f);
     const r = await act(b, () => agents.post('/runs', { goal: v.goal, title: v.title, save_as: v.save_as, grant: gf.grant(),
@@ -47,9 +49,9 @@ export async function runs(): Promise<void> {
     if (r) { flashNext('ok', '시작했습니다. 곧 에이전트가 일을 시작합니다.'); go(`/agents/runs/${r.id}`); }
   },
     recipe && h('p', { class: 'flash ok' }, '실행 ', link(`/agents/runs/${source.id}`, source.title || source.id),
-      '의 설정을 불러왔습니다. 고쳐서 시작하세요.', recipe.flow ? ' (같은 순서도로 실행합니다)' : ''),
-    h('label', null, '목표 ', h('span', { class: 'muted small' }, '무엇을 이루면 끝인지까지'),
-      h('textarea', { name: 'goal', rows: 4, required: true }, recipe?.goal ?? '')),
+      '의 설정을 불러왔습니다. 고쳐서 시작하세요.', flowRun ? ' (같은 순서도로 실행합니다. 블럭은 순서도 화면에서 고칩니다)' : ''),
+    h('label', null, flowRun ? '입력 ' : '목표 ', h('span', { class: 'muted small' }, flowRun ? '시작 블럭에 주는 내용' : '무엇을 이루면 끝인지까지'),
+      h('textarea', { name: 'goal', rows: 4, required: !flowRun }, recipe?.goal ?? '')),
     h('div', { class: 'cols' }, h('label', null, '제목', h('input', { name: 'title', value: recipe?.title ?? '' })),
       h('label', null, '프리셋으로도 저장 ', h('span', { class: 'muted small' }, '이름을 적으면 같은 설정을 남깁니다'),
         h('input', { name: 'save_as', pattern: '[a-z0-9][a-z0-9._\\-]*', placeholder: '예: daily-report' }))),
@@ -85,6 +87,16 @@ function tree(nodes: Json[]): Child {
   }));
 }
 
+function flowSection(r: Json): HTMLElement {
+  const { states, taken, path } = flowProgress(r);
+  const end = r.flow_end && r.flow_end !== 'end' ? r.flow_end : '';
+  return section('순서도',
+    h('p', { class: 'small' }, h('b', null, '지나온 길: '), path.length ? path.join(' → ') : '아직 시작하지 않았습니다.'),
+    end && h('p', { class: 'flash error' }, `순서도가 중간에 멈췄습니다: ${end}`),
+    flowView(r.flow, states, taken),
+    r.preset && h('p', { class: 'muted small' }, link(`/agents/flows/${r.preset}`, '이 순서도 열기')));
+}
+
 let poll = 0;
 
 export async function run(id: string): Promise<void> {
@@ -97,13 +109,14 @@ export async function run(id: string): Promise<void> {
     r.approve_url && h('p', { class: 'flash' }, 'Claude가 요청한 실행입니다. 키·모델·한도를 정해 ',
       h('a', { href: r.approve_url }, '승인 화면에서 승인'), '하면 시작합니다.'),
     r.error && h('p', { class: 'flash error' }, r.error),
-    section('목표', h('p', null, r.goal)),
+    r.flow ? section('입력', r.input ? h('p', null, r.input) : h('p', { class: 'muted' }, '없음 (블럭의 명령만으로 실행)'))
+      : section('목표', h('p', null, r.goal)),
     g && section('허가',
       h('ol', null, g.routes.map((x: Json) => h('li', null, h('b', null, x.key), ` ${x.model} `,
         h('span', { class: 'muted small' }, x.roles.map(roleName).join(', '))))),
       h('p', { class: 'muted small' }, `동시 ${g.max_agents} · 총 ${g.max_spawns} · 깊이 ${g.max_depth} · 턴 ${g.max_steps} · ` +
         `토큰 ${g.max_tokens || '무제한'} · 문맥 ${g.context} · 보관 ${g.retention} · 정책 ${g.policy}`)),
-    r.flow && section('순서도', flowView(r.flow, flowStates(r))),
+    r.flow && flowSection(r),
     section('에이전트',
       h('p', { class: 'muted small' }, `입력 ${num(r.usage.input)} · 출력 ${num(r.usage.output)} · 캐시 ${num(r.usage.cache_read)} 토큰`),
       tree(r.tree) ?? empty(r.phase === 'requested' ? '승인되면 시작합니다.' : '아직 시작하지 않았습니다.'),
@@ -143,15 +156,14 @@ export async function presets(): Promise<void> {
     pageHead('프리셋 · 예약', '자주 하는 실행을 목표와 허가째로 저장해 두고, 한 번에 실행하거나 정해진 때 저절로 실행되게 합니다. ' +
       '예약은 미리 해 둔 승인입니다: 때가 되면 이 설정 그대로 실행이 시작됩니다.', TABS),
     section(`프리셋 (${list.length})`,
-      h('p', { class: 'muted small' }, '예약은 cron 다섯 칸(분 시 일 월 요일, 서버 시간)입니다. 예: ', h('code', null, '0 9 * * mon-fri'),
-        ' 평일 9시, ', h('code', null, '@daily'), ' 매일. 목표에 ', h('code', null, '{date}'), '·', h('code', null, '{time}'),
-        '을 쓰면 실행한 때로 바뀝니다. 앞 실행이 아직 돌고 있으면 그 회차는 건너뜁니다.'),
+      h('p', { class: 'muted small' }, cronHelp(), ' 목표에 ', h('code', null, '{date}'), '·', h('code', null, '{time}'),
+        '을 쓰면 실행한 때로 바뀝니다. 순서도는 ', link('/agents/flows', '순서도'), ' 화면에서 만들고 고칩니다.'),
       list.length ? list.map(p => presetItem(p, keys, opts)) : empty('아직 프리셋이 없습니다.')),
     section('새 프리셋', form({}, async (f, b) => {
       const v = values(f);
       const p = await act(b, () => agents.put(`/presets/${encodeURIComponent(String(v.name))}`,
-        { goal: v.goal, title: v.title, grant: fresh.grant() }), '저장했습니다.');
-      if (p) void presets();
+        { goal: v.goal, title: v.title, grant: fresh.grant() }));
+      if (p) { flashNext('ok', '저장했습니다.'); await presets(); showPending(); }
     },
       h('div', { class: 'cols' },
         h('label', null, '이름 ', h('span', { class: 'muted small' }, '영문 소문자·숫자·.-_'),
@@ -163,54 +175,35 @@ export async function presets(): Promise<void> {
 
 function presetItem(p: Json, keys: Key[], opts: Options): HTMLElement {
   const g = p.grant;
-  const edit = grantForm(keys, opts, g);
-  const preview = h('span', { class: 'muted small' });
-  const cron = h('input', { name: 'cron', required: true, placeholder: '0 9 * * mon-fri', class: 'cron', oninput: () => {
-    window.clearTimeout(Number(cron.dataset.t));
-    cron.dataset.t = String(window.setTimeout(async () => {
-      if (!cron.value.trim()) { preview.textContent = ''; return; }
-      try {
-        const r = await agents.post('/cron', { cron: cron.value });
-        preview.textContent = `다음: ${r.next.slice(0, 3).map(when).join(', ')}`;
-      } catch (e) { preview.textContent = (e as Error).message; }
-    }, 300));
-  } });
+  const edit = !p.flow && grantForm(keys, opts, g);
+  const sched = scheduling(p.name, p.schedules, presets);
   return h('div', { class: 'item' },
-    h('div', { class: 'item-head' }, h('b', null, p.title), h('code', null, p.name),
-      h('span', { class: 'muted small' }, `${g.routes.map((r: Json) => `${r.model} (${r.roles.map(roleName).join('/')})`).join(', ')} · ` +
-        `동시 ${g.max_agents} · 턴 ${g.max_steps}`)),
-    h('p', { class: 'small' }, p.goal),
+    h('div', { class: 'item-head' }, h('b', null, p.title), h('code', null, p.name), p.flow && tag('순서도'),
+      h('span', { class: 'muted small' }, (p.flow ? `블럭 ${p.flow.steps.length}` :
+        g.routes.map((r: Json) => `${r.model} (${r.roles.map(roleName).join('/')})`).join(', ')) +
+        ` · 동시 ${g.max_agents} · 턴 ${g.max_steps}`)),
+    p.goal && h('p', { class: 'small' }, p.goal),
     h('div', { class: 'actions' },
       h('button', { onclick: async (e: Event) => {
         const r = await act(e.target as HTMLButtonElement, () => agents.post(`/presets/${p.name}/run`));
         if (r) { flashNext('ok', '시작했습니다.'); go(`/agents/runs/${r.id}`); }
       } }, '지금 실행'),
-      form({ class: 'inline' }, async (_f, b) => {
-        if (await act(b, () => agents.post(`/presets/${p.name}/schedules`, { cron: cron.value }), '예약을 추가했습니다.')) void presets();
-      }, cron, h('button', { class: 'secondary' }, '예약 추가')),
+      p.flow && link(`/agents/flows/${p.name}`, h('span', { class: 'button secondary' }, '순서도 고치기')),
       h('button', { class: 'secondary', onclick: async (e: Event) => {
         if (!confirm(`프리셋 ${p.name}과 그 예약을 지울까요?`)) return;
-        if (await act(e.target as HTMLButtonElement, () => agents.del(`/presets/${p.name}`), '지웠습니다.')) void presets();
+        if (await act(e.target as HTMLButtonElement, () => agents.del(`/presets/${p.name}`))) {
+          flashNext('ok', '지웠습니다.');
+          await presets();
+          showPending();
+        }
       } }, '삭제')),
-    preview,
-    p.schedules.length > 0 && h('div', { class: 'table-wrap' }, h('table', null,
-      h('thead', null, h('tr', null, ['cron', '상태', '다음', '마지막', '메모', ''].map(t => h('th', null, t)))),
-      h('tbody', null, p.schedules.map((s: Json) => h('tr', null,
-        h('td', null, h('code', null, s.cron)), h('td', null, s.enabled ? tag('켜짐', 'ok') : tag('꺼짐')),
-        h('td', null, when(s.next_at)),
-        h('td', null, when(s.last_at), s.last_run && [' ', link(`/agents/runs/${s.last_run}`, '실행')]),
-        h('td', { class: 'wrap muted small' }, s.note),
-        h('td', null,
-          h('button', { class: 'secondary', onclick: async (e: Event) => {
-            if (await act(e.target as HTMLButtonElement, () => agents.patch(`/schedules/${s.id}`, { enabled: !s.enabled }))) void presets();
-          } }, s.enabled ? '끄기' : '켜기'), ' ',
-          h('button', { class: 'secondary', onclick: async (e: Event) => {
-            if (await act(e.target as HTMLButtonElement, () => agents.del(`/schedules/${s.id}`), '예약을 지웠습니다.')) void presets();
-          } }, '삭제'))))))),
-    h('details', { class: 'panel' }, h('summary', null, '설정 고치기'), form({}, async (f, b) => {
+    sched.add, sched.list,
+    edit && h('details', { class: 'panel' }, h('summary', null, '설정 고치기'), form({}, async (f, b) => {
       const v = values(f);
-      if (await act(b, () => agents.put(`/presets/${p.name}`, { goal: v.goal, title: v.title, grant: edit.grant() }), '저장했습니다.')) {
-        void presets();
+      if (await act(b, () => agents.put(`/presets/${p.name}`, { goal: v.goal, title: v.title, grant: edit.grant() }))) {
+        flashNext('ok', '저장했습니다.');
+        await presets();
+        showPending();
       }
     },
       h('label', null, '제목', h('input', { name: 'title', value: p.title })),

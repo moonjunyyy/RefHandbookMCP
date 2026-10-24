@@ -131,6 +131,14 @@ ROLE_TEXT = {
 }
 
 
+def next_label(choices: list[dict[str, str]], want: str) -> str | None:
+    """The arrow a flow step's agent named (its label as drawn), by name or by the step it leads to."""
+    for c in choices:
+        if want in (c["label"].lower(), c["to"].lower()):
+            return c["label"]
+    return None
+
+
 def system_prompt(role: str) -> str:
     return COMMON + "\n" + ROLE_TEXT[role]
 
@@ -179,8 +187,10 @@ TOOLS = [
     _tool("checkpoint", "Write a digest of your work so far (goal, done, open, decisions, note ids); your "
           "context restarts from it. Call it when asked to.", {"digest": S}, ["digest"]),
     _tool("finish", "End your work: outcome, the text your parent (or the user) reads, and the notes that "
-          "back it.", {"outcome": {"type": "string", "enum": ["done", "partial", "failed"]}, "text": S,
-                       "refs": IDS}, ["outcome", "text"]),
+          "back it. In a flow whose step has several next steps, next names the one to go to.",
+          {"outcome": {"type": "string", "enum": ["done", "partial", "failed"]}, "text": S, "refs": IDS,
+           "next": {"type": "string", "description": "in a flow: the name of the next step, as your brief lists"}},
+          ["outcome", "text"]),
     _tool("lookup", "Find handbook cards for a situation (a symptom, an error, a few words).", {"situation": S},
           ["situation"]),
     _tool("open_entry", "Open a handbook card by id.", {"id": S}, ["id"]),
@@ -396,81 +406,97 @@ class Crew:
         return None
 
     def _conduct_step(self, aid: str, flow: dict[str, Any]) -> bool:
-        """One look at the flow: open what can start, skip what cannot run; True once it is finished."""
+        """One look at the flow: while a block runs, wait; when it has finished, follow the arrow its
+        agent chose into the next block, or end. True once the flow has ended.
+
+        The conductor keeps `flow_path` (each block run in order: step, agent, the arrow taken out of
+        it) and, at the end, `flow_end` (why it stopped)."""
         t, g = self.team, self.g
         root = g.node(aid)
         run = root["attrs"]["run"]
-        placed: dict[str, str] = dict(root["attrs"].get("flow_agents") or {})  # step → agent
-        skipped: dict[str, str] = dict(root["attrs"].get("flow_skipped") or {})  # step → why
-        steps = {s["id"]: s for s in flow["steps"]}
-
-        def outcome(sid: str) -> str | None:  # done, partial, failed, cancelled; None while not settled
-            if sid in skipped:
-                return "skipped"
-            a = placed.get(sid)
-            if a is None:
-                return None
-            n = g.node(a)
-            return (n["attrs"].get("outcome") or "failed") if n["state"] == "closed" else None
-
-        changed = False
-        for sid in flows.order(flow["steps"], flow["edges"]):
-            if sid in placed or sid in skipped:
-                continue
-            before = flows.inputs(flow, sid)
-            got = {b: outcome(b) for b in before}
-            if any(o in ("failed", "cancelled", "skipped") for o in got.values()):
-                bad = [b for b, o in got.items() if o in ("failed", "cancelled", "skipped")]
-                skipped[sid] = f"after {', '.join(steps[b]['title'] for b in bad)} did not finish"
-                changed = True
-                continue
-            if any(o is None for o in got.values()):
-                continue  # still waiting on a step before it
-            if t.free_slot(run) is None:
-                continue  # every slot busy: next look
-            s = steps[sid]
-            given, lines = [], []
-            for b in before:
-                p = self._exit(aid, placed[b])
-                if p is not None:
-                    lines.append(f"From step '{steps[b]['title']}' ({got[b]}): {p['content']}")
-                    given += [n["id"] for n in t.carried(p["id"])]
-            goal = s["goal"] + (("\n\nWhat the steps before this one returned:\n" + "\n\n".join(lines)) if lines else "")
-            try:
-                child = t.open_agent(run, role=s["role"], goal=goal, parent=aid, model=s["model"] or None,
-                                     give=list(dict.fromkeys(given)), actor=K, variant=s["title"])
-            except ScopeRefused:
-                continue  # no slot or ticket just now
-            except (KernelError, HandbookError) as e:
-                skipped[sid] = f"could not start: {e}"
-                changed = True
-                continue
-            t.update_agent(child, step=sid)
-            placed[sid] = child
-            changed = True
-        if changed:
-            t.update_agent(aid, flow_agents=placed, flow_skipped=skipped, status="waiting")
-        if any(outcome(sid) is None for sid in steps):
+        path: list[dict[str, Any]] = [dict(x) for x in root["attrs"].get("flow_path") or []]
+        if not path:
+            return self._open_block(aid, run, flow, path, flow["start"], None)
+        last = path[-1]
+        if "agent" not in last:  # opened by an earlier look that found no slot: try again
+            return self._open_block(aid, run, flow, path[:-1], last["step"], last.get("after"))
+        n = g.node(last["agent"])
+        if n["state"] != "closed":
             return False
-        # every step settled: read each one's result, and return them all
-        parts, refs, done = [], [], 0
-        for sid in flows.order(flow["steps"], flow["edges"]):
-            o = outcome(sid)
-            if sid in skipped:
-                parts.append(f"## {steps[sid]['title']} (skipped: {skipped[sid]})")
-                continue
-            p = self._exit(aid, placed[sid])
-            if p is not None and p["state"] == "sent":
-                t.read(aid, p["id"])
-            parts.append(f"## {steps[sid]['title']} ({o})\n{p['content'] if p else ''}")
-            done += o in ("done", "partial")
-            if sid in flows.sinks(flow) and p is not None:
-                refs += [n["id"] for n in t.carried(p["id"])]
+        s = flows.step(flow, last["step"])
+        outcome = n["attrs"].get("outcome") or "failed"
+        p = self._exit(aid, last["agent"])
+        if p is not None and p["state"] == "sent":
+            t.read(aid, p["id"])
+        chosen = n["attrs"].get("next")
+        edge = flows.choose(flow, s["id"], chosen)
+        if outcome in ("failed", "cancelled") and not chosen:
+            return self._end(aid, flow, path, f"'{s['title']}' {outcome}")
+        if edge is None:
+            if flows.outs(flow, s["id"]):
+                return self._end(aid, flow, path, f"'{s['title']}' chose no next step"
+                                 + (f" ({chosen!r} is not one of its arrows)" if chosen else ""))
+            return self._end(aid, flow, path, "")
+        visits = sum(1 for x in path if x["step"] == edge["to"])
+        if visits >= flow["max_visits"]:
+            nxt = flows.step(flow, edge["to"])
+            return self._end(aid, flow, path, f"'{nxt['title']}' would run more than {flow['max_visits']} times")
+        last["next"] = edge["label"]
+        before = {"title": s["title"], "outcome": outcome, "text": p["content"] if p else "",
+                  "give": [x["id"] for x in t.carried(p["id"])] if p else []}
+        return self._open_block(aid, run, flow, path, edge["to"], before)
+
+    def _open_block(self, aid: str, run: str, flow: dict[str, Any], path: list[dict[str, Any]], sid: str,
+                    before: dict[str, Any] | None) -> bool:
+        """Open the agent of a block: its command, then what the block before it returned (and the notes
+        that came with it); it learns the arrows out of it, to choose one when it finishes."""
+        t = self.team
+        s = flows.step(flow, sid)
+        goal = s["command"]
+        if before:
+            goal += (f"\n\nWhat the previous step '{before['title']}' returned ({before['outcome']}):\n"
+                     f"{before['text']}")
+        choices = [{"label": e["label"], "to": flows.step(flow, e["to"])["title"]} for e in flows.outs(flow, sid)]
+        try:
+            child = t.open_agent(run, role="worker", goal=goal, parent=aid, model=s["model"], key=s["key"],
+                                 give=(before or {}).get("give") or [], actor=K, variant=s["title"])
+        except ScopeRefused:
+            # no slot just now (the block before is still releasing its own): the next look tries again
+            path = [*path, {"step": sid, "after": before}]
+            t.update_agent(aid, flow_path=path, status="waiting")
+            return False
+        except (KernelError, HandbookError) as e:
+            return self._end(aid, flow, path, f"'{s['title']}' could not start: {e}")
+        t.update_agent(child, step=sid, block=s["title"], choices=choices)
+        t.update_agent(aid, flow_path=[*path, {"step": sid, "agent": child}], status="waiting")
+        return False
+
+    def _end(self, aid: str, flow: dict[str, Any], path: list[dict[str, Any]], why: str) -> bool:
+        """End the flow: the result is the last block's text, after the path taken; `why`, if the flow
+        stopped before a block with no arrow out of it."""
+        t, g = self.team, self.g
+        path = [x for x in path if "agent" in x]
+        names = [flows.step(flow, x["step"])["title"] for x in path]
+        last = path[-1] if path else None
+        text, refs, outcome = "", [], "failed"
+        if last is not None:
+            n = g.node(last["agent"])
+            p = self._exit(aid, last["agent"])
+            if p is not None:
+                if p["state"] == "sent":
+                    t.read(aid, p["id"])
+                text = p["content"]
+                refs = [x["id"] for x in t.carried(p["id"])]
+            outcome = n["attrs"].get("outcome") or "failed"
+            if outcome == "cancelled":
+                outcome = "failed"
+            if why and outcome == "done":
+                outcome = "partial"
         for p in t.inbox(aid):  # anything else addressed to the conductor
             t.read(aid, p["id"])
-        total = len(steps)
-        result = "done" if done == total else "partial" if done else "failed"
-        t.finish(aid, result, "\n\n".join(parts), list(dict.fromkeys(refs)), actor=K)
+        head = "Path: " + (" → ".join(names) or "(none)") + (f"\nStopped: {why}" if why else "")
+        t.update_agent(aid, flow_path=path, flow_end=why or "end")
+        t.finish(aid, outcome, f"{head}\n\n{text}".strip(), list(dict.fromkeys(refs)), actor=K)
         return True
 
     def _fail(self, aid: str, why: str) -> None:
@@ -498,7 +524,17 @@ class Crew:
         digest = a.get("digest")
         parts = [f"You are agent {aid}, role {a['role']}, depth {a['depth']} of at most {grant['max_depth']}.",
                  f"Run {run}. The user's goal: {r['content']}"]
-        if a.get("parent"):
+        if a.get("block"):
+            parts.append(f"You are the step '{a['block']}' of a flow the user drew. Your task: {n['content']}")
+            choices = a.get("choices") or []
+            if len(choices) > 1:
+                parts.append("When you finish, choose what comes next with finish(next=...), one of:\n"
+                             + "\n".join(f"- {c['label']!r} (goes to the step '{c['to']}')" for c in choices))
+            elif choices:
+                parts.append(f"When you finish, the step '{choices[0]['to']}' comes next and gets your finish text.")
+            else:
+                parts.append("Yours is the last step: your finish text is the result the user reads.")
+        elif a.get("parent"):
             parts.append(f"Your parent is {a['parent']}; your task from it: {n['content']}")
         else:
             parts.append("You lead the run: your finish text is the result the user reads.")
@@ -563,7 +599,8 @@ class Crew:
                 self.team.update_agent(aid, status="running")
                 opts = P.Options(effort=grant.get("effort") or None, trim=n["attrs"]["context"] == "trim",
                                  agent={"id": aid, "role": ctx.role, "goal": n["content"], "run": ctx.run,
-                                        "parent": n["attrs"].get("parent"), "variant": n["attrs"].get("variant")})
+                                        "parent": n["attrs"].get("parent"), "variant": n["attrs"].get("variant"),
+                                        "model": n["attrs"].get("model")})
                 model = grant["routes"][ctx.route]["model"]
             step = await self._call(ctx, model, opts)
             ctx.transcript.append(ctx.seg, "turn", step.native, step.calls)
@@ -661,9 +698,14 @@ class Crew:
         return ""
 
     def _auto_finish(self, ctx: Ctx, step: P.Step) -> bool:
-        """An agent that keeps answering in plain text (or a refusal) ends with that text as its exit."""
+        """An agent that keeps answering in plain text (or a refusal) ends with that text as its exit (a
+        flow step's choice: the one next step its text names, if exactly one)."""
         outcome = "failed" if step.refusal else "done"
         with self.lock:
+            choices = self.g.node(ctx.aid)["attrs"].get("choices") or []
+            named = [c["label"] for c in choices if c["label"].lower() in (step.text or "").lower()]
+            if len(choices) > 1 and len(named) == 1:
+                self.team.update_agent(ctx.aid, next=named[0])
             try:
                 self.team.finish(ctx.aid, outcome, step.text or "(no answer)", actor="model")
                 return True
@@ -981,10 +1023,18 @@ class Crew:
         ctx.new_segment = digest
         return f"digest {nid} recorded; your context restarts from it"
 
-    def _t_finish(self, ctx: Ctx, call: P.ToolCall, outcome: str, text: str, refs: list[str] | None = None) -> str:
+    def _t_finish(self, ctx: Ctx, call: P.ToolCall, outcome: str, text: str, refs: list[str] | None = None,
+                  next: str | None = None) -> str:  # noqa: A002 — the tool's word
         if outcome not in ("done", "partial", "failed"):
             raise TeamError("outcome: done, partial or failed")
         with self.lock:
+            choices = self.g.node(ctx.aid)["attrs"].get("choices") or []
+            label = next_label(choices, " ".join(str(next).split()).lower()) if choices and next else None
+            if (next and choices and label is None) or (label is None and len(choices) > 1):
+                raise TeamError("say which step comes next: finish(next=...) with one of "
+                                + ", ".join(repr(c["label"]) for c in choices))
+            if label:
+                self.team.update_agent(ctx.aid, next=label)
             try:
                 self.team.finish(ctx.aid, outcome, text, refs)
             except ScopeRefused as e:

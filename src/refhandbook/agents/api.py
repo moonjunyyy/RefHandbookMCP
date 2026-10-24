@@ -39,7 +39,7 @@ from starlette.requests import Request
 from portal.api import ApiError, answer, bad, body, endpoint, missing, unauthorized
 
 from ..store import Handbook, HandbookError
-from . import cron, crew
+from . import cron, crew, flows
 from . import providers as P
 from . import keys as K
 from .presets import Presets
@@ -120,11 +120,18 @@ def install(m: Any, *, stores: Callable[[str], Handbook], who: Callable[[Request
         return ws, Team(ws.g), Presets(ws.g, crew.schedules_marker(ws))
 
     def grant_of(data: dict[str, Any], uid: str) -> dict[str, Any]:
-        """The grant from a request, its keys checked to be the user's (check_grant does the rest)."""
-        g = data.get("grant")
+        """The grant from a request, its keys checked to be the user's (check_grant does the rest). With
+        a flow, the keys are its blocks' (its routing comes from them)."""
+        g = data.get("grant") or ({} if data.get("flow") is not None else None)
         if not isinstance(g, dict):
             raise bad("grant: an object (routes, limits, levels, policy, effort)")
         mine = {k.ref for k in keystore().list(uid)}
+        if data.get("flow") is not None:
+            try:
+                flows.check(data["flow"], mine)
+            except TeamError as e:
+                raise bad(str(e)) from e
+            return {k: v for k, v in g.items() if k != "routes"}
         for i, r in enumerate(g.get("routes") or []):
             if not isinstance(r, dict) or r.get("key") not in mine:
                 raise bad(f"route {i + 1}: a key you registered")
@@ -229,9 +236,9 @@ def install(m: Any, *, stores: Callable[[str], Handbook], who: Callable[[Request
             res = t.result(run)
             root = t.root(run)
             ra = t.g.node(root)["attrs"] if root else {}
-            return {**_run_summary(t, r), "goal": r["content"], "error": a.get("error"), "grant": grant,
-                    "flow": a.get("flow"), "flow_agents": ra.get("flow_agents") or {},
-                    "flow_skipped": ra.get("flow_skipped") or {},
+            return {**_run_summary(t, r), "goal": r["content"], "input": "" if a.get("no_input") else r["content"],
+                    "error": a.get("error"), "grant": grant,
+                    "flow": a.get("flow"), "flow_path": ra.get("flow_path") or [], "flow_end": ra.get("flow_end"),
                     "proposal": a.get("proposal") if a.get("phase") == "requested" else None,
                     "approve_url": approve_url(run) if a.get("phase") == "requested" else None,
                     "usage": t.run_usage(run), "tree": t.tree(run),

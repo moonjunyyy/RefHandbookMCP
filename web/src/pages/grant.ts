@@ -23,8 +23,30 @@ const OTHER = '__other__';
 export const roleName = (r: string) => ROLE[r] ?? r;
 export const providerName = (p: string) => PROVIDER[p] ?? p;
 
-/** The form's parts and a way to read the grant back out of it. */
-export function grantForm(keys: Key[], opts: Options, initial?: Json): { el: HTMLElement; grant: () => Json } {
+/** A model of a key: the key's own list, or typed (when it lists none, or "직접 입력"). `set` hears each
+ * change; a key that lists models starts on its first when nothing is chosen yet. */
+export function modelPicker(listed: string[], value: string, set: (model: string) => void): HTMLElement {
+  const custom = value !== '' && !listed.includes(value);
+  const input = h('input', { value, placeholder: '모델 이름', class: custom || !listed.length ? '' : 'hidden',
+                             oninput: (e: Event) => set((e.target as HTMLInputElement).value.trim()) });
+  if (!listed.length) return input;  // nothing listed for this key: type it
+  const sel = h('select', { onchange: (e: Event) => {
+    const v = (e.target as HTMLSelectElement).value;
+    if (v === OTHER) { input.classList.remove('hidden'); set(input.value.trim()); input.focus(); }
+    else { input.classList.add('hidden'); set(v); }
+  } },
+    listed.map(m => h('option', { value: m, selected: m === value }, m)),
+    h('option', { value: OTHER, selected: custom }, '직접 입력…'));
+  if (!value) set(listed[0]);
+  return h('div', { class: 'model-pick' }, sel, input);
+}
+
+export const keyLabel = (k: Key) => `${k.ref} (${providerName(k.provider)}${k.status !== 'ok' ? ', ' + k.status : ''})`;
+
+/** The form's parts and a way to read the grant back out of it. `routes: false`: no routing (a flow's
+ * routing is its blocks' keys and models), only the limits and levels. */
+export function grantForm(keys: Key[], opts: Options, initial?: Json, { routes: withRoutes = true } = {}):
+    { el: HTMLElement; grant: () => Json } {
   const g = { ...opts.defaults, ...(initial ?? {}) };
   const byRef = new Map(keys.map(k => [k.ref, k]));
   let routes: Route[] = (initial?.routes as Route[] | undefined)?.map(r => ({ ...r, roles: [...r.roles] })) ??
@@ -38,23 +60,7 @@ export function grantForm(keys: Key[], opts: Options, initial?: Json): { el: HTM
     draw();
   });
 
-  function modelField(r: Route): HTMLElement {
-    const k = byRef.get(r.key);
-    const listed = k?.models ?? [];
-    const custom = r.model !== '' && !listed.includes(r.model);
-    const input = h('input', { value: r.model, placeholder: '모델 이름', class: custom || !listed.length ? '' : 'hidden',
-                               oninput: (e: Event) => { r.model = (e.target as HTMLInputElement).value; } });
-    if (!listed.length) return input;  // nothing listed for this key: type it
-    const sel = h('select', { onchange: (e: Event) => {
-      const v = (e.target as HTMLSelectElement).value;
-      if (v === OTHER) { input.classList.remove('hidden'); r.model = input.value; input.focus(); }
-      else { input.classList.add('hidden'); r.model = v; }
-    } },
-      listed.map(m => h('option', { value: m, selected: m === r.model }, m)),
-      h('option', { value: OTHER, selected: custom }, '직접 입력…'));
-    if (!r.model) r.model = listed[0];
-    return h('div', { class: 'model-pick' }, sel, input);
-  }
+  const modelField = (r: Route) => modelPicker(byRef.get(r.key)?.models ?? [], r.model, m => { r.model = m; });
 
   function draw(): void {
     replace(body, routes.map((r, i) => h('tr', null,
@@ -63,8 +69,7 @@ export function grantForm(keys: Key[], opts: Options, initial?: Json): { el: HTM
         r.key = (e.target as HTMLSelectElement).value;
         r.model = byRef.get(r.key)?.models[0] ?? '';  // the models are the key's own
         draw();
-      } }, keys.map(k => h('option', { value: k.ref, selected: k.ref === r.key },
-        `${k.ref} (${providerName(k.provider)}${k.status !== 'ok' ? ', ' + k.status : ''})`)))),
+      } }, keys.map(k => h('option', { value: k.ref, selected: k.ref === r.key }, keyLabel(k))))),
       h('td', null, modelField(r)),
       h('td', { class: 'roles' }, opts.roles.map(role => h('label', { class: 'check' },
         h('input', { type: 'checkbox', checked: r.roles.includes(role), onchange: (e: Event) => {
@@ -94,7 +99,7 @@ export function grantForm(keys: Key[], opts: Options, initial?: Json): { el: HTM
   };
 
   const el = h('div', { class: 'grant' },
-    h('h3', null, '라우팅'),
+    withRoutes && [h('h3', null, '라우팅'),
     h('p', { class: 'muted small' }, '역할마다 위에서부터 첫 경로로 시작하고, 키가 거부되거나 제공자가 계속 실패하면 같은 역할의 ' +
       '다음 경로로 넘어갑니다. 모델 목록은 고른 키의 것입니다. 워커에 싼 모델을 두면 비용이 줄어듭니다.'),
     keys.length
@@ -102,7 +107,7 @@ export function grantForm(keys: Key[], opts: Options, initial?: Json): { el: HTM
           h('thead', null, h('tr', null, h('th', null, '순서'), h('th', null, '키'), h('th', null, '모델'),
             h('th', null, '역할'), h('th', null, ''))), body))
       : h('p', { class: 'flash error' }, '먼저 API 키를 등록하세요.'),
-    h('div', { class: 'actions' }, add),
+    h('div', { class: 'actions' }, add)],
     h('h3', null, '한도'),
     h('div', { class: 'fields' }, LIMITS.map(([, label], i) => h('label', null, label, limitInputs[i]))),
     h('h3', null, '정리 · 실행 환경'),
@@ -112,7 +117,7 @@ export function grantForm(keys: Key[], opts: Options, initial?: Json): { el: HTM
       h('label', null, 'effort', selects.effort)));
 
   function grant(): Json {
-    const out: Json = { routes: routes.map(r => ({ key: r.key, model: r.model.trim(), roles: r.roles })) };
+    const out: Json = withRoutes ? { routes: routes.map(r => ({ key: r.key, model: r.model.trim(), roles: r.roles })) } : {};
     LIMITS.forEach(([k], i) => { if (limitInputs[i].value !== '') out[k] = Number(limitInputs[i].value); });
     for (const [k, sel] of Object.entries(selects)) out[k] = (sel as HTMLSelectElement).value;
     return out;
