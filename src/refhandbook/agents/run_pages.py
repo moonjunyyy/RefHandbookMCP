@@ -132,7 +132,7 @@ def grant_form(action: str, keys: list[KeyInfo], policies: list[str], hidden: st
                     f"<td class='roles'>{checks}</td></tr>")
     routes = ("<div class='table-wrap'><table class='routes'><thead><tr><th>순서</th><th>키</th><th>모델</th><th>역할</th>"
               f"</tr></thead><tbody>{''.join(rows)}</tbody></table></div>{_models(keys)}")
-    limits = "".join(f"<label>{label}<input name={k} type=number min=0 value='{_e(v[k])}'></label>"
+    limits = "".join(f"<label>{label}<input name={k} type=number min=0 step=any value='{_e(v[k])}'></label>"
                      for k, label in LIMIT_FIELDS)
 
     def levels(name: str, values: tuple[str, ...]) -> str:
@@ -205,7 +205,27 @@ def _tree(nodes: list[dict[str, Any]]) -> str:
     return f"<ul class='tree'>{''.join(items)}</ul>"
 
 
-def run_page(uid: str, t: Team, run: str, keys: list[KeyInfo], policies: list[str], hidden: str, q: Any) -> str:
+def draft_grant(f: dict[str, str]) -> dict[str, Any]:
+    """A refused grant form read back as it was filled in (no checks: it is only shown again)."""
+    routes = []
+    for i in range(MAX_ROUTES):
+        key, model = f.get(f"route{i}_key", ""), f.get(f"route{i}_model", "")
+        if key or model:
+            routes.append({"key": key, "model": model, "roles": [r for r in ROLES if f.get(f"route{i}_{r}")]})
+    out: dict[str, Any] = {"routes": routes}
+    for k, _ in LIMIT_FIELDS:
+        if k in f:
+            out[k] = f[k]
+    for k in ("context", "handoff", "retention", "policy", "effort"):
+        if k in f:
+            out[k] = f[k]
+    return out
+
+
+def run_page(uid: str, t: Team, run: str, keys: list[KeyInfo], policies: list[str], hidden: str, q: Any,
+             draft: dict[str, Any] | None = None) -> str:
+    """A run the model asked for: its grant form (prefilled from what it suggested, or from `draft`:
+    what the user filled in and was refused)."""
     from .team import render_note
 
     r = t.g.node(run)
@@ -222,7 +242,7 @@ def run_page(uid: str, t: Team, run: str, keys: list[KeyInfo], policies: list[st
     cancel = (f"<form class=inline method=post action='/approvals/runs/{_e(run)}/reject'>{hidden}"
               "<button class=secondary>{label}</button></form>")
     if phase == "requested" and r["state"] == "open":
-        sugg = a.get("proposal") or {}
+        sugg = draft if draft is not None else (a.get("proposal") or {})
         out.append("<section class='card section'><h2>승인</h2><p class='muted small'>모델이 제안한 값으로 채워져 "
                    "있습니다. 키·모델·한도를 정해 승인하면 시작합니다.</p>"
                    + (grant_form(f"/approvals/runs/{run}/approve", keys, policies, hidden, goal=False, proposal=sugg,

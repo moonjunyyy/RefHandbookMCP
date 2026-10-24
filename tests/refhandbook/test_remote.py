@@ -532,9 +532,19 @@ def test_a_policy_is_granted_on_the_page(client):
                headers=tok, follow_redirects=False)
     assert "ok=" in r.headers["location"] and w.policy("net")["attrs"]["exec_work"] is True
     assert "빌드 실행" in c.get("/approvals", headers=tok).text
+    # numbers as they are shown (120.0 before) are taken; a refusal keeps what was typed
+    r = c.post("/approvals/policy", data={"name": "net", "commands": "sh cat", "timeout": "30.0", "memory_mb": "1,024",
+                                          "csrf": _csrf(page)}, headers=tok, follow_redirects=False)
+    assert "ok=" in r.headers["location"] and w.policy("net")["attrs"]["timeout"] == 30 \
+        and w.policy("net")["attrs"]["memory_mb"] == 1024
+    assert "value='30'" in c.get("/approvals", headers=tok).text  # not 30.0
+    r = c.post("/approvals/policy", data={"name": "net", "commands": "sh cat my-typed-cmd-xyz", "timeout": "1.5",
+                                          "description": "typed by hand", "csrf": _csrf(page)}, headers=tok)
+    assert r.status_code == 400 and "정수로 적어 주세요" in r.text
+    assert "typed by hand" in r.text and "my-typed-cmd-xyz" in r.text and "<details class='panel' open>" in r.text
     r = c.post("/approvals/policy", data={"name": "bad", "commands": "no-such-tool-xyz", "csrf": _csrf(page)},
                headers=tok, follow_redirects=False)
-    assert "err=" in r.headers["location"]
+    assert r.status_code == 400 and "flash error" in r.text  # the page again, saying why
 
 
 def test_a_grant_the_model_asked_for_is_approved_on_the_page(client):
@@ -553,7 +563,7 @@ def test_a_grant_the_model_asked_for_is_approved_on_the_page(client):
     assert r.status_code == 303 and "ok=" in r.headers["location"]
     assert Workspace(server._user_store("moon")).policy("wider")["attrs"]["network"] is True
     r = c.post("/approvals/cap/approve", data=form, headers=tok, follow_redirects=False)  # nothing waits any more
-    assert "err=" in r.headers["location"]
+    assert r.status_code == 400 and "flash error" in r.text  # the page again, saying why
 
 
 def test_the_approval_page_opens_without_the_default_policy(client):

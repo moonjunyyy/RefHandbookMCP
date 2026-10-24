@@ -116,8 +116,10 @@ def install(m: Any, *, stores: Callable[[str], Handbook], uid_of: Callable[[str]
         try:
             done = await locked(lambda: action(Workspace(stores(uid)), form))
             return back("/approvals", done)
-        except HandbookError as e:
-            return back("/approvals", err=str(e))
+        except HandbookError as e:  # the page again, with what was typed still in its form
+            draft = form if request.url.path == "/approvals/policy" else None  # the forms that keep a draft
+            body = await locked(lambda: _overview(Workspace(stores(uid)), uid, csrf(uid), {"err": str(e)}, draft=draft))
+            return _html(body, 400)
 
     async def get_page(request: Request, here: str, render: Callable[[str, str], str]) -> Response:
         uid = who(request)
@@ -178,8 +180,13 @@ def install(m: Any, *, stores: Callable[[str], Handbook], uid_of: Callable[[str]
             return run
         try:
             run = await locked(act)
-        except HandbookError as e:
-            return back(f"/approvals/runs/{request.path_params['run']}", err=str(e))
+        except HandbookError as e:  # the form again, as it was filled in
+            def again() -> str:
+                ws = Workspace(stores(uid))
+                return run_pages.run_page(uid, Team(ws.g), run_of(request), keys, ws.policies(),
+                                          f"<input type=hidden name=csrf value='{csrf(uid)}'>", {"err": str(e)},
+                                          draft=run_pages.draft_grant(f))
+            return _html(await locked(again), 400)
         return back(f"/agents/runs/{run}", "승인했습니다. 곧 시작합니다.")
 
     @m.custom_route("/approvals/runs/{run}/reject", methods=["POST"])
@@ -242,17 +249,31 @@ def install(m: Any, *, stores: Callable[[str], Handbook], uid_of: Callable[[str]
                     changes["ports"] = "any" if ports == "any" else [int(x) for x in ports.split()]
                 except ValueError as e:
                     raise HandbookError("포트: 숫자 또는 any") from e
-            for k, cast in (("timeout", int), ("memory_mb", int), ("disk_mb", int), ("tmp_mb", int),
-                            ("concurrent", int), ("cpus", float)):
+            for k, label in LIMITS:
                 if f.get(k, "").strip():
-                    try:
-                        changes[k] = cast(f[k])
-                    except ValueError as e:
-                        raise HandbookError(f"{k}: 숫자가 아닙니다") from e
+                    changes[k] = _number(f[k], label, whole=k != "cpus")
             name = f.get("name", "")
             ws.set_policy(name, actor="user", **changes)
             return f"정책 {name} 저장"
         return await post(request, act)
+
+
+def _number(text: str, label: str, *, whole: bool) -> int | float:
+    """A number as a person writes it: 120, 120.0 or 1,024 (a whole number where one is needed)."""
+    try:
+        v = float(text.strip().replace(",", ""))
+    except ValueError as e:
+        raise HandbookError(f"{label}: 숫자로 적어 주세요 ({text.strip()!r})") from e
+    if whole:
+        if not v.is_integer():
+            raise HandbookError(f"{label}: 정수로 적어 주세요 ({text.strip()!r})")
+        return int(v)
+    return v
+
+
+def _shown(v: Any) -> str:
+    """A number as the form shows it: 120, not 120.0."""
+    return str(int(v)) if isinstance(v, float) and v.is_integer() else str(v)
 
 
 def _int(x: str | None) -> int:
@@ -362,35 +383,44 @@ def _offered(ws: Workspace) -> str:
     return "쓸 수 있는 원본: " + ", ".join(r.name + (" (읽기 전용)" if r.ro else "") for r in roots)
 
 
-def _policy(name: str, a: dict[str, Any], p: dict[str, Any] | None, hidden: str, offered: str = "") -> str:
-    """One policy as a folded panel: a summary line, and its form when opened (a new one has a name field)."""
+def _policy(name: str, a: dict[str, Any], p: dict[str, Any] | None, hidden: str, offered: str = "",
+            draft: dict[str, str] | None = None) -> str:
+    """One policy as a folded panel: a summary line, and its form when opened (a new one has a name field).
+    `draft`: what was typed into this form and refused: shown again as typed, the panel open."""
     ports = "any" if a.get("ports") in (None, "any") else " ".join(map(str, a.get("ports") or []))
     mounts = "\n".join(m["source"] + " " + m["target"] + (" rw" if m["rw"] else "") for m in a.get("mounts") or [])
+    d = draft or {}
+
+    def val(key: str, current: str) -> str:
+        return _e(d[key]) if key in d else _e(current)
+
+    def checked(key: str, current: bool) -> str:
+        return "checked" if ((d.get(key) == "on") if draft is not None else current) else ""
     if p:
         head = (f"<b>{_e(name)}</b><span class='muted small'>작성 {_e(p['author'])}</span>"
                 f"<span class='tag {'warn' if a['network'] else ''}'>네트워크 {'켜짐' if a['network'] else '꺼짐'}"
                 f"{' · ' + _e(ports) if a['network'] else ''}</span>"
                 f"<span class='tag'>명령 {'전부' if '*' in a['commands'] else len(a['commands'])}</span>"
                 + ("<span class='tag warn'>빌드 실행</span>" if a.get("exec_work") else "") +
-                f"<span class='tag'>{_e(a.get('timeout', ''))}s · {_e(a.get('memory_mb', ''))} MB</span>"
+                f"<span class='tag'>{_e(_shown(a.get('timeout', '')))}s · {_e(_shown(a.get('memory_mb', '')))} MB</span>"
                 + (f"<span class='muted small'>{_e(p['content'])}</span>" if p["content"] else ""))
         ident = f"<input type=hidden name=name value='{_e(name)}'>"
     else:
         head = "<b>새 정책</b><span class='muted small'>기본 정책에서 시작합니다</span>"
-        ident = "<label>이름 <input name=name required pattern='[a-z0-9][a-z0-9._-]*'></label>"
-    limits = "".join(f"<label>{lab}<input name={k} value='{_e(a.get(k, ''))}'></label>" for k, lab in LIMITS)
-    return (f"<details class='panel'><summary>{head}</summary>"
+        ident = f"<label>이름 <input name=name required pattern='[a-z0-9][a-z0-9._-]*' value='{val('name', '')}'></label>"
+    limits = "".join(f"<label>{lab}<input name={k} value='{val(k, _shown(a.get(k, '')))}'></label>" for k, lab in LIMITS)
+    return (f"<details class='panel'{' open' if draft is not None else ''}><summary>{head}</summary>"
             f"<form method=post action='/approvals/policy'>{hidden}"
-            f"<div class='cols'>{ident}<label>설명 <input name=description value='{_e(p['content'] if p else '')}'></label></div>"
+            f"<div class='cols'>{ident}<label>설명 <input name=description value='{val('description', p['content'] if p else '')}'></label></div>"
             f"<label>명령 <span class='muted small'>공백으로 구분, * 는 모든 명령</span>"
-            f"<textarea name=commands rows=3>{_e(' '.join(a['commands']))}</textarea></label>"
+            f"<textarea name=commands rows=3>{val('commands', ' '.join(a['commands']))}</textarea></label>"
             f"<div class='cols'><label>레이어 <span class='muted small'>공백으로 구분</span>"
-            f"<input name=layers value='{_e(' '.join(a.get('layers') or []))}'></label>"
+            f"<input name=layers value='{val('layers', ' '.join(a.get('layers') or []))}'></label>"
             f"<label>마운트 <span class='muted small'>한 줄에 하나: 원본[/하위 경로] 대상 [rw] · {_e(offered)}</span>"
-            f"<textarea name=mounts rows=2>{_e(mounts)}</textarea></label></div>"
-            f"<div class='cols'><label class='check'><input type=checkbox name=network {'checked' if a['network'] else ''}>"
-            f" 네트워크 허용</label><label>포트 <input name=ports value='{_e(ports)}'></label></div>"
-            f"<label class='check'><input type=checkbox name=exec_work {'checked' if a.get('exec_work') else ''}>"
+            f"<textarea name=mounts rows=2>{val('mounts', mounts)}</textarea></label></div>"
+            f"<div class='cols'><label class='check'><input type=checkbox name=network {checked('network', a['network'])}>"
+            f" 네트워크 허용</label><label>포트 <input name=ports value='{val('ports', ports)}'></label></div>"
+            f"<label class='check'><input type=checkbox name=exec_work {checked('exec_work', bool(a.get('exec_work')))}>"
             f" 빌드 결과 실행 허용 <span class='muted small'>/work·/tmp에서 만든 실행 파일(컴파일 결과, 빌드 도구)을 "
             f"실행할 수 있게 합니다. 끄면 인터프리터로만 실행됩니다.</span></label>"
             f"<div class='fields'>{limits}</div>"
@@ -422,7 +452,8 @@ def _jobs(ws: Workspace) -> str:
             f"</thead><tbody>{''.join(rows)}</tbody></table></div>")
 
 
-def _overview(ws: Workspace, uid: str, token: str, q: Any) -> str:
+def _overview(ws: Workspace, uid: str, token: str, q: Any, draft: dict[str, str] | None = None) -> str:
+    """The page. `draft`: a policy form that was refused, to show again as it was typed."""
     caps = ws.caps
     hidden = f"<input type=hidden name=csrf value='{token}'>"
     waiting = [r for r in caps.list() if r["attrs"].get("pending")]
@@ -454,8 +485,11 @@ def _overview(ws: Workspace, uid: str, token: str, q: Any) -> str:
     out.append(_section("policies", f"샌드박스 정책 ({len(policies)})",
                         "정책이 곧 샌드박스입니다: 보이는 명령, 네트워크, 한도. 한 번 허용하면 그 안의 스크립트와 실행은 "
                         "다시 묻지 않습니다. 정책을 눌러 펼치면 고칠 수 있습니다.",
-                        "".join(_policy(n, ws.policy(n)["attrs"], ws.policy(n), hidden, offered) for n in policies)
-                        + _policy("", ws.base_policy(), None, hidden, offered)))
+                        "".join(_policy(n, ws.policy(n)["attrs"], ws.policy(n), hidden, offered,
+                                        draft if draft is not None and draft.get("name") == n else None)
+                                for n in policies)
+                        + _policy("", ws.base_policy(), None, hidden, offered,
+                                  draft if draft is not None and draft.get("name") not in policies else None)))
     out.append(_section("records", f"기능 기록 ({n_records})",
                         "스크립트·정책·레이어·규칙·카드·별칭. 각 기록은 버전이 남고, 검토 기한이 지나면 스스로 점검해 갱신되거나 "
                         "폐기 예정이 됩니다.", records))

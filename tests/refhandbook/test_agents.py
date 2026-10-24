@@ -679,6 +679,9 @@ def test_a_run_the_model_asked_for_is_approved_on_the_approval_page(client, keye
                                                      (f"route{i}_worker", "on"))},
          "max_agents": "2", "max_spawns": "4", "max_depth": "1", "max_steps": "10", "max_tokens": "0",
          "context": "trim", "handoff": "digest", "retention": "verified", "policy": "default", "effort": ""}
+    r = c.post(f"/approvals/runs/{asked}/approve", data={**f, "max_steps": "0", "max_agents": "3.0"}, headers=tok)
+    assert r.status_code == 400 and "max_steps" in r.text  # refused, and the form as it was filled in:
+    assert page.count("name=route") <= r.text.count("name=route") and "value='3.0'" in r.text
     r = c.post(f"/approvals/runs/{asked}/approve", data=f, headers=tok, follow_redirects=False)
     assert r.headers["location"].startswith(f"/agents/runs/{asked}")
     t = Team(ws.g)

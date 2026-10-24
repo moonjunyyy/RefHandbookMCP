@@ -601,9 +601,12 @@ def check_grant(grant: dict[str, Any]) -> dict[str, Any]:
     cfg = {**DEFAULT_GRANT, **{k: v for k, v in grant.items() if k in DEFAULT_GRANT}}
     for k in ("max_agents", "max_spawns", "max_depth", "max_steps", "max_tokens", "disk_mb"):
         try:
-            cfg[k] = int(cfg[k])
+            v = float(str(cfg[k]).strip().replace(",", ""))  # 4, "4", "4.0" and "1,024" are all whole numbers
         except (TypeError, ValueError) as e:
             raise TeamError(f"{k}: a number") from e
+        if not v.is_integer():
+            raise TeamError(f"{k}: a whole number")
+        cfg[k] = int(v)
     if not 1 <= cfg["max_steps"] <= 1000 or cfg["max_tokens"] < 0:
         raise TeamError("max_steps 1–1000; max_tokens 0 (no limit) or more")
     if cfg["effort"] not in EFFORTS:
