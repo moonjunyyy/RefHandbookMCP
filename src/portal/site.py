@@ -27,7 +27,8 @@ from pathlib import Path
 NAME = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 MATCHES = ("prefix", "exact", "regex", "priority")  # priority = `^~` (a prefix that wins over regexes)
 AUTH = ("site", "public")
-ZONES = {"login": "10r/m", "oauth": "30r/m"}  # limit name → rate; the zone is <site name>_<limit>
+# limit name → rate; the zone is <site name>_<limit>. api: the pages' own calls (they poll a run, say)
+ZONES = {"login": "10r/m", "oauth": "30r/m", "api": "10r/s"}
 
 
 class SiteError(ValueError):

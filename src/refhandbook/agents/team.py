@@ -29,6 +29,7 @@ RETENTION_LEVELS = ("all", "verified", "exits", "purge")
 NOTE_KINDS = ("fact", "finding", "plan", "decision", "question", "digest", "artifact")
 AGENT_LIVE = ("ready", "running", "waiting")
 ROLES = ("lead", "worker", "verifier")
+MAX_ROUTES = 16
 EFFORTS = ("", "low", "medium", "high", "xhigh", "max")
 
 DEFAULT_GRANT: dict[str, Any] = {
@@ -605,6 +606,8 @@ def check_routes(routes: Any) -> list[dict[str, Any]]:
 
     if not isinstance(routes, list) or not routes:
         raise TeamError("a grant names at least one route: a key, a model and the roles it serves")
+    if len(routes) > MAX_ROUTES:
+        raise TeamError(f"at most {MAX_ROUTES} routes")
     out = []
     for r in routes:
         if not isinstance(r, dict):

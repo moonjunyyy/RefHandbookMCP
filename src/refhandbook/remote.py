@@ -609,6 +609,15 @@ def build(cfg: Config, accounts: Accounts | None = None, sso_tokens: SsoTokens |
     pages.install(m, stores=stores, uid_of=sso_tokens.uid, data_dir=Path(cfg.data_dir),
                   public_url=cfg.public_url, lock=server._CALLS, login_url=cfg.login_url, allowed=accounts.exists)
 
+    from .agents import api as agents_api
+
+    def who(request: Request) -> str | None:
+        uid = sso_tokens.uid(request.headers.get("x-auth-token", ""))
+        return uid if uid is not None and accounts.exists(uid) else None
+
+    agents_api.install(m, stores=stores, who=who, data_dir=Path(cfg.data_dir), public_url=cfg.public_url,
+                       lock=server._CALLS)
+
     @m.custom_route("/healthz", methods=["GET"])
     async def healthz(request: Request) -> Response:
         return PlainTextResponse("ok")

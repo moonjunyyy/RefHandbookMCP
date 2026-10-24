@@ -200,6 +200,15 @@ def split_ref(ref: str) -> tuple[str, str]:
 class KeyStore:
     """The sealed rows. `put` needs only the public key; `get` needs the private key."""
 
+    @classmethod
+    def for_web(cls, data_dir: str | Path) -> KeyStore:
+        """The web process's store: it seals with the public key when it has one, and opens nothing."""
+        try:
+            pub = load_public()
+        except (KeyError_, OSError, ValueError):
+            pub = None
+        return cls(Path(data_dir) / "agent-keys.db", public=pub)
+
     def __init__(self, path: str | Path, public: X25519PublicKey | None = None,
                  private: X25519PrivateKey | None = None):
         self.path = str(path)
