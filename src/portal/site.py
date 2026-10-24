@@ -200,7 +200,10 @@ def _hosted(a: App, f) -> App:  # noqa: ANN001 — f: portal.facts.Facts
             raise SiteError(f"app {a.id}: static is true or an absolute directory, not {root!r}")
         routes += [Route(path=base, match="exact", auth="public", nginx=f"return 301 {base}/$is_args$args;"),
                    Route(path=f"{base}/", auth="public" if a.public else "site",
-                         nginx=f"alias {root.rstrip('/')}/;\nindex index.html;\ntry_files $uri {base}/index.html;",
+                         # no-cache: a browser asks again (cheaply, by ETag), so after a new build it never runs an
+                         # old index.html that names files the new build no longer has
+                         nginx=f"alias {root.rstrip('/')}/;\nindex index.html;\ntry_files $uri {base}/index.html;\n"
+                               'add_header Cache-Control "no-cache" always;',
                          note="its built files")]
     for page in a.pages:
         if not a.static or not page.startswith("/") or any(c in page for c in "{};\n "):

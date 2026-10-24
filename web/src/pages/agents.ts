@@ -4,6 +4,7 @@
 import { agents, Json } from '../lib/api';
 import { Child, h, replace, values } from '../lib/dom';
 import { act, empty, flashNext, form, go, link, main, num, pageHead, section, tag, title, when } from '../lib/ui';
+import { flowStates, flowView } from './flows';
 import { grantForm, Key, Options, providerName, roleName } from './grant';
 
 const TABS = [{ href: '/agents/', label: '실행' }, { href: '/agents/flows', label: '순서도' },
@@ -78,6 +79,7 @@ export async function run(id: string): Promise<void> {
         h('span', { class: 'muted small' }, x.roles.map(roleName).join(', '))))),
       h('p', { class: 'muted small' }, `동시 ${g.max_agents} · 총 ${g.max_spawns} · 깊이 ${g.max_depth} · 턴 ${g.max_steps} · ` +
         `토큰 ${g.max_tokens || '무제한'} · 문맥 ${g.context} · 보관 ${g.retention} · 정책 ${g.policy}`)),
+    r.flow && section('순서도', flowView(r.flow, flowStates(r))),
     section('에이전트',
       h('p', { class: 'muted small' }, `입력 ${num(r.usage.input)} · 출력 ${num(r.usage.output)} · 캐시 ${num(r.usage.cache_read)} 토큰`),
       tree(r.tree) ?? empty(r.phase === 'requested' ? '승인되면 시작합니다.' : '아직 시작하지 않았습니다.'),

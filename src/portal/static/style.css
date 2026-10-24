@@ -193,3 +193,29 @@ td.num { text-align: right; white-space: nowrap; width: 1%; }
 td.row-tools { white-space: nowrap; }
 td.row-tools button { padding: 2px 6px; }
 ul.groups li { display: inline-flex; align-items: center; gap: 6px; margin: 0 10px 6px 0; }
+/* the flow designer (web/src/pages/flows.ts) */
+.flow-editor { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 16px; align-items: start; }
+@media (max-width: 860px) { .flow-editor { grid-template-columns: 1fr; } }
+.flow-canvas { width: 100%; height: 520px; display: block; background: var(--soft); border: 1px solid var(--line);
+               border-radius: 12px; touch-action: none; cursor: grab; user-select: none; outline: none; }
+.flow-canvas.view { height: auto; max-height: 520px; cursor: default; }
+.flow-canvas.panning { cursor: grabbing; }
+.flow-canvas:focus-visible { box-shadow: 0 0 0 2px var(--accent-soft); }
+.flow-block rect { fill: var(--card); stroke: var(--line); stroke-width: 1.5; }
+.flow-block { cursor: move; }
+.flow-block.selected rect { stroke: var(--accent); stroke-width: 2.5; }
+.flow-block text { fill: var(--text); font: 13px var(--sans); pointer-events: none; }
+.flow-block .flow-title { font-weight: 700; font-size: 14px; }
+.flow-block .flow-meta, .flow-block .flow-goal { fill: var(--muted); font-size: 12px; }
+.flow-block .port { fill: var(--card); stroke: var(--accent); stroke-width: 2; }
+.flow-block .port.out { cursor: crosshair; fill: var(--accent); }
+.flow-edge { fill: none; stroke: var(--muted); stroke-width: 2; }
+.flow-edge.drawing { stroke: var(--accent); stroke-dasharray: 5 4; }
+.flow-edge-hit { fill: none; stroke: transparent; stroke-width: 14; cursor: pointer; }
+.flow-edge-g.selected .flow-edge { stroke: var(--accent); stroke-width: 3; }
+.flow-arrowhead { fill: var(--muted); }
+.flow-block.st-done rect, .flow-block.st-done .port { stroke: var(--ok); }
+.flow-block.st-running rect, .flow-block.st-waiting rect, .flow-block.st-ready rect { stroke: var(--accent); stroke-dasharray: 6 4; }
+.flow-block.st-failed rect, .flow-block.st-cancelled rect { stroke: var(--bad); }
+.flow-block.st-skipped { opacity: .55; }
+.flow-panel h3 { margin-top: 0; }
