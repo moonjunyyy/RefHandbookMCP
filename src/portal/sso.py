@@ -17,7 +17,7 @@ from pathlib import Path
 from urllib.parse import quote, unquote, urlsplit
 
 from fastapi import FastAPI, Request
-from fastapi.responses import RedirectResponse, Response
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.concurrency import run_in_threadpool
@@ -232,6 +232,23 @@ def create_app(settings: Settings | None = None, kerberos=None, signing_key=None
         request.session.pop("expired_uid", None)
         flash(request, "ok", "비밀번호를 바꿨습니다. 새 비밀번호로 로그인하세요.")
         return redirect(f"{SIGNIN}/login?next=" + nxt)
+
+    @app.get(f"{SIGNIN}/api/v1/me")
+    async def api_me(request: Request):
+        """For the pages' frame (any page of the site): who is signed in, the site's name, and the
+        main page's cards and the menu as this person may see them. Never refused: signed out is
+        an answer ({"uid": null})."""
+        uid = session_user(request)
+        groups = await run_in_threadpool(nss_groups, uid) if uid else set()
+        site = s.site()
+
+        def card(a):  # noqa: ANN001, ANN202
+            return {"id": a.id, "title": a.title, "description": a.description, "code": a.code,
+                    "links": [{"label": ln.label, "href": ln.href} for ln in a.links]}
+        return JSONResponse({"uid": uid, "title": s.site_title, "signin": SIGNIN, "portal": facts().portal_root,
+                             "cards": [card(a) for a in site.cards(groups)],
+                             "menu": [{"label": ln.label, "href": ln.href} for ln in site.menu(groups)]},
+                            headers={"Cache-Control": "no-store"})
 
     @app.get(f"{SIGNIN}/healthz")
     async def healthz():

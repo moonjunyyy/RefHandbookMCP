@@ -57,6 +57,13 @@ link = [{ label = "내 계정", href = "@@portal_root@@/" },
   path = "@@portal_root@@/"
   body = "16k"
   [[app.route]]
+  path = "@@portal_root@@/api/"
+  limit = "api"
+  burst = 40
+  body = "64k"
+  signin = false
+  note = "the portal's JSON API: a 401 is answered as JSON, not sent to the sign-in page"
+  [[app.route]]
   path = "@@portal_root@@/request"
   match = "exact"
   auth = "public"

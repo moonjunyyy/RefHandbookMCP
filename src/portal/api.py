@@ -91,6 +91,7 @@ async def body(request: Request) -> dict[str, Any]:
 
 
 def endpoint(*, origin: str, user_errors: tuple[type[BaseException], ...] = (),
+             refusals: tuple[type[BaseException], ...] = (),
              backend_errors: tuple[type[BaseException], ...] = ()) -> Callable[..., Any]:
     """Wrap an endpoint `(request) -> data | Response` (a Response as is: answer(data, 201) for a
     creation): the write check, JSON answers, errors shaped as above. `user_errors` become 400 with their message, `backend_errors` (and anything else) 502
@@ -107,6 +108,8 @@ def endpoint(*, origin: str, user_errors: tuple[type[BaseException], ...] = (),
                 return failure(e)
             except user_errors as e:
                 return failure(bad(str(e)))
+            except refusals as e:
+                return failure(forbidden(str(e)))
             except backend_errors as e:
                 ref = secrets.token_hex(4)
                 log.warning("[%s] %s %s: %s", ref, request.method, request.url.path, e)

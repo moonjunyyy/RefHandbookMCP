@@ -11,6 +11,7 @@ from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import audit, tokens, validators
+from .accounts import Accounts, Forbidden
 from .config import Settings
 from .facts import SIGNIN
 from .directory import Directory, DirectoryError, User
@@ -25,10 +26,6 @@ HERE = Path(__file__).parent
 
 
 class LoginRequired(Exception):
-    pass
-
-
-class Forbidden(Exception):
     pass
 
 
@@ -73,6 +70,7 @@ def create_app(settings: Settings | None = None, directory=None, kerberos=None, 
     join_throttle = Throttle(limit=10, window=3600)  # failed invitation sign-ups per client address
     request_throttle = Throttle(limit=5, window=3600)  # account requests per client address
     audit.setup(s.audit_log)
+    acc = Accounts(s, directory, kerberos, kadmin, requests, invites, throttle)
 
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     app.add_middleware(SecurityHeadersMiddleware)
@@ -126,29 +124,12 @@ def create_app(settings: Settings | None = None, directory=None, kerberos=None, 
 
     def current_actor(request: Request) -> Actor:
         """Re-checked on every request so disabling a user or removing a role takes effect at once."""
-        uid = signed_in_uid(request)
-        if not uid:
+        actor = acc.actor(signed_in_uid(request))
+        if actor is None:
             if not sso:
                 request.session.clear()
             raise LoginRequired()
-        user = directory.get_user(uid)
-        if user is None or user.disabled:
-            request.session.clear()
-            raise LoginRequired()
-        return Actor(user=user, roles=roles_for(user, s))
-
-    def require(actor: Actor, action: str, target: User | None = None) -> None:
-        if not can(actor, action, s, target):
-            raise Forbidden("You are not allowed to do that.")
-
-    def target_user(uid: str) -> User:
-        try:
-            user = directory.get_user(validators.uid(uid))
-        except ValidationError:
-            user = None
-        if user is None:
-            raise Forbidden("No such user.")
-        return user
+        return actor
 
     @app.exception_handler(LoginRequired)
     async def _login_required(request: Request, exc: LoginRequired):
@@ -263,16 +244,10 @@ def create_app(settings: Settings | None = None, directory=None, kerberos=None, 
         actor = current_actor(request)
         data = await form(request)
         try:
-            changes = {
-                "displayName": validators.optional_name(str(data.get("displayName", "")), "Display name"),
-                "mail": validators.email(str(data.get("mail", ""))),
-                "loginShell": validators.shell(str(data.get("loginShell", "")), s.allowed_shells),
-            }
+            acc.update_profile(actor, dict(data), ip(request))
         except ValidationError as e:
             flash(request, "error", str(e))
             return redirect("/")
-        directory.update_self(actor.uid, changes)
-        audit.record(actor.uid, "update_profile", actor.uid, True, ip(request), ",".join(changes))
         flash(request, "ok", "Profile updated.")
         return redirect("/")
 
@@ -280,42 +255,19 @@ def create_app(settings: Settings | None = None, directory=None, kerberos=None, 
     async def change_password(request: Request):
         actor = current_actor(request)
         data = await form(request)
-        key = f"pw:{actor.uid}"
-        if throttle.blocked(key):
-            flash(request, "error", "Too many failed attempts. Try again in 15 minutes.")
-            return redirect("/")
         try:
-            new = validators.new_password(str(data.get("new", "")), str(data.get("confirm", "")))
-            kerberos.change_own_password(s.principal(actor.uid), str(data.get("old", "")), new)
-        except (ValidationError, KerberosError) as e:
-            throttle.fail(key)
-            audit.record(actor.uid, "change_password", actor.uid, False, ip(request), str(e))
+            acc.change_password(actor, str(data.get("old", "")), str(data.get("new", "")), str(data.get("confirm", "")),
+                                ip(request))
+        except (ValidationError, KerberosError, Forbidden) as e:
             flash(request, "error", str(e))
             return redirect("/")
-        audit.record(actor.uid, "change_password", actor.uid, True, ip(request))
         flash(request, "ok", "Password changed.")
         return redirect("/")
 
-    def make_account(request: Request, by: str, uid: str, name: str, mail: str, shell: str, password: str,
-                     needchange: bool, detail: str = "") -> User:
-        """LDAP entry, then the Kerberos principal; LDAP is rolled back if Kerberos fails."""
-        user = directory.create_user(uid, name, mail, shell)
-        try:
-            kadmin.create_principal(s.principal(uid), user.dn, password, s.principal_alias(uid), needchange)
-        except KerberosError as e:
-            directory.rollback_user(uid)
-            audit.record(by, "create_user", uid, False, ip(request), str(e))
-            raise
-        audit.record(by, "create_user", uid, True, ip(request),
-                     f"uidNumber={user.uid_number}" + (f" {detail}" if detail else ""))
-        return user
-
-    def provision(request: Request, actor: Actor, uid: str, name: str, mail: str, shell: str,
-                  detail: str = ""):
-        """An account made by an admin, with a one-time password shown once."""
-        password = validators.temp_password()
-        user = make_account(request, actor.uid, uid, name, mail, shell, password, True, detail)
-        return render(request, "temp_password.html", actor, target=user, password=password, created=True)
+    def shown_once(request: Request, actor: Actor, made: tuple[User, str], created: bool):
+        """The page with a one-time password (made or reset): shown once, never kept."""
+        user, password = made
+        return render(request, "temp_password.html", actor, target=user, password=password, created=created)
 
     # ---- account requests (public) -------------------------------------------------------------
 
@@ -406,8 +358,8 @@ def create_app(settings: Settings | None = None, directory=None, kerberos=None, 
             resp.status_code = 404
             return resp
         try:
-            make_account(request, uid, uid, name, mail, s.allowed_shells[0], password, False,
-                         detail=f"invited by {inv.created_by}")
+            acc.make_account(uid, uid, name, mail, s.allowed_shells[0], password, False, ip(request),
+                             detail=f"invited by {inv.created_by}")
         except (DirectoryError, KerberosError) as e:
             store.restore(inv)  # the link still works: the person can try again
             join_throttle.fail(key)
@@ -415,110 +367,75 @@ def create_app(settings: Settings | None = None, directory=None, kerberos=None, 
             return join_page(request, token, 400, **values)
         return render(request, "join_done.html", uid=uid)
 
-    # ---- admin / helpdesk --------------------------------------------------------------------
+    # ---- admin / helpdesk (the operations are portal/accounts.py's) ---------------------------
 
     @app.get("/admin/invites")
     async def invite_list(request: Request):
         actor = current_actor(request)
-        require(actor, "manage_invites")
-        return render(request, "invites.html", actor, items=invites_on().list())
+        return render(request, "invites.html", actor, items=acc.invitations(actor))
 
     @app.post("/admin/invites")
     async def invite_create(request: Request):
         actor = current_actor(request)
-        require(actor, "manage_invites")
-        require(actor, "create_user")
         data = await form(request)
-        note = " ".join(str(data.get("note", "")).split())[:120]
-        try:
-            inv, token = invites_on().create(actor.uid, note)
-        except InviteError as e:
-            raise Forbidden(str(e))
-        audit.record(actor.uid, "create_invite", None, True, ip(request), f"id={inv.id}" + (f" {note}" if note else ""))
+        inv, token = acc.invite(actor, str(data.get("note", "")), ip(request))
         return render(request, "invite_link.html", actor, invite=inv, link=f"{s.public_url}{url('/join/' + token)}")
 
     @app.post("/admin/invites/{iid}/revoke")
     async def invite_revoke(request: Request, iid: str):
         actor = current_actor(request)
-        require(actor, "manage_invites")
         await form(request)
-        if invites_on().revoke(iid[:32]):
-            audit.record(actor.uid, "revoke_invite", None, True, ip(request), f"id={iid[:32]}")
+        if acc.revoke_invite(actor, iid, ip(request)):
             flash(request, "ok", "Invitation revoked.")
         return redirect("/admin/invites")
-
-    def pending_request(rid: str):
-        r = requests_on().get(rid[:32])
-        if r is None:
-            raise Forbidden("That request no longer exists (approved, rejected, or expired).")
-        return r
 
     @app.get("/admin/requests")
     async def request_list(request: Request):
         actor = current_actor(request)
-        require(actor, "review_requests")
-        return render(request, "requests.html", actor, items=requests_on().list())
+        return render(request, "requests.html", actor, items=acc.pending_requests(actor))
 
     @app.post("/admin/requests/{rid}/approve")
     async def request_approve(request: Request, rid: str):
         actor = current_actor(request)
-        require(actor, "review_requests")
-        require(actor, "create_user")
         data = await form(request)
-        r = pending_request(rid)
-        try:
-            uid = validators.new_uid(r.uid)
-            shell = validators.shell(str(data.get("loginShell", "")), s.allowed_shells)
-        except ValidationError as e:
-            raise Forbidden(str(e))
-        resp = provision(request, actor, uid, r.name, r.mail, shell, detail="from request")
-        requests_on().delete(r.id)  # the request's copy of the personal data goes now
-        return resp
+        return shown_once(request, actor, acc.approve_request(actor, rid, str(data.get("loginShell", "")), ip(request)),
+                          True)
 
     @app.post("/admin/requests/{rid}/reject")
     async def request_reject(request: Request, rid: str):
         actor = current_actor(request)
-        require(actor, "review_requests")
         await form(request)
-        r = pending_request(rid)
-        requests_on().delete(r.id)
-        audit.record(actor.uid, "reject_request", r.uid, True, ip(request))
-        flash(request, "ok", f"Request for {r.uid} rejected and deleted.")
+        uid = acc.reject_request(actor, rid, ip(request))
+        flash(request, "ok", f"Request for {uid} rejected and deleted.")
         return redirect("/admin/requests")
 
     @app.get("/admin/users")
     async def users(request: Request, q: str = ""):
         actor = current_actor(request)
-        require(actor, "view_users")
-        return render(request, "users.html", actor, users=directory.search_users(q[:64]), q=q[:64])
+        return render(request, "users.html", actor, users=acc.users(actor, q), q=q[:64])
 
     @app.get("/admin/users/new")
     async def new_user_page(request: Request):
         actor = current_actor(request)
-        require(actor, "create_user")
+        acc.require(actor, "create_user")
         return render(request, "user_new.html", actor, values={})
 
     @app.post("/admin/users/new")
     async def create_user(request: Request):
         actor = current_actor(request)
-        require(actor, "create_user")
         data = await form(request)
         try:
-            uid = validators.new_uid(str(data.get("uid", "")))
-            name = validators.optional_name(str(data.get("name", "")), "Name")
-            mail = validators.email(str(data.get("mail", "")))
-            shell = validators.shell(str(data.get("loginShell", "")), s.allowed_shells)
+            made = acc.create(actor, dict(data), ip(request))
         except ValidationError as e:
             flash(request, "error", str(e))
             return render(request, "user_new.html", actor, values=dict(data))
-        return provision(request, actor, uid, name, mail, shell)
+        return shown_once(request, actor, made, True)
 
     @app.get("/admin/users/{uid}")
     async def user_detail(request: Request, uid: str):
         actor = current_actor(request)
-        require(actor, "view_users")
-        target = target_user(uid)
-        all_groups = [g for g, _ in directory.list_groups() if g != target.uid]
+        target = acc.user(actor, uid)
+        all_groups = [g for g, _ in acc.groups(actor) if g != target.uid]
         return render(request, "user.html", actor, target=target,
                       addable=[g for g in all_groups if g not in target.groups])
 
@@ -526,21 +443,13 @@ def create_app(settings: Settings | None = None, directory=None, kerberos=None, 
     async def reset_password(request: Request, uid: str):
         actor = current_actor(request)
         await form(request)
-        target = target_user(uid)
-        require(actor, "reset_password", target)
-        password = validators.temp_password()
-        kadmin.reset_password(s.principal(target.uid), password)
-        audit.record(actor.uid, "reset_password", target.uid, True, ip(request))
-        return render(request, "temp_password.html", actor, target=target, password=password, created=False)
+        return shown_once(request, actor, acc.reset_password(actor, uid, ip(request)), False)
 
     @app.post("/admin/users/{uid}/unlock")
     async def unlock(request: Request, uid: str):
         actor = current_actor(request)
         await form(request)
-        target = target_user(uid)
-        require(actor, "unlock", target)
-        kadmin.unlock(s.principal(target.uid))
-        audit.record(actor.uid, "unlock", target.uid, True, ip(request))
+        target = acc.unlock(actor, uid, ip(request))
         flash(request, "ok", f"{target.uid} unlocked.")
         return redirect(f"/admin/users/{target.uid}")
 
@@ -548,29 +457,20 @@ def create_app(settings: Settings | None = None, directory=None, kerberos=None, 
     async def set_enabled(request: Request, uid: str):
         actor = current_actor(request)
         data = await form(request)
-        target = target_user(uid)
-        require(actor, "set_enabled", target)
         enabled = data.get("enabled") == "1"
-        kadmin.set_enabled(s.principal(target.uid), enabled)
-        audit.record(actor.uid, "enable" if enabled else "disable", target.uid, True, ip(request))
+        target = acc.set_enabled(actor, uid, enabled, ip(request))
         flash(request, "ok", f"{target.uid} {'enabled' if enabled else 'disabled'}.")
         return redirect(f"/admin/users/{target.uid}")
 
     @app.post("/admin/users/{uid}/delete")
     async def delete_user(request: Request, uid: str):
-        """Delete an account for good: its directory entry (with the kldap backend the Kerberos
-        principal and its alias live in it, so they go with it), its private group and its group
-        memberships. The admin types the name again to confirm. Files it owns (home, data) stay."""
         actor = current_actor(request)
         data = await form(request)
-        target = target_user(uid)
-        require(actor, "delete_user", target)
-        if str(data.get("confirm", "")).strip() != target.uid:
-            flash(request, "error", f"To delete the account, type its username ({target.uid}) to confirm.")
-            return redirect(f"/admin/users/{target.uid}")
-        directory.delete_user(target.uid)
-        audit.record(actor.uid, "delete_user", target.uid, True, ip(request),
-                     f"uidNumber={target.uid_number} groups={','.join(target.groups)}")
+        try:
+            target = acc.delete(actor, uid, str(data.get("confirm", "")), ip(request))
+        except ValidationError as e:
+            flash(request, "error", str(e))
+            return redirect(f"/admin/users/{uid}")
         flash(request, "ok", f"{target.uid} deleted. Files it owned (home directory, data) were not touched.")
         return redirect("/admin/users")
 
@@ -578,18 +478,15 @@ def create_app(settings: Settings | None = None, directory=None, kerberos=None, 
     async def set_group(request: Request, uid: str):
         actor = current_actor(request)
         data = await form(request)
-        target = target_user(uid)
-        require(actor, "manage_groups", target)
-        try:
-            group = validators.group(str(data.get("group", "")))
-        except ValidationError as e:
-            raise Forbidden(str(e))
-        if group == target.uid or group not in {g for g, _ in directory.list_groups()}:
-            raise Forbidden("That group cannot be changed here.")
         add = data.get("op") == "add"
-        directory.set_membership(group, target.uid, add)
-        audit.record(actor.uid, "group_add" if add else "group_remove", target.uid, True, ip(request), group)
+        group = str(data.get("group", ""))
+        target = acc.set_group(actor, uid, group, add, ip(request))
         flash(request, "ok", f"{'Added' if add else 'Removed'} {target.uid} {'to' if add else 'from'} {group}.")
         return redirect(f"/admin/users/{target.uid}")
+
+    from . import account_api
+
+    account_api.install(app, acc, signed_in_uid=signed_in_uid, ip=ip,
+                        join_link=lambda token: f"{s.public_url}{url('/join/' + token)}")
 
     return app
