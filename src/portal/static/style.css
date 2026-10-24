@@ -219,3 +219,15 @@ ul.groups li { display: inline-flex; align-items: center; gap: 6px; margin: 0 10
 .flow-block.st-failed rect, .flow-block.st-cancelled rect { stroke: var(--bad); }
 .flow-block.st-skipped { opacity: .55; }
 .flow-panel h3 { margin-top: 0; }
+/* a narrow screen: each route of the grant form is a small card (key, model, roles, tools), not a row */
+@media (max-width: 640px) {
+  table.routes thead { display: none; }
+  table.routes tr { display: grid; grid-template-columns: 1fr; gap: 8px; padding: 12px; border-bottom: 1px solid var(--line); }
+  table.routes td { display: block; border: 0; padding: 0; }
+  table.routes td.num { font-weight: 700; }
+  table.routes td.num::before { content: "경로 "; }
+  table.routes td.roles { white-space: normal; display: flex; flex-wrap: wrap; gap: 4px 14px; }
+  table.routes td.roles label.check { white-space: nowrap; margin: 0; }
+  table.routes tbody tr:hover td { background: none; }
+  table.routes td.row-tools { text-align: right; }
+}
