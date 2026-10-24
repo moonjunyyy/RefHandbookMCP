@@ -81,23 +81,37 @@ class Kerberos:
         child = pexpect.spawn("kpasswd", [principal], env=_child_env(), encoding="utf-8", timeout=20)
         try:
             if child.expect([r"(?i)password for .*:", pexpect.EOF]) != 0:
-                raise KerberosError(_kpasswd_message(child.before, "Password service is not available."))
+                raise KerberosError(_kpasswd_message(child.before, "비밀번호 서비스를 쓸 수 없습니다. 잠시 뒤 다시 시도하세요."))
             child.sendline(old)
             if child.expect([r"(?i)enter new password:", pexpect.EOF]) != 0:
-                raise KerberosError(_kpasswd_message(child.before, "Current password is incorrect."))
+                raise KerberosError(_kpasswd_message(child.before, "지금 비밀번호가 맞지 않습니다."))
             child.sendline(new)
             child.expect(r"(?i)enter it again:")
             child.sendline(new)
             child.expect(pexpect.EOF)
             out = child.before or ""
         except pexpect.TIMEOUT as e:
-            raise KerberosError("Password service did not respond.") from e
+            raise KerberosError("비밀번호 서비스가 응답하지 않습니다. 잠시 뒤 다시 시도하세요.") from e
         finally:
             child.close()
         if "Password changed" not in out:
             # e.g. "Password change rejected: Password is too short."
-            msg = out.strip().splitlines()[-1] if out.strip() else "Password change failed."
-            raise KerberosError(msg.replace("\r", ""))
+            msg = out.strip().splitlines()[-1] if out.strip() else ""
+            raise KerberosError(_policy_message(msg.replace("\r", "")))
+
+
+# what the password policy says when it refuses a new password, in the pages' language
+_POLICY = (("too short", "새 비밀번호가 너무 짧습니다."), ("character classes", "새 비밀번호에 여러 종류의 문자(대·소문자, 숫자, 기호)를 섞어 주세요."),
+           ("dictionary", "새 비밀번호가 너무 흔한 단어입니다."), ("too soon", "아직 비밀번호를 다시 바꿀 수 없습니다 (최소 사용 기간)."),
+           ("history", "최근에 쓴 비밀번호는 다시 쓸 수 없습니다."))
+
+
+def _policy_message(line: str) -> str:
+    low = line.lower()
+    for key, text in _POLICY:
+        if key in low:
+            return text
+    return f"비밀번호를 바꾸지 못했습니다{': ' + line if line else '.'}"
 
 
 def _kpasswd_message(output: str | None, otherwise: str) -> str:
@@ -106,9 +120,9 @@ def _kpasswd_message(output: str | None, otherwise: str) -> str:
     out = (output or "").replace("\r", "")
     low = out.lower()
     if "revoked" in low:
-        return "This account is disabled or locked. Try again later or ask an administrator."
+        return "비활성화되었거나 잠긴 계정입니다. 나중에 다시 시도하거나 관리자에게 문의하세요."
     if "preauthentication failed" in low or "incorrect" in low or "pre-authentication" in low:
-        return "Current password is incorrect."
+        return "지금 비밀번호가 맞지 않습니다."
     lines = [ln.strip() for ln in out.splitlines() if ln.strip() and not ln.lower().startswith("password for")]
     return lines[-1] if lines else otherwise
 

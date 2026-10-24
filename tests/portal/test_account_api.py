@@ -27,7 +27,7 @@ def test_me_and_my_own_profile_and_password(env):
     assert r.status_code == 200 and r.json()["display_name"] == "앨리스"
     assert api(c, s, "PATCH", "/me", {"displayName": "x", "mail": "nope", "loginShell": "/bin/bash"}).status_code == 400
     r = api(c, s, "POST", "/me/password", {"old": "wrong", "new": "a-new-password-1", "confirm": "a-new-password-1"})
-    assert r.status_code == 400 and "incorrect" in r.json()["error"]["message"]
+    assert r.status_code == 400 and "맞지 않습니다" in r.json()["error"]["message"]
     r = api(c, s, "POST", "/me/password", {"old": "alice-password-1", "new": "a-new-password-1",
                                            "confirm": "a-new-password-1"})
     assert r.json() == {"changed": True} and k.passwords["alice"] == "a-new-password-1"

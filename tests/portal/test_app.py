@@ -75,7 +75,7 @@ class FakeKerberos:
     def change_own_password(self, principal, old, new):
         uid = principal.split("/")[0]
         if self.passwords.get(uid) != old:
-            raise KerberosError("Current password is incorrect.")
+            raise KerberosError("지금 비밀번호가 맞지 않습니다.")
         self.passwords[uid] = new
         self.expired.discard(uid)
 
@@ -227,10 +227,10 @@ def test_admin_cannot_lock_self_out_and_reserved_names(env):
     assert c.post("/admin/users/moon/groups", data={"csrf": t, "group": "admin", "op": "remove"}).status_code == 403
     r = c.post("/admin/users/new", data={"uid": "root", "name": "R", "mail": "",
                                           "loginShell": "/bin/bash", "csrf": t})
-    assert "reserved" in r.text and "root" not in d.users
+    assert "쓸 수 없는 사용자명" in r.text and "root" not in d.users
     r = c.post("/admin/users/new", data={"uid": "x,ou=Admins", "name": "R", "mail": "",
                                           "loginShell": "/bin/bash", "csrf": t})
-    assert "Username:" in r.text
+    assert "사용자명:" in r.text
 
 
 def test_every_portal_page_leads_back_to_the_main_page(env):
@@ -420,11 +420,14 @@ def test_kerberos_error_codes_as_gssapi_reports_them():
     assert _krb5_code(2529638935) == _KRB5KDC_ERR_KEY_EXP == -1765328361
     assert _krb5_code(2529638930) == _KRB5KDC_ERR_CLIENT_REVOKED
     assert _krb5_code(-1765328361) == -1765328361 and _krb5_code(5) == 5
-    assert _kpasswd_message("kpasswd: Preauthentication failed getting initial ticket", "x") == "Current password is incorrect."
-    assert "locked" in _kpasswd_message("kpasswd: Client's credentials have been revoked getting initial ticket", "x")
+    assert _kpasswd_message("kpasswd: Preauthentication failed getting initial ticket", "x") == "지금 비밀번호가 맞지 않습니다."
+    assert "잠긴" in _kpasswd_message("kpasswd: Client's credentials have been revoked getting initial ticket", "x")
     assert _kpasswd_message("Password for a/user@R: \r\nkpasswd: Cannot contact any KDC for realm 'R'", "x") \
         == "kpasswd: Cannot contact any KDC for realm 'R'"
     assert _kpasswd_message("", "fallback") == "fallback"
+    from portal.kerberos import _policy_message
+    assert _policy_message("Password change rejected: Password is too short.") == "새 비밀번호가 너무 짧습니다."
+    assert _policy_message("Password change rejected: something new") == "비밀번호를 바꾸지 못했습니다: Password change rejected: something new"
 
 
 def test_a_new_principal_keeps_the_realms_default_flags(monkeypatch, tmp_path):
