@@ -421,6 +421,15 @@ distributions without AppArmor.
     policy, effort) prefilled from the suggestion, approve or reject; then the grant, the live tree
     with usage, the shared notes, the result, and cancel. Every write is `user`, with the form token
     and same-origin check of the approval page.
+  - `/agents/presets`: presets (a goal and a grant, checked as a grant when saved; 지금 실행; edit;
+    delete) and their schedules (cron, five fields or @daily/@weekly…, the server's time; on, off,
+    delete). A schedule is the user's approval given ahead of time: when due, the runner opens the
+    run and writes its grant as the user. It skips a firing while the previous run it started is
+    still going, and after a stop fires once, not once per missed time. `{date}`, `{time}`,
+    `{datetime}` in a goal become the run's time. (`agents/presets.py`, `agents/cron.py`)
+  - `/agents/files`: the workspace (`/work`), read only, with where it is on the server.
+  - The model sees presets with `agent_run(action="presets")` and asks for a run from one with
+    `agent_run(action="request", preset=…)`: prefilled for the user's approval, never started.
 - **CLI:** `refhandbook runner` (jobs and runs), `refhandbook sandbox-check`, `refhandbook
   sandbox-exec` (internal); `python -m refhandbook.agents.keys gen <dir>` makes the X25519 pair
   (the installer, once).

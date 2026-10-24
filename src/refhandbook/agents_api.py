@@ -9,6 +9,7 @@ routing), the limits and the pruning, and approves it. The runner unit does the 
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import os
 import threading
@@ -72,10 +73,10 @@ def _tree(nodes: list[dict[str, Any]], depth: int = 0) -> list[str]:
 
 
 def agent_run(
-    action: Annotated[Literal["request", "status", "tree", "log", "result", "cancel"], Field(
+    action: Annotated[Literal["request", "status", "tree", "log", "result", "cancel", "presets"], Field(
         description="request: ask the user for a run (returns the approval page); status: one run, or all; "
                     "tree: its agents; log: its messages and shared notes; result: what the lead returned; "
-                    "cancel: stop it")],
+                    "cancel: stop it; presets: the runs the user keeps ready (and their schedules)")],
     goal: Annotated[str, Field(description="request: what the team should achieve, with what done looks like")] = "",
     run: Annotated[str, Field(description="the run's id (run:…), for every action but request")] = "",
     title: str = "",
@@ -83,6 +84,8 @@ def agent_run(
         description="request: what you suggest for the grant, shown to the user, who decides: e.g. "
                     "{max_agents, max_spawns, max_depth, max_steps, context, roles: {lead: model, worker: model}}")] = None,
     why: str = "",
+    preset: Annotated[str, Field(description="request: start from this preset of the user's (its goal, unless "
+                                             "goal is given, and its grant, prefilled for the user's approval)")] = "",
 ) -> str:
     """Runs of autonomous agents on the user's own API keys (Claude, OpenAI, Gemini or a compatible
     server), in the user's sandbox. You can only ask for a run: the user approves it on the approval
@@ -90,10 +93,31 @@ def agent_run(
     the address and go on."""
     with _lock:
         t = _team()
+        if action == "presets":
+            from .agents.presets import Presets
+
+            ps = Presets(t.g)
+            sched = ps.schedules()
+            out = []
+            for p in ps.list():
+                a = p["attrs"]
+                whens = [f"{x['attrs']['cron']}{'' if x['attrs'].get('enabled') else ' (off)'}" for x in sched
+                         if x["attrs"]["preset"] == a["name"]]
+                out.append(f"{a['name']}: {a['title']} — {p['content'][:200]}"
+                           + (f" [schedules: {', '.join(whens)}]" if whens else ""))
+            return "\n".join(out) or "no presets; the user saves them on the page /agents/presets"
         if action == "request":
+            proposal = _suggest(suggest)
+            if preset:
+                from .agents.presets import Presets, fill
+
+                p = Presets(t.g).get(preset)
+                proposal = {**p["attrs"]["grant"], "preset": preset}  # the user's own settings, for the form
+                goal = goal.strip() or fill(p["content"], dt.datetime.now())
+                title = title or p["attrs"]["title"]
             if not goal.strip():
                 raise TeamError("request needs a goal")
-            rid = t.request_run(goal, actor="model", proposal=_suggest(suggest), title=title)
+            rid = t.request_run(goal, actor="model", proposal=proposal, title=title)
             return (f"run {rid} requested. Nothing runs until the user approves it at {approval_url(rid)} (keys, "
                     f"models, limits). Follow it with agent_run(action='status', run='{rid}').")
         if action == "status" and not run:

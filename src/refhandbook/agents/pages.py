@@ -209,6 +209,9 @@ def install(m: Any, *, stores: Callable[[str], Handbook], uid_of: Callable[[str]
         def act() -> str:
             t, ws = team(uid)
             grant = run_pages.parse_grant(f, keys)
+            if f.get("preset", "").strip():  # keep the same settings as a preset too
+                Presets(ws.g, crew.schedules_marker(ws)).save(f["preset"], f.get("goal", ""), grant,
+                                                              title=f.get("title", ""))
             run = t.request_run(f.get("goal", ""), actor="user", title=f.get("title", "").strip())
             try:
                 t.approve(run, grant, actor="user")
@@ -264,6 +267,127 @@ def install(m: Any, *, stores: Callable[[str], Handbook], uid_of: Callable[[str]
         except HandbookError as e:
             return back(f"/agents/runs/{request.path_params['run']}", err=str(e))
         return back(f"/agents/runs/{run}", "승인했습니다. 러너가 곧 시작합니다.")
+
+    # ── presets and schedules ────────────────────────────────────────────
+
+    from .presets import Presets
+
+    def presets_of(uid: str) -> tuple[Presets, Workspace]:
+        ws = Workspace(stores(uid))
+        return Presets(ws.g, crew.schedules_marker(ws)), ws
+
+    @m.custom_route("/agents/presets", methods=["GET"])
+    async def presets_page(request: Request) -> Response:
+        ks = keystore()
+
+        def render(uid: str, hidden: str) -> str:
+            ps, ws = presets_of(uid)
+            return run_pages.presets_page(uid, ps.list(), ps.schedules(), ks.list(uid), ws.policies(), hidden,
+                                          request.query_params)
+        return await get_page(request, "/agents/presets", render)
+
+    async def preset_post(request: Request, act: Callable[[str, Presets, Workspace, dict[str, str]], str],
+                          where: Callable[[str], str] = lambda done: "/agents/presets") -> Response:
+        got = await checked(request)
+        if isinstance(got, Response):
+            return got
+        uid, f = got
+
+        def run() -> str:
+            ps, ws = presets_of(uid)
+            return act(uid, ps, ws, f)
+        try:
+            done = await locked(run)
+        except HandbookError as e:
+            return back("/agents/presets", err=str(e))
+        return back(where(done), done)
+
+    @m.custom_route("/agents/presets/save", methods=["POST"])
+    async def preset_save(request: Request) -> Response:
+        got = await checked(request)
+        if isinstance(got, Response):
+            return got
+        uid, f = got
+        keys = await anyio.to_thread.run_sync(lambda: keystore().list(uid))
+
+        def act() -> tuple[str, str | None]:
+            ps, ws = presets_of(uid)
+            p = ps.save(f.get("name", ""), f.get("goal", ""), run_pages.parse_grant(f, keys), title=f.get("title", ""))
+            name = p["attrs"]["name"]
+            if f.get("then") == "run":
+                run = ps.start(name)
+                crew.mark(ws, run)
+                return name, run
+            return name, None
+        try:
+            name, run = await locked(act)
+        except HandbookError as e:
+            return back("/agents/presets", err=str(e))
+        if run:
+            return back(f"/agents/runs/{run}", f"프리셋 {name} 저장, 실행을 시작했습니다.")
+        return back("/agents/presets", f"프리셋 {name} 저장")
+
+    @m.custom_route("/agents/presets/{name}/run", methods=["POST"])
+    async def preset_run(request: Request) -> Response:
+        def act(uid: str, ps: Presets, ws: Workspace, f: dict[str, str]) -> str:
+            run = ps.start(request.path_params["name"])
+            crew.mark(ws, run)
+            return run
+        return await preset_post(request, act, where=lambda run: f"/agents/runs/{run}")
+
+    @m.custom_route("/agents/presets/{name}/delete", methods=["POST"])
+    async def preset_delete(request: Request) -> Response:
+        def act(uid: str, ps: Presets, ws: Workspace, f: dict[str, str]) -> str:
+            ps.delete(request.path_params["name"])
+            return f"프리셋 {request.path_params['name']}과 그 예약을 지웠습니다."
+        return await preset_post(request, act)
+
+    @m.custom_route("/agents/presets/{name}/schedule", methods=["POST"])
+    async def preset_schedule(request: Request) -> Response:
+        def act(uid: str, ps: Presets, ws: Workspace, f: dict[str, str]) -> str:
+            s = ps.schedule(request.path_params["name"], f.get("cron", ""))
+            nxt = time.strftime("%m-%d %H:%M", time.localtime(s["attrs"]["next_at"]))
+            return f"예약 {s['attrs']['cron']} 추가: 다음 실행 {nxt}"
+        return await preset_post(request, act)
+
+    @m.custom_route("/agents/schedules/{sid}/toggle", methods=["POST"])
+    async def schedule_toggle(request: Request) -> Response:
+        def act(uid: str, ps: Presets, ws: Workspace, f: dict[str, str]) -> str:
+            on = f.get("enabled") == "1"
+            ps.set_enabled(request.path_params["sid"], on)
+            return "예약을 켰습니다." if on else "예약을 껐습니다."
+        return await preset_post(request, act)
+
+    @m.custom_route("/agents/schedules/{sid}/delete", methods=["POST"])
+    async def schedule_delete(request: Request) -> Response:
+        def act(uid: str, ps: Presets, ws: Workspace, f: dict[str, str]) -> str:
+            ps.unschedule(request.path_params["sid"])
+            return "예약을 지웠습니다."
+        return await preset_post(request, act)
+
+    # ── the workspace's files (read only) ────────────────────────────────
+
+    @m.custom_route("/agents/files", methods=["GET"])
+    async def files_page(request: Request) -> Response:
+        rel = request.query_params.get("path", "").strip("/")[:1000]
+
+        def render(uid: str, hidden: str) -> str:
+            ws = Workspace(stores(uid))
+            try:
+                return run_pages.files_page(uid, rel, ws.ls(rel or "."), None, 0, str(ws.work), request.query_params)
+            except (HandbookError, OSError):
+                pass  # not a directory: a file, or nothing
+            try:
+                parent, _, name = rel.rpartition("/")
+                size = next((n for e, k, n in ws.ls(parent or ".") if e == name and k == "file"), None)
+                if size is None:
+                    raise HandbookError(f"{rel}: no such file or directory")
+                text = ws.read(rel, limit=500_000)
+                return run_pages.files_page(uid, rel, None, None if "\x00" in text[:8000] else text, size,
+                                            str(ws.work), request.query_params)
+            except (HandbookError, OSError) as e:
+                return run_pages.files_page(uid, "", ws.ls("."), None, 0, str(ws.work), {"err": str(e)})
+        return await get_page(request, "/agents/files", render)
 
     @m.custom_route("/agents/runs/{run}/cancel", methods=["POST"])
     async def run_cancel(request: Request) -> Response:

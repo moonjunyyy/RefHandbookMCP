@@ -483,6 +483,7 @@ def _runner(args: argparse.Namespace) -> int:
             root = Path(args.data_dir) / "users"
             out = {str(m.parent.parent)[: -len(".sandbox")] for pattern in ("*.db.sandbox/queue/*", "*.db.sandbox/runs/*")
                    for m in root.glob(pattern)}
+            out |= {str(m.parent)[: -len(".sandbox")] for m in root.glob("*.db.sandbox/schedules")}
             return sorted(out | set(runners))
         return [args.db or str(default_db_path())]
 
@@ -493,7 +494,7 @@ def _runner(args: argparse.Namespace) -> int:
         for db in stores():
             try:  # one store's trouble (a busy file, a bad row) never stops the others
                 r = runner_for(db)
-                if (Path(f"{db}.sandbox") / "runs").is_dir():
+                if (Path(f"{db}.sandbox") / "runs").is_dir() or (Path(f"{db}.sandbox") / "schedules").exists():
                     crews.attach(db, r)
                 r.reap_lost()
                 r.poll()

@@ -126,25 +126,7 @@ class Team:
             raise TeamError(f"{run} is not an open run")
         if _attr(r, "phase") != "requested":
             raise TeamError(f"{run} is {_attr(r, 'phase')}, not awaiting approval")
-        cfg = {**DEFAULT_GRANT, **{k: v for k, v in grant.items() if k in DEFAULT_GRANT}}
-        for k in ("max_agents", "max_spawns", "max_depth", "max_steps", "max_tokens", "disk_mb"):
-            try:
-                cfg[k] = int(cfg[k])
-            except (TypeError, ValueError) as e:
-                raise TeamError(f"{k}: a number") from e
-        if not 1 <= cfg["max_steps"] <= 1000 or cfg["max_tokens"] < 0:
-            raise TeamError("max_steps 1–1000; max_tokens 0 (no limit) or more")
-        if cfg["effort"] not in EFFORTS:
-            raise TeamError(f"effort: {'|'.join(e or '(default)' for e in EFFORTS)}")
-        cfg["routes"] = check_routes(cfg["routes"])
-        if not (1 <= cfg["max_agents"] <= 64 and 1 <= cfg["max_spawns"] <= 1024 and 0 <= cfg["max_depth"] <= 16):
-            raise TeamError("limits out of range: 1–64 agents at once, 1–1024 spawns, depth 0–16")
-        if cfg["max_spawns"] < cfg["max_agents"]:
-            cfg["max_spawns"] = cfg["max_agents"]
-        if cfg["context"] not in CONTEXT_LEVELS or cfg["handoff"] not in HANDOFF_LEVELS \
-                or cfg["retention"] not in RETENTION_LEVELS:
-            raise TeamError("pruning levels: context " + "|".join(CONTEXT_LEVELS) + ", handoff "
-                            + "|".join(HANDOFF_LEVELS) + ", retention " + "|".join(RETENTION_LEVELS))
+        cfg = check_grant(grant)
         g = f"{run}:grant"
         with self.g.tx():
             self.g.put_node(g, "grant", actor="user", attrs={**cfg, "run": run, "approved": _now()})
@@ -589,6 +571,31 @@ class Team:
                     counts["retired"] += 1
             self.g.update_node(run, actor=K, attrs={"retention": {"level": level, **counts}})
         return counts
+
+
+def check_grant(grant: dict[str, Any]) -> dict[str, Any]:
+    """A grant as it would be approved: the defaults filled in, every value checked (a preset is
+    checked the same way when it is saved, so a schedule never fires a grant that cannot be)."""
+    cfg = {**DEFAULT_GRANT, **{k: v for k, v in grant.items() if k in DEFAULT_GRANT}}
+    for k in ("max_agents", "max_spawns", "max_depth", "max_steps", "max_tokens", "disk_mb"):
+        try:
+            cfg[k] = int(cfg[k])
+        except (TypeError, ValueError) as e:
+            raise TeamError(f"{k}: a number") from e
+    if not 1 <= cfg["max_steps"] <= 1000 or cfg["max_tokens"] < 0:
+        raise TeamError("max_steps 1–1000; max_tokens 0 (no limit) or more")
+    if cfg["effort"] not in EFFORTS:
+        raise TeamError(f"effort: {'|'.join(e or '(default)' for e in EFFORTS)}")
+    cfg["routes"] = check_routes(cfg["routes"])
+    if not (1 <= cfg["max_agents"] <= 64 and 1 <= cfg["max_spawns"] <= 1024 and 0 <= cfg["max_depth"] <= 16):
+        raise TeamError("limits out of range: 1–64 agents at once, 1–1024 spawns, depth 0–16")
+    if cfg["max_spawns"] < cfg["max_agents"]:
+        cfg["max_spawns"] = cfg["max_agents"]
+    if cfg["context"] not in CONTEXT_LEVELS or cfg["handoff"] not in HANDOFF_LEVELS \
+            or cfg["retention"] not in RETENTION_LEVELS:
+        raise TeamError("pruning levels: context " + "|".join(CONTEXT_LEVELS) + ", handoff "
+                        + "|".join(HANDOFF_LEVELS) + ", retention " + "|".join(RETENTION_LEVELS))
+    return cfg
 
 
 def check_routes(routes: Any) -> list[dict[str, Any]]:

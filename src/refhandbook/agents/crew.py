@@ -2,7 +2,8 @@
 asyncio task per agent, in the runner unit (the only process that can open the users' API keys).
 
 A run is found by its marker, `<db>.sandbox/runs/<hex>`, which the approval page writes when the user
-approves it and the crew removes when the run closes; so the runner opens only stores with work.
+approves it and the crew removes when the run closes; so the runner opens only stores with work. A
+store with an enabled schedule has `<db>.sandbox/schedules`: the crew fires what is due (presets.py).
 
 The planner (`tick`, about once a second, under the store's lock):
   - opens the root agent (a lead) of a newly approved run;
@@ -50,6 +51,7 @@ from ..store import HandbookError
 from . import providers as P
 from .http import Client, HttpError
 from .keys import Key, KeyError_, KeyStore, scrub
+from .presets import Presets
 from .team import NOTE_KINDS, ROLES, Team, TeamError, render_note
 from .workspace import Workspace
 
@@ -81,6 +83,11 @@ def mark(ws: Workspace, run: str) -> None:
 
 def unmark(ws: Workspace, run: str) -> None:
     (ws.base / "runs" / run.split(":", 1)[1]).unlink(missing_ok=True)
+
+
+def schedules_marker(ws: Workspace) -> Path:
+    """Present while the store has an enabled schedule (agents/presets.py), so the runner opens it."""
+    return ws.base / "schedules"
 
 
 def _cut(text: str, n: int = SHOW) -> str:
@@ -242,6 +249,7 @@ class Crew:
         self.http = http
         with lock:
             self.team = Team(ws.g)
+            self.presets = Presets(ws.g, schedules_marker(ws))
         self.g = ws.g
         self.uid = ws.owner
         self.rid = f"crew:{os.getpid()}:{secrets.token_hex(3)}"
@@ -270,6 +278,9 @@ class Crew:
         for aid, t in list(self.tasks.items()):
             if t.done():
                 del self.tasks[aid]
+        with self.lock:  # the user's schedules that are due open their runs (as the page would)
+            for run in self.presets.due():
+                mark(self.ws, run)
         started = 0
         for run in self.runs():
             with self.lock:

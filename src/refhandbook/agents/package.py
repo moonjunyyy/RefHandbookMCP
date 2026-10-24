@@ -17,7 +17,7 @@ from __future__ import annotations
 from ..kernel.graph import Graph
 
 PKG = "agents"
-VERSION = "1"
+VERSION = "2"  # 2: preset, schedule
 
 NOTE_STATES = {"proposed": ["live"], "verified": ["live", "citable"], "disputed": ["live"],
                "retired": ["finished"], "superseded": ["finished"]}
@@ -120,6 +120,10 @@ def install(g: Graph, actor: str = "kernel") -> None:
         g.define_type("packet", "node", actor=actor, pkg=PKG, states=PACKET_STATES,
                       description="A message between agents (or to the user): a digest and the notes it carries.")
         g.define_type("artifact", "node", actor=actor, pkg=PKG, description="A file published from a workspace.")
+        g.define_type("preset", "node", actor=actor, pkg=PKG,
+                      description="A run the user keeps ready: a goal and a grant (routes, limits, pruning).")
+        g.define_type("schedule", "node", actor=actor, pkg=PKG,
+                      description="When a preset runs by itself: a cron expression, written by the user.")
         g.define_type("spawn_request", "node", actor=actor, pkg=PKG,
                       states={"queued": ["live"], "started": ["finished"], "dropped": ["finished"]},
                       description="A spawn waiting for a free slot.")

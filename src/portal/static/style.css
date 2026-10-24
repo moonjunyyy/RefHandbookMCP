@@ -181,3 +181,8 @@ ul.tree ul.tree { padding-left: 18px; border-left: 1px solid var(--line); margin
 ul.tree li { padding: 6px 0; }
 ul.tree li > .small { margin-top: 2px; }
 pre.wrap { white-space: pre-wrap; word-break: break-word; }
+/* an inline form with a field (a preset's schedule): the field and its button on one line */
+.actions form.inline { display: inline-flex; gap: 6px; align-items: center; margin: 0; }
+.actions form.inline input { width: auto; margin: 0; }
+input.cron { width: 14em; font-family: var(--mono, monospace); }
+td.num { text-align: right; white-space: nowrap; width: 1%; }

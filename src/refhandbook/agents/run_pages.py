@@ -57,7 +57,8 @@ def _flash(q: Any) -> str:
 
 
 def nav(here: str) -> str:
-    links = (("/agents", "승인 · 샌드박스"), ("/agents/runs", "에이전트 실행"), ("/agents/keys", "API 키"))
+    links = (("/agents", "승인 · 샌드박스"), ("/agents/runs", "에이전트 실행"), ("/agents/presets", "프리셋 · 예약"),
+             ("/agents/files", "파일"), ("/agents/keys", "API 키"))
     return "<nav class='chips'>" + "".join(
         f"<a class='chip{' warn' if href == here else ''}' href='{href}'>{label}</a>" for href, label in links) + "</nav>"
 
@@ -125,9 +126,12 @@ def _models(keys: list[KeyInfo]) -> str:
 
 
 def _routes_prefill(keys: list[KeyInfo], proposal: dict[str, Any]) -> list[dict[str, Any]]:
-    """Routes suggested by the requester (roles → model), else one route for every role on the first key."""
+    """The routes of a grant (a preset's), or those suggested by the requester (roles → model), else one
+    route for every role on the first key."""
     if not keys:
         return []
+    if isinstance(proposal.get("routes"), list) and proposal["routes"]:
+        return [dict(r) for r in proposal["routes"]][:ROUTE_ROWS]
     roles = proposal.get("roles") if isinstance(proposal.get("roles"), dict) else {}
     by_model: dict[str, list[str]] = {}
     for role, model in roles.items():
@@ -146,9 +150,12 @@ def _routes_prefill(keys: list[KeyInfo], proposal: dict[str, Any]) -> list[dict[
 
 
 def grant_form(action: str, keys: list[KeyInfo], policies: list[str], hidden: str, *, goal: bool,
-               proposal: dict[str, Any] | None = None, submit: str = "승인하고 시작", reject: str = "") -> str:
-    """The grant form; `reject` is an action the same form can post to instead (its token rides along)."""
+               proposal: dict[str, Any] | None = None, submit: str = "승인하고 시작", reject: str = "",
+               values: dict[str, str] | None = None, head: str = "", buttons: str = "") -> str:
+    """The grant form. `reject` is an action the same form can post to instead (its token rides along);
+    `values` fill the goal and title, `head` goes first (a preset's name), `buttons` after the submit."""
     proposal = proposal or {}
+    values = values or {}
     if not keys:
         return "<p class='flash error'>먼저 <a href='/agents/keys'>API 키</a>를 등록하세요.</p>"
     v = {**DEFAULT_GRANT, **{k: proposal[k] for k in DEFAULT_GRANT if k in proposal}}
@@ -172,8 +179,10 @@ def grant_form(action: str, keys: list[KeyInfo], policies: list[str], hidden: st
 
     pol = v["policy"] if v["policy"] in policies else (policies[0] if policies else "")
     return (f"<form method=post action='{action}'>{hidden}"
+            + head
             + ("<label>목표 <span class='muted small'>무엇을 이루면 끝인지까지</span>"
-               "<textarea name=goal rows=4 required></textarea></label><label>제목 <input name=title></label>"
+               f"<textarea name=goal rows=4 required>{_e(values.get('goal', ''))}</textarea></label>"
+               f"<label>제목 <input name=title value='{_e(values.get('title', ''))}'></label>"
                if goal else "")
             + "<h3>라우팅</h3><p class='muted small'>역할마다 위에서부터 첫 경로로 시작하고, 키가 거부되거나 제공자가 "
               "계속 실패하면 같은 역할의 다음 경로로 넘어갑니다. 워커에는 싼 모델을 두면 비용이 줄어듭니다.</p>"
@@ -185,7 +194,7 @@ def grant_form(action: str, keys: list[KeyInfo], policies: list[str], hidden: st
             + f"<label>보관 {levels('retention', RETENTION_LEVELS)}</label>"
             + f"<label>샌드박스 정책 {_select('policy', [(p, p) for p in policies], pol)}</label>"
             + f"<label>effort {_select('effort', [(e, e or '기본값') for e in EFFORTS], str(v['effort']))}</label>"
-            + f"</div><div class='actions'><button>{submit}</button>"
+            + f"</div><div class='actions'><button>{submit}</button>{buttons}"
             + (f"<button class=secondary formaction='{_e(reject)}' formnovalidate>거절</button>" if reject else "")
             + "</div></form>")
 
@@ -237,7 +246,10 @@ def runs_page(uid: str, t: Team, keys: list[KeyInfo], policies: list[str], hidde
             + (f"<p class='flash'>승인을 기다리는 요청이 {waiting}건 있습니다.</p>" if waiting else "")
             + f"<section class='card section'><h2>실행 목록 ({len(runs)})</h2>{table}</section>"
             + "<section class='card section' id='new'><h2>새 실행</h2>"
-            + grant_form("/agents/runs/new", keys, policies, hidden, goal=True, submit="시작")
+            + grant_form("/agents/runs/new", keys, policies, hidden, goal=True, submit="시작",
+                         head="<label>프리셋으로도 저장 <span class='muted small'>이름을 적으면 같은 설정을 프리셋으로 "
+                              "남깁니다 (선택)</span><input name=preset pattern='[a-z0-9][a-z0-9._\\-]*' "
+                              "placeholder='예: daily-report'></label>")
             + "</section>")
 
 
@@ -315,3 +327,96 @@ def run_page(uid: str, t: Team, run: str, keys: list[KeyInfo], policies: list[st
         out.append("<section class='card section'><h2>공유된 노트</h2>"
                    + "".join(f"<p class='small'>{_e(render_note(n))}</p>" for n in board[-30:]) + "</section>")
     return "".join(out)
+
+
+# ── presets and schedules ────────────────────────────────────────────────
+
+
+def _when(ts: float | None) -> str:
+    return time.strftime("%m-%d %H:%M", time.localtime(ts)) if ts else "-"
+
+
+PRESET_NAME = "<label>이름 <span class='muted small'>영문 소문자·숫자·.-_</span><input name=name required " \
+              "pattern='[a-z0-9][a-z0-9._\\-]*' value='{v}' {ro}></label>"
+
+
+def presets_page(uid: str, presets: list[dict[str, Any]], schedules: list[dict[str, Any]], keys: list[KeyInfo],
+                 policies: list[str], hidden: str, q: Any) -> str:
+    cards = []
+    for p in presets:
+        a = p["attrs"]
+        name = a["name"]
+        g = a["grant"]
+        routes = ", ".join(f"{r['model']} ({'/'.join(ROLE_NAMES[x] for x in r['roles'])})" for r in g["routes"])
+        mine = [s for s in schedules if s["attrs"]["preset"] == name]
+        rows = "".join(
+            f"<tr><td><code>{_e(s['attrs']['cron'])}</code></td>"
+            f"<td><span class='tag {'ok' if s['attrs'].get('enabled') else ''}'>{'켜짐' if s['attrs'].get('enabled') else '꺼짐'}"
+            f"</span></td><td>{_when(s['attrs'].get('next_at')) if s['attrs'].get('enabled') else '-'}</td>"
+            f"<td>{_when(s['attrs'].get('last_at'))}"
+            + (f" <a href='/agents/runs/{_e(s['attrs']['last_run'])}'>실행</a>" if s['attrs'].get('last_run') else "")
+            + f"</td><td class='wrap muted small'>{_e(s['attrs'].get('last_note', ''))}</td><td>"
+            f"<form class=inline method=post action='/agents/schedules/{_e(s['id'])}/toggle'>{hidden}"
+            f"<input type=hidden name=enabled value='{'0' if s['attrs'].get('enabled') else '1'}'>"
+            f"<button class=secondary>{'끄기' if s['attrs'].get('enabled') else '켜기'}</button></form> "
+            f"<form class=inline method=post action='/agents/schedules/{_e(s['id'])}/delete'>{hidden}"
+            f"<button class=secondary>삭제</button></form></td></tr>" for s in mine)
+        sched = ((f"<div class='table-wrap'><table><thead><tr><th>cron</th><th>상태</th><th>다음</th><th>마지막</th>"
+                  f"<th>메모</th><th></th></tr></thead><tbody>{rows}</tbody></table></div>") if mine else "")
+        edit = grant_form(f"/agents/presets/save", keys, policies, hidden, goal=True, proposal=g, submit="저장",
+                          values={"goal": p["content"], "title": a["title"]},
+                          head=PRESET_NAME.format(v=_e(name), ro="readonly")) if keys else ""
+        cards.append(
+            f"<div class='item'><div class='item-head'><b>{_e(a['title'])}</b><code>{_e(name)}</code>"
+            f"<span class='muted small'>{_e(routes)} · 동시 {g['max_agents']} · 턴 {g['max_steps']}</span></div>"
+            f"<p class='small'>{_e(p['content'])}</p>"
+            f"<div class='actions'><form class=inline method=post action='/agents/presets/{_e(name)}/run'>{hidden}"
+            f"<button>지금 실행</button></form>"
+            f"<form class=inline method=post action='/agents/presets/{_e(name)}/schedule'>{hidden}"
+            f"<input name=cron required placeholder='0 9 * * mon-fri' class='cron'><button class=secondary>예약 추가</button>"
+            f"</form>"
+            f"<form class=inline method=post action='/agents/presets/{_e(name)}/delete'>{hidden}"
+            f"<button class=secondary>삭제</button></form></div>{sched}"
+            f"<details class='panel'><summary>설정 고치기</summary>{edit}</details></div>")
+    body = "".join(cards) or "<p class='empty muted'>아직 프리셋이 없습니다. 아래에서 만들거나, 새 실행을 시작할 때 "\
+                              "이름을 적어 저장하세요.</p>"
+    return (_head("프리셋 · 예약", "자주 하는 실행을 목표와 허가째로 저장해 두고, 한 번에 실행하거나 정해진 때에 저절로 "
+                  "실행되게 합니다. 예약은 미리 해 둔 승인입니다: 때가 되면 러너가 이 설정 그대로 실행을 엽니다.",
+                  "/agents/presets", uid)
+            + _flash(q)
+            + f"<section class='card section'><h2>프리셋 ({len(presets)})</h2>"
+              "<p class='muted small'>예약은 cron 다섯 칸(분 시 일 월 요일, 서버 시간)입니다. 예: <code>0 9 * * mon-fri</code> "
+              "평일 9시, <code>*/30 * * * *</code> 30분마다, <code>@daily</code> 매일 0시. 목표에 <code>{date}</code>, "
+              "<code>{time}</code>을 쓰면 실행한 때로 바뀝니다. 앞 실행이 아직 돌고 있으면 그 회차는 건너뜁니다.</p>"
+              f"{body}</section>"
+            + "<section class='card section'><h2>새 프리셋</h2>"
+            + grant_form("/agents/presets/save", keys, policies, hidden, goal=True, submit="저장",
+                         head=PRESET_NAME.format(v="", ro=""),
+                         buttons="<button class=secondary name=then value=run>저장하고 실행</button>")
+            + "</section>")
+
+
+# ── the workspace's files ────────────────────────────────────────────────
+
+
+def files_page(uid: str, rel: str, rows: list[tuple[str, str, int]] | None, text: str | None, size: int,
+               work: str, q: Any) -> str:
+    """A directory listing (`rows`) or a file (`text`, None when it is not text) of the workspace."""
+    parts = [x for x in rel.split("/") if x not in ("", ".")]
+    crumbs = ["<a href='/agents/files'>/work</a>"] + [
+        f"<a href='/agents/files?path={_e('/'.join(parts[:i + 1]))}'>{_e(x)}</a>" for i, x in enumerate(parts)]
+    head = (_head("파일", "샌드박스의 <code>/work</code>: 스크립트와 에이전트가 쓰는 작업 공간입니다(읽기 전용으로 "
+                  "보여 줍니다). 에이전트 실행은 <code>/work/runs/&lt;실행&gt;</code>에서 일합니다.", "/agents/files", uid)
+            + _flash(q) + f"<p class='muted small'>서버의 위치: <code>{_e(work)}</code></p>"
+            + f"<section class='card section'><h2>{' / '.join(crumbs)}</h2>")
+    if rows is not None:
+        base = "/".join(parts)
+        items = "".join(
+            f"<tr><td class='wrap'><a href='/agents/files?path="
+            f"{_e((base + '/' if base else '') + name)}'>{_e(name)}{'/' if k == 'dir' else ''}</a></td>"
+            f"<td class='muted small num'>{'' if k == 'dir' else f'{n:,} B'}</td></tr>" for name, k, n in rows)
+        return head + (f"<div class='table-wrap'><table><tbody>{items}</tbody></table></div>" if rows
+                       else "<p class='empty muted'>비어 있습니다.</p>") + "</section>"
+    if text is None:
+        return head + f"<p class='muted'>텍스트가 아닌 파일입니다 ({size:,} B).</p></section>"
+    return head + f"<p class='muted small'>{size:,} B</p><pre class='wrap'>{_e(text)}</pre></section>"

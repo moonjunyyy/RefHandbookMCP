@@ -641,3 +641,142 @@ def test_the_installed_code_imports_without_the_dev_packages():
             "    importlib.import_module(m)\n")
     r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, cwd=src)
     assert r.returncode == 0, r.stderr[-2000:]
+
+
+# ── presets and schedules ────────────────────────────────────────────────
+
+import datetime as dt  # noqa: E402
+
+from refhandbook.agents import cron  # noqa: E402
+from refhandbook.agents.presets import Presets  # noqa: E402
+
+
+def test_cron_fires_as_cron_does():
+    t = dt.datetime(2026, 10, 24, 10, 30)  # a Saturday
+    assert cron.parse("0 9 * * mon-fri").next_after(t) == dt.datetime(2026, 10, 26, 9, 0)
+    assert cron.parse("*/15 * * * *").next_after(t) == dt.datetime(2026, 10, 24, 10, 45)
+    assert cron.parse("30 10 * * *").next_after(t) == dt.datetime(2026, 10, 25, 10, 30)  # strictly after
+    assert cron.parse("@monthly").next_after(t) == dt.datetime(2026, 11, 1, 0, 0)
+    assert cron.parse("0 12 29 2 *").next_after(t) == dt.datetime(2028, 2, 29, 12, 0)
+    # day-of-month and day-of-week both given: either day fires
+    assert cron.parse("0 0 1 * sun").next_after(t) == dt.datetime(2026, 10, 25, 0, 0)
+    assert cron.parse("0 0 * * 7").next_after(t) == dt.datetime(2026, 10, 25, 0, 0)  # 7 is Sunday too
+    for bad in ("0 0 31 2 *", "60 * * * *", "* * *", "0 9 * * xyz", "*/0 * * * *"):
+        with pytest.raises(cron.CronError):
+            cron.parse(bad)
+
+
+def _presets(tmp_path):
+    (tmp_path / "users").mkdir(exist_ok=True)
+    ws = Workspace(Handbook(tmp_path / "users" / "moon.db"))
+    return Presets(ws.g, C.schedules_marker(ws)), ws
+
+
+def test_a_schedule_fires_its_preset_once_per_time_and_not_over_a_running_one(tmp_path):
+    ps, ws = _presets(tmp_path)
+    with pytest.raises(TeamError):
+        ps.save("daily", "x", {"routes": []})  # checked as a grant is
+    with pytest.raises(TeamError):
+        ps.save("daily", "x", _grant(), actor="model")  # the user's only
+    ps.save("daily", "report for {date}", _grant(), title="daily report")
+    t0 = dt.datetime(2026, 10, 24, 8, 59)
+    s = ps.schedule("daily", "0 9 * * *", now=t0)
+    assert C.schedules_marker(ws).exists()
+    assert ps.due(t0) == []  # not yet
+    runs = ps.due(dt.datetime(2026, 10, 24, 9, 0, 5))
+    assert len(runs) == 1
+    r = ws.g.node(runs[0])
+    assert r["content"] == "report for 2026-10-24" and r["attrs"]["phase"] == "approved"
+    assert r["attrs"]["preset"] == "daily" and r["attrs"]["schedule"] == s["id"] and r["origin"] == "user"
+    assert ps.due(dt.datetime(2026, 10, 24, 9, 0, 30)) == []  # once
+    # the next day, the first run still going: skipped, and said so
+    assert ps.due(dt.datetime(2026, 10, 25, 9, 0)) == []
+    a = ws.g.node(s["id"])["attrs"]
+    assert a["skipped"] == 1 and "still running" in a["last_note"]
+    # after a long stop it fires once, then on time
+    Team = __import__("refhandbook.agents.team", fromlist=["Team"]).Team
+    Team(ws.g).cancel_run(runs[0], "done with it", actor="user")
+    assert len(ps.due(dt.datetime(2026, 10, 30, 12, 0))) == 1
+    assert ws.g.node(s["id"])["attrs"]["next_at"] == dt.datetime(2026, 10, 31, 9, 0).timestamp()
+    # off: nothing fires, and the marker goes when no schedule is on
+    ps.set_enabled(s["id"], False)
+    assert not C.schedules_marker(ws).exists() and ps.due(dt.datetime(2026, 11, 5, 9, 0)) == []
+    with pytest.raises(TeamError):
+        ps.set_enabled(s["id"], True, actor="model")
+    ps.delete("daily")
+    assert ps.schedules() == [] and ps.list() == []
+
+
+def test_the_runner_fires_a_due_schedule_and_runs_it(tmp_path, ks):
+    ks.put("moon", "anthropic", "main", "sk-ant-api03-abcdefghijklmnop")
+    crew = _crew(tmp_path, ks, lambda agent, history, system: {"calls": [("finish", {"outcome": "done", "text": "ok"})]})
+    crew.presets.save("ping", "say ok", _grant())
+    s = crew.presets.schedule("ping", "* * * * *", now=dt.datetime.now() - dt.timedelta(minutes=5))
+
+    async def go():
+        await crew.tick()
+        run = crew.g.node(s["id"])["attrs"]["last_run"]
+        await _drive(crew, run)
+        return run
+
+    run = asyncio.run(go())
+    assert crew.team.result(run)["content"] == "ok" and crew.g.node(run)["attrs"]["phase"] == "done"
+
+
+def test_presets_and_files_on_the_pages(client, keyed, cfg):
+    from refhandbook import server
+    from refhandbook.agents.team import Team
+
+    c, tok = client, {"X-Auth-Token": site_token(client.key), "Origin": BASE}
+    page = c.get("/agents/keys", headers=tok).text
+    c.post("/agents/keys/add", data={"provider": "anthropic", "label": "main", "secret": "sk-ant-api03-abcdefghijklmnop",
+                                     "csrf": _csrf(page)}, headers=tok)
+    page = c.get("/agents/presets", headers=tok).text
+    assert "프리셋 (0)" in page
+    form = {"name": "weekly", "goal": "summarize the week to {date}", "title": "weekly", "route0_key": "anthropic/main",
+            "route0_model": "claude-opus-5-5", "route0_lead": "on", "route0_worker": "on", "max_agents": "2",
+            "max_spawns": "2", "max_depth": "1", "max_steps": "10", "max_tokens": "0", "context": "trim",
+            "handoff": "digest", "retention": "verified", "policy": "default", "effort": "", "csrf": _csrf(page)}
+    r = c.post("/agents/presets/save", data=form, headers=tok, follow_redirects=False)
+    assert "ok=" in r.headers["location"]
+    page = c.get("/agents/presets", headers=tok).text
+    assert "프리셋 (1)" in page and "weekly" in page and "value='claude-opus-5-5'" in page  # its routes, to edit
+    r = c.post("/agents/presets/weekly/schedule", data={"cron": "0 9 * * mon", "csrf": _csrf(page)}, headers=tok,
+               follow_redirects=False)
+    assert "ok=" in r.headers["location"] and (cfg.data_dir / "users" / "moon.db.sandbox" / "schedules").exists()
+    r = c.post("/agents/presets/weekly/schedule", data={"cron": "0 9 31 2 *", "csrf": _csrf(page)}, headers=tok,
+               follow_redirects=False)
+    assert "err=" in r.headers["location"]
+    r = c.post("/agents/presets/weekly/run", data={"csrf": _csrf(page)}, headers=tok, follow_redirects=False)
+    run = r.headers["location"].split("?")[0].rsplit("/", 1)[1]
+    t = Team(Workspace(server._user_store("moon")).g)
+    assert t.grant(run)["max_agents"] == 2 and "summarize the week to 20" in t.g.node(run)["content"]
+    assert (cfg.data_dir / "users" / "moon.db.sandbox" / "runs" / run.split(":")[1]).exists()
+    sid = Presets(t.g).schedules()[0]["id"]
+    c.post(f"/agents/schedules/{sid}/toggle", data={"enabled": "0", "csrf": _csrf(page)}, headers=tok)
+    assert not (cfg.data_dir / "users" / "moon.db.sandbox" / "schedules").exists()
+    # the new-run form keeps its settings as a preset when named
+    page = c.get("/agents/runs", headers=tok).text
+    c.post("/agents/runs/new", data={**form, "name": "", "preset": "adhoc", "csrf": _csrf(page)}, headers=tok)
+    assert [p["attrs"]["name"] for p in Presets(t.g).list()] == ["adhoc", "weekly"]
+    # the model lists presets and asks from one; the grant is prefilled, nothing runs
+    from refhandbook import agents_api
+
+    agents_api.configure(lambda: server._user_store("moon"), server._CALLS)
+    assert "weekly: weekly" in agents_api.agent_run("presets")
+    out = agents_api.agent_run("request", preset="weekly")
+    asked = re.search(r"run (run:[0-9a-f]+)", out).group(1)
+    assert t.g.node(asked)["attrs"]["phase"] == "requested" and t.g.node(asked)["attrs"]["proposal"]["preset"] == "weekly"
+    assert "value='claude-opus-5-5'" in c.get(f"/agents/runs/{asked}", headers=tok).text
+    # files: the workspace, read only
+    ws = Workspace(server._user_store("moon"))
+    ws.write("out/report.txt", "hello <b>")
+    page = c.get("/agents/files", headers=tok).text
+    assert "out/" in page and str(ws.work) in page
+    assert "report.txt" in c.get("/agents/files?path=out", headers=tok).text
+    assert "hello &lt;b&gt;" in c.get("/agents/files?path=out/report.txt", headers=tok).text
+    escape = c.get("/agents/files?path=../../etc/passwd", headers=tok).text
+    assert "root:" not in escape and "outside the workspace" in escape
+    page = c.get("/agents/presets", headers=tok).text
+    c.post("/agents/presets/weekly/delete", data={"csrf": _csrf(page)}, headers=tok)
+    assert [p["attrs"]["name"] for p in Presets(t.g).list()] == ["adhoc"] and Presets(t.g).schedules() == []
