@@ -72,9 +72,9 @@ def test_apply_mounts_with_the_users_ids_mapped_to_the_services(site, tmp_path):
     info.write_text("")
     done = M.apply(stages, stage, 990, 968, run=lambda c: calls.append(c) or 0, mountinfo=str(info))
     assert calls == [
-        ["mount", "--bind", "-o", f"X-mount.idmap=u:990:{ME}:1 g:968:{ME}:1", str(home / "moon" / "data"),
+        ["mount", "--bind", "-o", f"X-mount.idmap=u:{ME}:990:1 g:{ME}:968:1", str(home / "moon" / "data"),
          str(stage / "moon" / "data")],
-        ["mount", "--bind", "-o", f"X-mount.idmap=u:990:{ME}:1 g:968:{ME}:1,ro", str(home / "moon" / "papers"),
+        ["mount", "--bind", "-o", f"X-mount.idmap=u:{ME}:990:1 g:{ME}:968:1,ro", str(home / "moon" / "papers"),
          str(stage / "moon" / "papers")]]
     assert len(done) == 2 and oct(os.stat(stage).st_mode & 0o777) == "0o755"
     # mounted now: a second run changes nothing
@@ -82,6 +82,16 @@ def test_apply_mounts_with_the_users_ids_mapped_to_the_services(site, tmp_path):
     calls.clear()
     assert M.apply(stages, stage, 990, 968, run=lambda c: calls.append(c) or 0, mountinfo=str(info)) == []
     assert calls == []
+    # a mount made with another mapping (the reversed one of an earlier version) is made again
+    state = stage / M.STATE
+    import json
+    old = json.loads(state.read_text())
+    old[stages[0].target]["idmap"] = f"u:990:{ME}:1 g:968:{ME}:1"
+    state.write_text(json.dumps(old))
+    M.apply(stages, stage, 990, 968, run=lambda c: calls.append(c) or 0, mountinfo=str(info))
+    assert calls == [["umount", "--lazy", stages[0].target],
+                     ["mount", "--bind", "-o", f"X-mount.idmap=u:{ME}:990:1 g:{ME}:968:1", stages[0].host, stages[0].target]]
+    calls.clear()
     # papers is no longer offered and data turns read-only: papers goes, data is mounted again, ro
     offered2 = M.parse(f"{home}/{{user}}/data=data:ro")
     stages2, _ = M.plan(data, stage, 990, offered2, min_uid=1000, getpw=getpw)

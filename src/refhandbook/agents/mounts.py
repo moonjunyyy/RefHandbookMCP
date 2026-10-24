@@ -163,8 +163,12 @@ def mounted(under: Path, mountinfo: str = "/proc/self/mountinfo") -> set[str]:
 
 
 def idmap(s: Stage, service_uid: int, service_gid: int) -> str:
-    """The user's uid and gid read as the service's through the mount (u:<in mount>:<on disk>:1)."""
-    return f"u:{service_uid}:{s.uid}:1 g:{service_gid}:{s.gid}:1"
+    """The user's uid and gid read as the service's through the mount, and the service's writes land as
+    the user's. The kernel looks a file's owner on disk up in the mapping's first column and shows the
+    second (map_id_down over the mount's user namespace, whose uid_map util-linux writes as given), so
+    the user's id comes first: u:<on disk>:<seen in the mount>:1. (mount(8) names the columns the other
+    way round; the other order leaves every file of the user unmapped, as nobody.)"""
+    return f"u:{s.uid}:{service_uid}:1 g:{s.gid}:{service_gid}:1"
 
 
 def apply(stages: list[Stage], stage: Path, service_uid: int, service_gid: int,
@@ -181,16 +185,19 @@ def apply(stages: list[Stage], stage: Path, service_uid: int, service_gid: int,
         before = {}
     now = mounted(stage, mountinfo)
     want = {s.target: s for s in stages}
+
+    def record(s: Stage) -> dict:  # what a mount was made with: a change of any of it mounts it again
+        return {**asdict(s), "idmap": idmap(s, service_uid, service_gid)}
     done, after = [], {}
     for target in sorted(now - {str(stage)}, key=len, reverse=True):
         rec = want.get(target)
-        if rec is None or before.get(target) != asdict(rec):
+        if rec is None or before.get(target) != record(rec):
             if run(["umount", "--lazy", target]) == 0:
                 done.append(f"unmounted {target}")
                 now.discard(target)
     for target, s in want.items():
         if target in now:
-            after[target] = asdict(s)
+            after[target] = record(s)
             continue
         user_dir = Path(target).parent
         user_dir.mkdir(mode=0o755, exist_ok=True)
@@ -198,7 +205,7 @@ def apply(stages: list[Stage], stage: Path, service_uid: int, service_gid: int,
         opts = f"X-mount.idmap={idmap(s, service_uid, service_gid)}" + (",ro" if s.ro else "")
         if run(["mount", "--bind", "-o", opts, s.host, target]) == 0:
             done.append(f"mounted {s.host} at {target}" + (" (ro)" if s.ro else ""))
-            after[target] = asdict(s)
+            after[target] = record(s)
         else:
             done.append(f"could not mount {s.host} at {target}")
     for d in sorted(stage.iterdir()) if stage.exists() else []:  # empty leftovers of users no longer staged
