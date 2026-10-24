@@ -3,6 +3,9 @@
 # facts; /etc/@@unit:handbook@@/handbook.env holds local overrides only. It may not create namespaces:
 # @@unit:runner@@ runs the sandboxed jobs.
 [Unit]
+# its port is @@unit:handbook@@.socket's (handed over as fd 3), so a restart refuses no one
+Requires=@@unit:handbook@@.socket
+After=@@unit:handbook@@.socket
 Description=@@name@@ reference handbook (MCP)
 After=network-online.target
 Wants=network-online.target

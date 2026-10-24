@@ -262,6 +262,28 @@ It is all installed by `sudo deploy/install.sh` (Setup, above).
 
 Check: `/account/` while signed out redirects to `/auth/login`.
 
+## APIs and pages, and updates without downtime
+
+The site is moving to one shape for every service: the backends answer JSON at `/<service>/api/v1/…`,
+and the pages are a front-end app of their own, built and published apart from the backends
+(`deploy/install.sh --app <id> <dist>`). A change to the pages then needs no backend restart, and
+a backend change none to the pages, as long as the API keeps its version. The pages that decide who
+someone is or what a model may do stay server-rendered, with no script at all: the sign-in
+(`/auth/login`, `/auth/expired`), Claude's consent (`/login`) and the approvals on `/agents`.
+
+Updates do not refuse anyone:
+
+- Each service that listens (portal, sso, apps, handbook) takes its port from a socket unit,
+  `<name>-<role>.socket`, which systemd keeps open while the service restarts; connections that
+  arrive meanwhile wait in its queue and are answered by the new process. The installer restarts the
+  services one at a time. (Moving onto the sockets the first time stops each service once: it holds
+  the port the socket needs.)
+- A published app is a directory per build, and `/apps/<id>` a symlink swapped onto the new one in a
+  single rename: nginx serves the old build or the new one, never a half-copied one. The previous
+  build is kept.
+- nginx is reloaded, not restarted. The runner resumes its agents after a restart (their leases
+  expire and the next runner takes them).
+
 ## Not included (on purpose)
 
 - **Deleting users.** Disable instead. Deleting frees the uidNumber, which could later be reused

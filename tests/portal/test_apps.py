@@ -87,12 +87,17 @@ def test_publishing_replaces_the_apps_files(tmp_path):
     (dist / "index.html").write_text("<h1>v1</h1>")
     (dist / "assets" / "old.js").write_text("1")
     root = tmp_path / "root"
-    assert deploy.install_app(f, SITE, "wordgen", dist, root) == 0
     target = root / "var/www/m00nny/apps/wordgen"
-    assert (target / "index.html").read_text() == "<h1>v1</h1>"
+    (target / "assets").mkdir(parents=True)  # the layout before symlinks: a plain directory
+    (target / "index.html").write_text("<h1>v0</h1>")
+    assert deploy.install_app(f, SITE, "wordgen", dist, root) == 0
+    assert target.is_symlink() and (target / "index.html").read_text() == "<h1>v1</h1>"
     (dist / "assets" / "old.js").unlink()
     (dist / "index.html").write_text("<h1>v2</h1>")
     assert deploy.install_app(f, SITE, "wordgen", dist, root) == 0
     assert (target / "index.html").read_text() == "<h1>v2</h1>" and not (target / "assets/old.js").exists()
+    assert deploy.install_app(f, SITE, "wordgen", dist, root) == 0  # again, at once: the live build is never removed
+    builds = [x.name for x in target.parent.iterdir() if x.name.startswith(".wordgen.")]
+    assert len(builds) == 2 and (target / "index.html").read_text() == "<h1>v2</h1>"  # this one and the one before
     assert deploy.install_app(f, SITE, "account", dist, root) == 1  # not a hosted app
     assert deploy.install_app(f, SITE, "wordgen", tmp_path, root) == 1  # no build there

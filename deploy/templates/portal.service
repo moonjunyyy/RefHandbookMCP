@@ -1,5 +1,8 @@
 # @@generated@@
 [Unit]
+# its port is @@unit:portal@@.socket's (systemd hands the socket over as fd 3), so a restart refuses no one
+Requires=@@unit:portal@@.socket
+After=@@unit:portal@@.socket
 Description=@@name@@ account portal
 After=network-online.target
 Wants=network-online.target
@@ -25,7 +28,7 @@ EnvironmentFile=-/etc/@@unit:portal@@/portal.env
 WorkingDirectory=@@code@@
 # one worker: login throttling is kept in memory
 ExecStart=@@code@@/.venv/bin/uvicorn portal.main:create_app --factory \
-          --host 127.0.0.1 --port @@port:portal@@ --workers 1 --proxy-headers --forwarded-allow-ips 127.0.0.1
+          --fd 3 --workers 1 --proxy-headers --forwarded-allow-ips 127.0.0.1
 Restart=on-failure
 NoNewPrivileges=yes
 ProtectSystem=strict

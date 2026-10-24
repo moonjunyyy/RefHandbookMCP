@@ -2,6 +2,9 @@
 # The site sign-in (nginx auth_request). Its own user, with only the HTTP keytab and the token
 # signing key: it never sees the portal's kadmin keytab.
 [Unit]
+# its port is @@unit:sso@@.socket's (systemd hands the socket over as fd 3), so a restart refuses no one
+Requires=@@unit:sso@@.socket
+After=@@unit:sso@@.socket
 Description=@@name@@ site sign-in
 After=network-online.target
 Wants=network-online.target
@@ -19,7 +22,7 @@ EnvironmentFile=-/etc/@@unit:sso@@/sso.env
 WorkingDirectory=@@code@@
 # one worker: the sign-in throttle is in memory
 ExecStart=@@code@@/.venv/bin/uvicorn portal.sso:create_app --factory \
-          --host 127.0.0.1 --port @@port:sso@@ --workers 1 --proxy-headers --forwarded-allow-ips 127.0.0.1
+          --fd 3 --workers 1 --proxy-headers --forwarded-allow-ips 127.0.0.1
 Restart=on-failure
 NoNewPrivileges=yes
 ProtectSystem=strict

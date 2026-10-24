@@ -536,7 +536,11 @@ def build(cfg: Config, accounts: Accounts | None = None, sso_tokens: SsoTokens |
     def serve() -> None:
         import uvicorn
 
-        uvicorn.run(http_app(), host=cfg.host, port=cfg.port, log_level="info")
+        if os.environ.get("LISTEN_FDS") == "1" and os.environ.get("LISTEN_PID") == str(os.getpid()):
+            # systemd's socket (<name>-handbook.socket) as fd 3: it stays open while this restarts
+            uvicorn.run(http_app(), fd=3, log_level="info")
+        else:
+            uvicorn.run(http_app(), host=cfg.host, port=cfg.port, log_level="info")
 
     m.http_app = http_app  # type: ignore[attr-defined]
     m.serve = serve  # type: ignore[attr-defined]

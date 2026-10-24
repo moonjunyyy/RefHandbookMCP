@@ -65,12 +65,39 @@ def test_nothing_rendered_names_a_site_by_hand(fresh, tmp_path):
 
 
 class Recorder:
-    def __init__(self):
+    def __init__(self, sockets_active=True):
         self.calls = []
+        self.sockets_active = sockets_active
 
     def __call__(self, cmd):
         self.calls.append(cmd)
+        if cmd[:3] == ["systemctl", "is-active", "--quiet"] and not self.sockets_active:
+            return 3
         return 0
+
+
+def test_every_listening_service_takes_its_port_from_a_socket_that_outlives_restarts(fresh):
+    f = facts(str(SITE))
+    files = deploy.rendered(f, SITE)
+    for role in ("portal", "sso", "apps", "handbook"):
+        sock = files[f"/etc/systemd/system/m00nny-{role}.socket"][0]
+        unit = files[f"/etc/systemd/system/m00nny-{role}.service"][0]
+        assert f"ListenStream=127.0.0.1:{f.ports[role]}" in sock and f"Service=m00nny-{role}.service" in sock
+        assert f"Requires=m00nny-{role}.socket" in unit and "--port" not in unit
+        assert "--fd 3" in unit or role == "handbook"  # the handbook takes fd 3 itself (LISTEN_FDS)
+    assert "/etc/systemd/system/m00nny-runner.socket" not in files  # it serves nothing
+
+
+def test_moving_onto_the_sockets_stops_each_service_once(fresh, tmp_path):
+    root = tmp_path / "root"
+    which = shutil.which
+    fresh.setattr(deploy.shutil, "which", lambda cmd: "/usr/bin/uv" if cmd == "uv" else which(cmd))
+    sh = Recorder(sockets_active=False)
+    assert deploy.install(SITE, root=root, sh=sh) == 0
+    for role in ("portal", "sso", "apps", "handbook"):
+        stop = sh.calls.index(["systemctl", "stop", f"m00nny-{role}.service"])
+        start = sh.calls.index(["systemctl", "enable", "--now", f"m00nny-{role}.socket"])
+        assert stop < start < sh.calls.index(["systemctl", "restart", f"m00nny-{role}.service"])
 
 
 def test_install_makes_secrets_once_and_moves_an_old_layout(fresh, tmp_path, capsys):
@@ -116,8 +143,10 @@ def test_install_makes_secrets_once_and_moves_an_old_layout(fresh, tmp_path, cap
     assert (root / "etc/nginx/sites-enabled/www.m00nny.kr.conf").is_symlink()
     assert (root / "opt/m00nny-site/src/portal/deploy.py").exists() and not (root / "opt/m00nny-portal/.git").exists()
     assert not retired.exists() and ["systemctl", "disable", "--now", "m00nny-dav-homes.timer"] in sh.calls
-    assert ["systemctl", "restart", *(f"m00nny-{r}.service" for r in ("portal", "sso", "apps", "handbook", "runner"))] \
-        in sh.calls
+    restarts = [c[2] for c in sh.calls if c[:2] == ["systemctl", "restart"] and c[2].endswith(".service")
+                and "mounts" not in c[2]]
+    assert restarts == [f"m00nny-{r}.service" for r in ("portal", "sso", "apps", "handbook", "runner")]  # one by one
+    assert not any(c[:2] == ["systemctl", "stop"] for c in sh.calls)  # the sockets are up: nothing stops
     # one virtualenv for both packages, from the lock
     assert any(c[:1] == ["env"] and "sync" in c and "--frozen" in c and "--project" in c for c in sh.calls)
     # the handbook moved to the derived names, with its users' data

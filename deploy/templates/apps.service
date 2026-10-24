@@ -2,6 +2,9 @@
 # The apps' storage (portal/apps.py): each user's JSON values, per app the site hosts. Its own user,
 # with no keytab and no secret: it trusts the SSO's tokens, checked with the public key.
 [Unit]
+# its port is @@unit:apps@@.socket's (systemd hands the socket over as fd 3), so a restart refuses no one
+Requires=@@unit:apps@@.socket
+After=@@unit:apps@@.socket
 Description=@@name@@ apps storage
 After=network-online.target
 Wants=network-online.target
@@ -14,7 +17,7 @@ StateDirectoryMode=0700
 Environment=PORTAL_SITE=@@site_file@@
 WorkingDirectory=@@code@@
 ExecStart=@@code@@/.venv/bin/uvicorn portal.apps:create_app --factory \
-          --host 127.0.0.1 --port @@port:apps@@ --workers 1 --proxy-headers --forwarded-allow-ips 127.0.0.1
+          --fd 3 --workers 1 --proxy-headers --forwarded-allow-ips 127.0.0.1
 Restart=on-failure
 NoNewPrivileges=yes
 ProtectSystem=strict

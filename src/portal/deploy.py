@@ -38,6 +38,7 @@ import secrets
 import shutil
 import subprocess
 import sys
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -67,6 +68,7 @@ Run = Callable[[list[str]], int]
 
 # units besides the roles': root's, with no user or port of their own (<name>-<unit>)
 HELPERS = ("mounts.service", "mounts.timer")
+LISTENING = [r for r, port in ROLES.items() if port]  # the roles that serve HTTP (the runner does not)
 
 # [site] keys the router's side takes (site.local.toml: they are this host's); unset, a placeholder
 ROUTER_KEYS = {"router_address": "<this host's address as the router reaches it>",
@@ -105,6 +107,10 @@ def rendered(f: Facts, site_file: Path) -> dict[str, tuple[str, int]]:
 
     out = {
         **{f"/etc/systemd/system/{f.unit(role)}.service": (t(f"{role}.service"), 0o644) for role in ROLES},
+        # a role with a port listens through systemd's socket, held while the service restarts
+        **{f"/etc/systemd/system/{f.unit(role)}.socket": (f.substitute((TEMPLATES / "listen.socket").read_text(), {
+            **extra, "socket_unit": f.unit(role), "socket_role": role, "socket_port": str(f.ports[role])}), 0o644)
+           for role in LISTENING if f.ports.get(role)},
         **{f"/etc/systemd/system/{f.name}-{h}": (t(h), 0o644) for h in HELPERS},
         f"/etc/nginx/sites-available/{f.domain}.conf": (t("site.conf"), 0o644),
         f"/etc/nginx/snippets/{f.name}-proxy.conf": (t("proxy.conf"), 0o644),
@@ -409,8 +415,17 @@ def install(site_file: Path, root: Path = Path("/"), sh: Run = _run, src: Path =
     sh(["systemctl", "enable", "--now", f"{f.name}-mounts.timer"])
     sh(["systemctl", "enable", f"{f.name}-mounts.service"])
     sh(["systemctl", "restart", f"{f.name}-mounts.service"])
+    # Each listening service takes its port from a socket unit that stays open across restarts, so an
+    # update refuses no connection: they wait in the socket's queue for the new process. Moving onto
+    # the sockets the first time stops the service once (it holds the port the socket needs).
+    for role in LISTENING:
+        sock = f"{f.unit(role)}.socket"
+        if sh(["systemctl", "is-active", "--quiet", sock]) != 0:
+            sh(["systemctl", "stop", f"{f.unit(role)}.service"])
+            sh(["systemctl", "enable", "--now", sock])
     sh(["systemctl", "enable", *units])
-    sh(["systemctl", "restart", *units])
+    for u in units:  # one at a time: the rest of the site keeps serving meanwhile
+        sh(["systemctl", "restart", u])
     sh(["systemctl", "reload", "nginx"])
     if sh([str(venv / "bin/refhandbook"), "sandbox-check"]) != 0:
         notes.append(f"the handbook's sandbox is not fully available here (above): {f.unit('runner')} needs user "
@@ -446,17 +461,23 @@ def install_app(f: Facts, site_file: Path, app_id: str, dist: Path, root: Path =
         print(f"{dist}: no index.html (build the app first)", file=sys.stderr)
         return 1
     target = root / f.apps_root.lstrip("/") / app_id
-    new = target.with_name(f".{app_id}.new")
+    # each publication is a directory of its own; <id> is a symlink swapped onto it in one rename, so
+    # nginx serves the old build or the new one, never a half-copied or missing one
+    new = target.with_name(f".{app_id}.{time.time_ns()}")  # never the name of the build being served
     shutil.rmtree(new, ignore_errors=True)
     shutil.copytree(dist, new)
     for p in [new, *new.rglob("*")]:
         p.chmod(0o755 if p.is_dir() else 0o644)  # nginx's to read, whatever the build left
-    old = target.with_name(f".{app_id}.old")
-    shutil.rmtree(old, ignore_errors=True)
-    if target.exists():
-        target.rename(old)
-    new.rename(target)
-    shutil.rmtree(old, ignore_errors=True)
+    if target.exists() and not target.is_symlink():  # the layout before symlinks: kept aside, then dropped
+        target.rename(target.with_name(f".{app_id}.before"))
+    link = target.with_name(f".{app_id}.link")
+    link.unlink(missing_ok=True)
+    link.symlink_to(new.name)
+    os.replace(link, target)
+    builds = sorted(x for x in target.parent.glob(f".{app_id}.*") if x.is_dir() and x.name[len(app_id) + 2:].isdigit())
+    for x in [*builds[:-2], target.with_name(f".{app_id}.before")]:  # this build and the one before stay
+        if x != new:
+            shutil.rmtree(x, ignore_errors=True)
     print(f"published {dist} at /apps/{app_id}/ ({target})")
     return 0
 

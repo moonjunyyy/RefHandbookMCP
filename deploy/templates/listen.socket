@@ -1,0 +1,13 @@
+# @@generated@@
+# The listening socket of @@socket_unit@@, held by systemd: while the service restarts (an update), the
+# socket stays open and new connections wait in its queue instead of being refused.
+[Unit]
+Description=@@name@@ @@socket_role@@: its listening socket, kept across restarts
+
+[Socket]
+ListenStream=127.0.0.1:@@socket_port@@
+NoDelay=true
+Service=@@socket_unit@@.service
+
+[Install]
+WantedBy=sockets.target
