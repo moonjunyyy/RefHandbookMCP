@@ -48,95 +48,70 @@ def _ws(reg: Registry) -> Any:
 
 @dataclass(frozen=True)
 class MountRoot:
-    """A host directory the administrator offers (`host`, resolved for the store's owner) under the
-    name users write in a mount's source (`name`); `ro`: never mounted read-write."""
+    """A directory the user may mount from (theirs, as the administrator offers it: agents/mounts.py)."""
     host: str
-    name: str
+    name: str = ""
     ro: bool = False
 
 
-def mount_roots(ws: Any) -> list[MountRoot]:
-    """What a policy may mount, from the administrator's settings ({user} and {uid} name the store's
-    owner in both):
-
-      RHB_SANDBOX_MOUNTS       comma-separated FROM=NAME[:ro]: the host directory FROM, offered as
-                               NAME (a mount's source is NAME or NAME/sub/path); :ro forbids rw.
-                               e.g. /home/{user}/data=data,/srv/corpora/arxiv=arxiv:ro
-      RHB_SANDBOX_MOUNT_ROOTS  colon-separated host directories (the older form): each is offered
-                               under its own path, so a source is a host path under it.
-
-    With RHB_SANDBOX_MOUNT_STAGE set (the server's units), a named directory is its staged, idmapped
-    mount <stage>/<user>/<NAME> (agents/mounts.py), which root prepares; else FROM itself.
-    Neither set: no mounts."""
+def _offers() -> list[Any]:
     from . import mounts
 
     try:
-        offered = mounts.offers()
+        return mounts.offers()
     except mounts.MountError as e:  # the administrator's settings: the detail is for the server's log
         log.warning("mount settings: %s", e)
         raise CapError("this server's mount settings are invalid; tell the administrator") from e
+
+
+def mount_roots(ws: Any) -> list[MountRoot]:
+    """Where this user may pick directories to mount from."""
+    from . import mounts
+
+    return [MountRoot(mounts.expand(o.template, ws.owner, ws.owner_uid), o.name, o.ro) for o in _offers()]
+
+
+def mount_check(ws: Any, source: str, rw: bool = False) -> str:
+    """A mount source as the policy keeps it, checked as far as the web process can (where it points,
+    lexically): the host path. Root stages it after the policy is saved (agents/mounts.py); with no
+    staging (a local server) it must exist here."""
+    from . import mounts
+
+    try:
+        host, offer = mounts.source_path(source, _offers(), ws.owner, ws.owner_uid)
+    except mounts.MountError as e:
+        raise CapError(f"mount source: {e}") from e
+    if rw and offer.ro:
+        raise CapError(f"mount source {source!r}: {host} may only be mounted read-only")
+    if mounts.stage_root() is None:
+        root = os.path.realpath(mounts.expand(offer.template, ws.owner, ws.owner_uid))
+        real = os.path.realpath(host)
+        if not (real == root or real.startswith(root.rstrip("/") + "/")):
+            raise CapError(f"mount source {source!r} leads outside {root}")
+        if not os.path.isdir(real):
+            raise CapError(f"mount source {source!r} is not a directory here")
+    return host
+
+
+def mount_resolve(ws: Any, source: str) -> tuple[str, bool]:
+    """What the sandbox binds for a source, and whether it is read-only: root's staged, idmapped mount
+    of it (or, with no staging, the directory itself). Not staged: why, as root said."""
+    from . import mounts
+
+    host = mount_check(ws, source)
+    ro = next((o.ro for o in _offers() if mounts._under(host, mounts.expand(o.template, ws.owner, ws.owner_uid))), False)
     stage = mounts.stage_root()
-    out: list[MountRoot] = []
-    for o in offered:
-        host = str(stage / ws.owner / o.name) if stage else _expand(o.template, ws, "RHB_SANDBOX_MOUNTS")
-        out.append(MountRoot(host, o.name, o.ro))
-    for t in filter(None, os.environ.get("RHB_SANDBOX_MOUNT_ROOTS", "").split(":")):
-        h = _expand(t, ws, "RHB_SANDBOX_MOUNT_ROOTS")
-        out.append(MountRoot(h, h))
-    return out
-
-
-def _expand(template: str, ws: Any, var: str) -> str:
-    try:
-        return os.path.realpath(template.format(user=ws.owner, uid=ws.owner_uid))
-    except (KeyError, IndexError, ValueError) as e:
-        log.warning("%s: bad template %r: %s", var, template, e)
-        raise CapError("this server's mount settings are invalid; tell the administrator") from e
-
-
-def _under(path: str, root: str) -> bool:
-    return path == root or path.startswith(root.rstrip("/") + "/")
-
-
-def mount_resolve(ws: Any, source: str) -> tuple[str, MountRoot]:
-    """The host path a mount's source names, and the offered directory it lies in. A source is NAME
-    or NAME/sub/path of an offered directory, or (the older form) a host path under one; either way
-    the resolved path (symlinks followed) must stay inside it."""
-    roots = mount_roots(ws)
-    if not roots:
-        raise CapError("no directories are offered for mounting here; the administrator can offer some")
-    try:
-        src = source.format(user=ws.owner, uid=ws.owner_uid).strip()
-    except (KeyError, IndexError, ValueError) as e:
-        raise CapError(f"mount source {source!r}: {e}") from e
-    names = ", ".join(r.name + (" (ro)" if r.ro else "") for r in roots if r.name != r.host) or "none by name"
-    if src.startswith("/"):
-        path = os.path.realpath(src)
-        root = next((r for r in roots if _under(path, r.host)), None)
-    else:
-        name, _, sub = src.partition("/")
-        if ".." in sub.split("/"):
-            raise CapError(f"mount source {source!r}: no '..'")
-        root = next((r for r in roots if r.name == name), None)
-        if root is None:
-            raise CapError(f"mount source {source!r}: no directory {name!r} is offered here; offered: {names}")
-        path = os.path.realpath(os.path.join(root.host, sub)) if sub else root.host
-        if not _under(path, root.host):  # a symlink inside leads out
-            root = None
-    if root is None:
-        raise CapError(f"mount source {source!r} is outside the directories this server lets you mount: {names}")
-    if not os.path.exists(path):
-        from .mounts import stage_root
-
-        if stage_root() and root.host.startswith(str(stage_root())) and not os.path.exists(root.host):
-            raise CapError(f"mount source {source!r}: {root.name} is not prepared for you: the directory is not "
-                           "there or not yours, or the server has not staged it yet (it does every few minutes)")
-        raise CapError(f"mount source {source!r} does not exist")
-    return path, root
+    if stage is None:
+        return os.path.realpath(host), ro
+    staged = mounts.staged_path(stage, ws.owner, host)
+    if os.path.ismount(staged):
+        return str(staged), ro
+    why = mounts.status_of(stage, ws.owner).get(host)
+    raise CapError(f"mount source {source!r}: " + (why if why and why != "ok" else
+                   "not ready yet: the server mounts what a policy picks within a minute of its saving"))
 
 
 def mount_source(ws: Any, source: str) -> str:
-    """The host path a mount's source names, checked to lie in an offered directory."""
     return mount_resolve(ws, source)[0]
 
 
@@ -155,9 +130,7 @@ def _mounts(ws: Any, mounts: Any) -> list[dict[str, Any]]:
         if target in targets:
             raise CapError(f"mount target {target} is used twice")
         targets.add(target)
-        _, root = mount_resolve(ws, str(m["source"]))
-        if m.get("rw") and root.ro:
-            raise CapError(f"mount source {m['source']!r}: {root.name} is offered read-only")
+        mount_check(ws, str(m["source"]), bool(m.get("rw")))
         out.append({"source": str(m["source"]), "target": target, "rw": bool(m.get("rw", False))})
     return out
 

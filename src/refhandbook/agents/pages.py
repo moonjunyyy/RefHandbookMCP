@@ -25,6 +25,7 @@ import hashlib
 import hmac
 import html
 import json
+import os
 import logging
 import secrets
 import time
@@ -370,7 +371,7 @@ def _rule(r: dict[str, Any], hidden: str) -> str:
 
 
 def _offered(ws: Workspace) -> str:
-    """The directories this server offers for mounts, as the policy form names them."""
+    """Where this user may pick directories to mount from, as the policy form says it."""
     from .capkinds import mount_roots
 
     try:
@@ -380,11 +381,36 @@ def _offered(ws: Workspace) -> str:
         return "마운트 설정에 문제가 있습니다(관리자에게 알려 주세요)"
     if not roots:
         return "이 서버는 마운트를 허용하지 않습니다"
-    return "쓸 수 있는 원본: " + ", ".join(r.name + (" (읽기 전용)" if r.ro else "") for r in roots)
+    return "고를 수 있는 곳: " + ", ".join(r.host + (" (읽기 전용)" if r.ro else "") for r in roots)
+
+
+def _mount_status(ws: Workspace, a: dict[str, Any]) -> str:
+    """Each mount of a policy and what became of it (root's staging): ready, waiting, or why not."""
+    from . import mounts
+    from .capkinds import mount_check
+
+    stage = mounts.stage_root()
+    if not a.get("mounts") or stage is None:
+        return ""
+    said = mounts.status_of(stage, ws.owner)
+    rows = []
+    for m in a["mounts"]:
+        try:
+            host = mount_check(ws, m["source"])
+        except HandbookError as e:
+            rows.append(f"<li><code>{_e(m['source'])}</code> <span class='tag bad'>안 됨</span> {_e(e)}</li>")
+            continue
+        ready = os.path.ismount(mounts.staged_path(stage, ws.owner, host))
+        why = said.get(host)
+        tag = ("<span class='tag ok'>준비됨</span>" if ready else
+               f"<span class='tag bad'>안 됨</span> {_e(why)}" if why and why != "ok" else
+               "<span class='tag warn'>준비 중</span> 1분 안에 준비됩니다")
+        rows.append(f"<li><code>{_e(m['source'])}</code> → <code>{_e(m['target'])}</code> {tag}</li>")
+    return "<ul class='small'>" + "".join(rows) + "</ul>"
 
 
 def _policy(name: str, a: dict[str, Any], p: dict[str, Any] | None, hidden: str, offered: str = "",
-            draft: dict[str, str] | None = None) -> str:
+            draft: dict[str, str] | None = None, status: str = "") -> str:
     """One policy as a folded panel: a summary line, and its form when opened (a new one has a name field).
     `draft`: what was typed into this form and refused: shown again as typed, the panel open."""
     ports = "any" if a.get("ports") in (None, "any") else " ".join(map(str, a.get("ports") or []))
@@ -416,8 +442,9 @@ def _policy(name: str, a: dict[str, Any], p: dict[str, Any] | None, hidden: str,
             f"<textarea name=commands rows=3>{val('commands', ' '.join(a['commands']))}</textarea></label>"
             f"<div class='cols'><label>레이어 <span class='muted small'>공백으로 구분</span>"
             f"<input name=layers value='{val('layers', ' '.join(a.get('layers') or []))}'></label>"
-            f"<label>마운트 <span class='muted small'>한 줄에 하나: 원본[/하위 경로] 대상 [rw] · {_e(offered)}</span>"
-            f"<textarea name=mounts rows=2>{val('mounts', mounts)}</textarea></label></div>"
+            f"<label>마운트 <span class='muted small'>한 줄에 하나: 원본 경로, sandbox 안의 경로, 쓰기 허용이면 rw "
+            f"(예: <code>/data/me/workspace /mnt/ws rw</code>) · {_e(offered)}</span>"
+            f"<textarea name=mounts rows=2>{val('mounts', mounts)}</textarea>{status}</label></div>"
             f"<div class='cols'><label class='check'><input type=checkbox name=network {checked('network', a['network'])}>"
             f" 네트워크 허용</label><label>포트 <input name=ports value='{val('ports', ports)}'></label></div>"
             f"<label class='check'><input type=checkbox name=exec_work {checked('exec_work', bool(a.get('exec_work')))}>"
@@ -486,7 +513,8 @@ def _overview(ws: Workspace, uid: str, token: str, q: Any, draft: dict[str, str]
                         "정책이 곧 샌드박스입니다: 보이는 명령, 네트워크, 한도. 한 번 허용하면 그 안의 스크립트와 실행은 "
                         "다시 묻지 않습니다. 정책을 눌러 펼치면 고칠 수 있습니다.",
                         "".join(_policy(n, ws.policy(n)["attrs"], ws.policy(n), hidden, offered,
-                                        draft if draft is not None and draft.get("name") == n else None)
+                                        draft if draft is not None and draft.get("name") == n else None,
+                                        _mount_status(ws, ws.policy(n)["attrs"]))
                                 for n in policies)
                         + _policy("", ws.base_policy(), None, hidden, offered,
                                   draft if draft is not None and draft.get("name") not in policies else None)))

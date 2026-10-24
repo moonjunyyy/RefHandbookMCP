@@ -110,27 +110,16 @@ One sandbox per user, shared by Chat sessions (the `cap`, `run`, `job`, `files` 
   network and its ports, the limits, the layers it stacks, and mounts of the user's own data. The
   kernel installs `default`: a coreutils-like set, a shell and Python, no network. The user grants
   on `/agents` or with `refhandbook policy <name> …` on the server; the model may propose one.
-- **Mounts** — `{source, target, rw}`. The administrator offers directories by name with
-  `RHB_SANDBOX_MOUNTS`: comma-separated `FROM=NAME[:ro]`, FROM a host directory (`{user}` and `{uid}`
-  name the store's owner), NAME what users write, `:ro` never read-write; e.g.
-  `/home/{user}/data=data,/srv/corpora/arxiv=arxiv:ro`. A mount's source is `NAME` or
-  `NAME/sub/path`, and only that path appears at the target: an offered directory is not all or
-  nothing, and users never name host paths. The older `RHB_SANDBOX_MOUNT_ROOTS` (colon-separated
-  host directories, each offered under its own path) still works. A source outside the offered
-  directories (after `..` is refused and symlinks are followed), a read-write mount of a `:ro` one,
-  or a target over the sandbox's own directories is refused; a policy granted read-write before its
-  directory became `:ro` stops running until it is granted again.
-  On the server the sandbox runs as the handbook's user, and a user's files are the user's: so root
-  stages each offered directory, for each user of the handbook, as an idmapped bind mount at
-  `/run/<name>-mounts/<user>/<NAME>` (`<name>-mounts.service`, again every two minutes by its timer;
-  `agents/mounts.py`). Through it the user's uid and gid read as the service's, and what the sandbox
-  writes stays the user's; nothing else is mapped. Staged are users with a handbook store whose uid is
-  at least UID_MIN, who are in `RHB_REQUIRE_GROUP` if set, and who own the directory FROM resolves to.
-  The handbook's units resolve a name to its staged mount (`RHB_SANDBOX_MOUNT_STAGE`) and stay
-  locked down (`ProtectHome`, `ProtectSystem=strict`; the runner writes through the stage only).
-  `refhandbook mounts … --check` prints the plan. Read-only unless `rw`; a
-  read-write mount is noexec like every writable mount. The source's identity (device, inode) is
-  checked again after the bind, so a source swapped in between is refused.
+- **Mounts** — `{source, target, rw}`. A user picks a directory of theirs by its path
+  (`/data/moon/workspace /mnt/ws rw` in the policy form). The administrator says only where users
+  may pick from, `RHB_SANDBOX_MOUNTS`: comma-separated `FROM[=NAME][:ro]` (`{user}`, `{uid}` name
+  the user; NAME a short way to write a source, NAME/sub/path; `:ro` never read-write); unset,
+  `/home/{user}`. Root (`<name>-mounts.service`, `agents/mounts.py`) reads every user's policies and
+  mounts each picked directory as an idmapped bind (the user's files read as the service's, writes
+  stay the user's), when a policy is saved (`<name>-mounts.path`) and every minute: if it lies,
+  symlinks resolved, inside a FROM of theirs and belongs to them. What it refused, and why, the
+  policy form shows beside each mount. Read-only unless `rw`; a read-write mount is noexec like
+  every writable mount.
 - **Layer** — what a policy can stack on the base: a build script run as root inside a sandbox of a
   policy the model already holds (that policy's commands, network, ports, limits and timeout: a
   build is never a wider sandbox), whose changes under `/usr/local`, `/opt` and `/etc` become a

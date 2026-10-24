@@ -306,7 +306,9 @@ def test_the_handbook_takes_its_settings_from_the_sites_facts(fresh, tmp_path):
             f"--stage /run/{f.name}-mounts") in mounts
     assert "User=" not in mounts and "Protect" not in mounts  # root, in the host's mount namespace
     assert f"Before={f.unit('handbook')}.service {f.unit('runner')}.service" in mounts
-    assert "OnUnitActiveSec=2min" in files[f"/etc/systemd/system/{f.name}-mounts.timer"][0]
+    assert "OnUnitActiveSec=1min" in files[f"/etc/systemd/system/{f.name}-mounts.timer"][0]
+    path = files[f"/etc/systemd/system/{f.name}-mounts.path"][0]  # a saved policy's mounts, staged at once
+    assert f"PathChanged=/var/lib/{f.unit('handbook')}/mount-requests" in path and f"Unit={f.name}-mounts.service" in path
     s = tmp_path / "site.toml"
     s.write_text('[[app]]\nid = "a"\ntitle = "A"\naudience = "one"\nupstream = "@@upstream:handbook@@"\n'
                  '[[app]]\nid = "b"\ntitle = "B"\naudience = "two"\nupstream = "@@upstream:handbook@@"\n')

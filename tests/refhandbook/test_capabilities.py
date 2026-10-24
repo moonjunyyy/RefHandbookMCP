@@ -36,7 +36,7 @@ def data(tmp_path, monkeypatch, ws):
     mine.mkdir(parents=True)
     (mine / "a.txt").write_text("from the user's data\n")
     (root / "someone-else").mkdir()
-    monkeypatch.setenv("RHB_SANDBOX_MOUNT_ROOTS", str(root / "{user}"))
+    monkeypatch.setenv("RHB_SANDBOX_MOUNTS", str(root / "{user}"))
     return root
 
 
@@ -44,12 +44,12 @@ def test_a_mount_is_the_users_grant_under_the_servers_roots(ws, data, monkeypatc
     src = str(data / "{user}" / "papers")
     out = cap_api.cap("add", kind="policy", name="papers", spec={"mounts": [{"source": src, "target": "/data"}]})
     assert "PROPOSED" in out and "mount" in out  # the model asks; the user decides
-    with pytest.raises(KernelError, match="outside the directories"):
+    with pytest.raises(KernelError, match="not in a directory you may mount from"):
         ws.set_policy("x", actor="user", mounts=[{"source": str(data / "someone-else"), "target": "/data"}])
     with pytest.raises(KernelError, match="mount target"):
         ws.set_policy("x", actor="user", mounts=[{"source": src, "target": "/usr/local"}])
-    monkeypatch.delenv("RHB_SANDBOX_MOUNT_ROOTS")
-    with pytest.raises(KernelError, match="no directories are offered"):
+    monkeypatch.delenv("RHB_SANDBOX_MOUNTS")  # unset: only /home/<user>
+    with pytest.raises(KernelError, match="not in a directory you may mount from"):
         ws.set_policy("x", actor="user", mounts=[{"source": src, "target": "/data"}])
 
 
@@ -76,7 +76,6 @@ def offered(tmp_path, monkeypatch, ws):
     corpus.mkdir(parents=True)
     (tmp_path / "home" / ws.owner / "secret").mkdir()
     (home / "out").symlink_to(tmp_path / "home" / ws.owner / "secret")
-    monkeypatch.delenv("RHB_SANDBOX_MOUNT_ROOTS", raising=False)
     monkeypatch.setenv("RHB_SANDBOX_MOUNTS", f"{tmp_path}/home/{{user}}/data=data, {corpus}=arxiv:ro")
     return tmp_path
 
@@ -90,8 +89,9 @@ def test_a_mount_names_an_offered_directory_and_a_path_inside_it(ws, offered, mo
     assert mount_resolve(ws, "data/2024")[0] == str(offered / "home" / ws.owner / "data" / "2024")
     # the older form, a host path inside an offered directory, still works
     ws.set_policy("y", actor="user", mounts=[{"source": str(offered / "home" / "{user}" / "data"), "target": "/d"}])
-    for source, match in (("data/../secret", "no '..'"), ("data/out", "outside"), ("home", "no directory 'home'"),
-                          (str(offered / "home" / ws.owner / "secret"), "outside"), ("data/nope", "does not exist")):
+    for source, match in (("data/../secret", "no '..'"), ("data/out", "leads outside"), ("home", "write the directory's path"),
+                          (str(offered / "home" / ws.owner / "secret"), "not in a directory you may mount from"),
+                          ("data/nope", "not a directory")):
         with pytest.raises(KernelError, match=match):
             ws.set_policy("z", actor="user", mounts=[{"source": source, "target": "/d"}])
     with pytest.raises(KernelError, match="read-only"):

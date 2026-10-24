@@ -67,7 +67,7 @@ Run = Callable[[list[str]], int]
 
 
 # units besides the roles': root's, with no user or port of their own (<name>-<unit>)
-HELPERS = ("mounts.service", "mounts.timer")
+HELPERS = ("mounts.service", "mounts.timer", "mounts.path")
 LISTENING = [r for r, port in ROLES.items() if port]  # the roles that serve HTTP (the runner does not)
 
 # [site] keys the router's side takes (site.local.toml: they are this host's); unset, a placeholder
@@ -435,6 +435,7 @@ def install(site_file: Path, root: Path = Path("/"), sh: Run = _run, src: Path =
     sh(["systemctl", "daemon-reload"])
     # the mounts first: the handbook's units see the staged directories from their start
     sh(["systemctl", "enable", "--now", f"{f.name}-mounts.timer"])
+    sh(["systemctl", "enable", "--now", f"{f.name}-mounts.path"])
     sh(["systemctl", "enable", f"{f.name}-mounts.service"])
     sh(["systemctl", "restart", f"{f.name}-mounts.service"])
     # Each listening service takes its port from a socket unit that stays open across restarts, so an

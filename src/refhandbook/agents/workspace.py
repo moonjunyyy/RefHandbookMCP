@@ -315,6 +315,12 @@ class Workspace:
             self.caps.add("policy", name, spec=attrs, actor=actor)
         else:
             self.caps.update("policy", name, spec=attrs, actor=actor)
+        if attrs.get("mounts"):  # root stages what it picks (agents/mounts.py): now, not at the next minute
+            from . import mounts
+
+            p = Path(str(self.hb.path))
+            if p.parent.name == "users":
+                mounts.request(p.parent.parent)
         return self.policy(name) if self.g.get_node(f"policy:{name}") else self.caps.get("policy", name)
 
     def policy(self, name: str) -> dict[str, Any]:
@@ -650,9 +656,9 @@ class Runner:
             env = layer_env(self.ws.caps, pol.get("layers") or []) if pol.get("layers") else {}
             mounts = []
             for m in pol.get("mounts") or []:
-                src, root = mount_resolve(self.ws, m["source"])
-                if m["rw"] and root.ro:  # offered read-only since the policy was granted
-                    raise WorkspaceError(f"mount {m['source']}: {root.name} is now offered read-only; "
+                src, ro = mount_resolve(self.ws, m["source"])
+                if m["rw"] and ro:  # offered read-only since the policy was granted
+                    raise WorkspaceError(f"mount {m['source']}: now offered read-only; "
                                          "grant the policy again without rw")
                 mounts.append((src, m["target"], m["rw"]))
         ids = {}

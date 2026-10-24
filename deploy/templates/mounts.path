@@ -1,0 +1,12 @@
+# @@generated@@
+# Stage what a policy picks as soon as it is saved: the handbook writes this file then (agents/mounts.py),
+# and @@name@@-mounts.service mounts it (@@name@@-mounts.timer comes by every minute besides).
+[Unit]
+Description=@@name@@ sandbox mounts, staged when a policy is saved
+
+[Path]
+PathChanged=/var/lib/@@unit:handbook@@/mount-requests
+Unit=@@name@@-mounts.service
+
+[Install]
+WantedBy=paths.target
