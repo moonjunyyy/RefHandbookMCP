@@ -61,6 +61,21 @@ def test_a_bad_entry_is_refused_before_anything_is_written(tmp_path, bad, messag
         site.load(f, facts(str(SITE)))
 
 
+def test_the_main_pages_cards_follow_groups_down_to_each_link():
+    s = site.Site((site.App("acct", "Account", links=(site.Link("Mine", "/a/"), site.Link("Users", "/a/admin", ("admin",)))),
+                   site.App("lab", "Lab", groups=("admin",))))
+    cards = s.cards({"user"})
+    assert [a.id for a in cards] == ["acct"] and [ln.label for ln in cards[0].links] == ["Mine"]
+    cards = s.cards({"admin"})
+    assert [a.id for a in cards] == ["acct", "lab"] and [ln.label for ln in cards[0].links] == ["Mine", "Users"]
+
+
+def test_the_site_file_offers_the_admin_pages_to_admins_only():
+    acct = next(a for a in site.load(SITE, facts(str(SITE))).apps if a.id == "account")
+    admin = {ln.label: ln.groups for ln in acct.links}
+    assert admin["내 계정"] == () and "admin" in admin["사용자 관리"] and "helpdesk" in admin["사용자 관리"]
+
+
 def test_the_menu_follows_groups():
     s = site.Site((site.App("a", "A", menu="A", menu_href="/a"), site.App("b", "B", menu="B", groups=("admin",))))
     assert [ln.label for ln in s.menu({"user"})] == ["A"]

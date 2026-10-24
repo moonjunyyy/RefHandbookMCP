@@ -25,6 +25,7 @@ import hashlib
 import hmac
 import html
 import json
+import logging
 import secrets
 import time
 from collections.abc import Callable
@@ -41,6 +42,8 @@ from ..page import page
 from ..store import Handbook, HandbookError
 from . import run_pages
 from .workspace import Workspace
+
+log = logging.getLogger("refhandbook.agents.pages")
 
 def _key(data_dir: Path) -> bytes:
     p = Path(data_dir) / "agents-pages.key"
@@ -138,7 +141,8 @@ def install(m: Any, *, stores: Callable[[str], Handbook], uid_of: Callable[[str]
             K.load_public()
             return None
         except (K.KeyError_, OSError, ValueError) as e:
-            return f"키를 암호화할 공개키가 없습니다 ({e}). 관리자가 설치 스크립트를 다시 실행해야 합니다."
+            log.warning("agent keys cannot be sealed here: %s", e)
+            return "서버 설정이 끝나지 않아 키를 등록할 수 없습니다. 관리자에게 알려 주세요."
 
     @m.custom_route("/agents/keys", methods=["GET"])
     async def keys_page(request: Request) -> Response:
@@ -224,7 +228,7 @@ def install(m: Any, *, stores: Callable[[str], Handbook], uid_of: Callable[[str]
             run = await locked(act)
         except HandbookError as e:
             return back("/agents/runs", err=str(e))
-        return back(f"/agents/runs/{run}", "시작했습니다. 러너가 곧 리드 에이전트를 띄웁니다.")
+        return back(f"/agents/runs/{run}", "시작했습니다. 곧 리드 에이전트가 일을 시작합니다.")
 
     def run_of(request: Request) -> str:
         run = request.path_params["run"]
@@ -266,7 +270,7 @@ def install(m: Any, *, stores: Callable[[str], Handbook], uid_of: Callable[[str]
             run = await locked(act)
         except HandbookError as e:
             return back(f"/agents/runs/{request.path_params['run']}", err=str(e))
-        return back(f"/agents/runs/{run}", "승인했습니다. 러너가 곧 시작합니다.")
+        return back(f"/agents/runs/{run}", "승인했습니다. 곧 시작합니다.")
 
     # ── presets and schedules ────────────────────────────────────────────
 
@@ -374,7 +378,7 @@ def install(m: Any, *, stores: Callable[[str], Handbook], uid_of: Callable[[str]
         def render(uid: str, hidden: str) -> str:
             ws = Workspace(stores(uid))
             try:
-                return run_pages.files_page(uid, rel, ws.ls(rel or "."), None, 0, str(ws.work), request.query_params)
+                return run_pages.files_page(uid, rel, ws.ls(rel or "."), None, 0, request.query_params)
             except (HandbookError, OSError):
                 pass  # not a directory: a file, or nothing
             try:
@@ -384,9 +388,9 @@ def install(m: Any, *, stores: Callable[[str], Handbook], uid_of: Callable[[str]
                     raise HandbookError(f"{rel}: no such file or directory")
                 text = ws.read(rel, limit=500_000)
                 return run_pages.files_page(uid, rel, None, None if "\x00" in text[:8000] else text, size,
-                                            str(ws.work), request.query_params)
+                                            request.query_params)
             except (HandbookError, OSError) as e:
-                return run_pages.files_page(uid, "", ws.ls("."), None, 0, str(ws.work), {"err": str(e)})
+                return run_pages.files_page(uid, "", ws.ls("."), None, 0, {"err": str(e)})
         return await get_page(request, "/agents/files", render)
 
     @m.custom_route("/agents/runs/{run}/cancel", methods=["POST"])
@@ -592,7 +596,8 @@ def _offered(ws: Workspace) -> str:
     try:
         roots = mount_roots(ws)
     except HandbookError as e:
-        return f"마운트 설정 오류: {e}"
+        log.warning("mount settings: %s", e)
+        return "마운트 설정에 문제가 있습니다(관리자에게 알려 주세요)"
     if not roots:
         return "이 서버는 마운트를 허용하지 않습니다"
     return "쓸 수 있는 원본: " + ", ".join(r.name + (" (읽기 전용)" if r.ro else "") for r in roots)

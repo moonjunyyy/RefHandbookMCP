@@ -206,6 +206,7 @@ def test_consent_page_and_deny(client):
     assert page.status_code == 200 and "<b>moon</b>" in page.text and "허용" in page.text and "password" not in page.text
     assert f"/auth/login?switch=1&amp;next=/login?req={req}" in page.text
     assert "/auth/static/style.css" in page.text  # the site's look, from the site's stylesheet
+    assert "<a class=brand href='/'>" in page.text  # back to the site's main page
     assert "form-action 'self' https://claude.ai" in page.headers["content-security-policy"]
     # under no-referrer the browser would send Origin: null with 허용, which the POST refuses as foreign
     assert page.headers["referrer-policy"] == "same-origin"

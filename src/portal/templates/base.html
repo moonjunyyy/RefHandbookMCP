@@ -3,12 +3,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}Account Portal{% endblock %} · {{ settings.realm }}</title>
+  <title>{% block title %}Account{% endblock %} · {{ settings.site_title }}</title>
   <link rel="stylesheet" href="{{ settings.root_path }}/static/style.css">
 </head>
 <body>
 <header>
-  <a class="brand" href="{{ settings.root_path }}/">Account Portal <span>{{ settings.realm }}</span></a>
+  <a class="brand" href="/">{{ settings.site_title }} <span>Account</span></a>
   {% if actor %}
   <nav>
     <a href="{{ settings.root_path }}/">My account</a>

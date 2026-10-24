@@ -772,7 +772,7 @@ def test_presets_and_files_on_the_pages(client, keyed, cfg):
     ws = Workspace(server._user_store("moon"))
     ws.write("out/report.txt", "hello <b>")
     page = c.get("/agents/files", headers=tok).text
-    assert "out/" in page and str(ws.work) in page
+    assert "out/" in page and str(ws.work) not in page and "/var/lib" not in page  # no server paths on a page
     assert "report.txt" in c.get("/agents/files?path=out", headers=tok).text
     assert "hello &lt;b&gt;" in c.get("/agents/files?path=out/report.txt", headers=tok).text
     escape = c.get("/agents/files?path=../../etc/passwd", headers=tok).text
@@ -780,3 +780,16 @@ def test_presets_and_files_on_the_pages(client, keyed, cfg):
     page = c.get("/agents/presets", headers=tok).text
     c.post("/agents/presets/weekly/delete", data={"csrf": _csrf(page)}, headers=tok)
     assert [p["attrs"]["name"] for p in Presets(t.g).list()] == ["adhoc"] and Presets(t.g).schedules() == []
+
+
+def test_no_agents_page_tells_how_the_site_is_built(client, keyed, cfg):
+    from tests.portal.test_app import BACKEND_WORDS
+
+    c, tok = client, {"X-Auth-Token": site_token(client.key), "Origin": BASE}
+    page = c.get("/agents/keys", headers=tok).text
+    c.post("/agents/keys/add", data={"provider": "anthropic", "label": "main", "secret": "sk-ant-api03-abcdefghijklmnop",
+                                     "csrf": _csrf(page)}, headers=tok)
+    for path in ("/agents", "/agents/runs", "/agents/keys", "/agents/presets", "/agents/files"):
+        page = c.get(path, headers=tok).text
+        found = BACKEND_WORDS.search(page)
+        assert not found, (path, found and page[max(0, found.start() - 80):found.end() + 40])

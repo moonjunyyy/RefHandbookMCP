@@ -89,7 +89,7 @@ def rendered(f: Facts, site_file: Path) -> dict[str, tuple[str, int]]:
              "aliases_sp": "".join(f" {a}" for a in f.aliases), "port": str(f.listen), "signin": SIGNIN,
              "sso_public_key": f"{f.conf_dir('sso')}/sso-public.pem",
              "handbook_audience": _audience(site, f, "handbook")} | _front(f)
-    admin_group = os.environ.get("PORTAL_ADMIN_GROUP", "admin")
+    admin_group = f.admin_group
     admins = _admins(admin_group)
     extra |= {"admin_group": admin_group,
               "admin_lines": "\n".join(f"portal/service@{f.realm}  ADMCILSP  {p}@{f.realm}"

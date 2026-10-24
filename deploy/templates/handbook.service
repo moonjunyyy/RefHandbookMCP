@@ -17,6 +17,7 @@ ConfigurationDirectoryMode=0755
 StateDirectory=@@unit:handbook@@
 StateDirectoryMode=0700
 Environment=RHB_PUBLIC_URL=https://@@domain@@
+Environment=RHB_SITE_TITLE=@@title@@
 Environment=RHB_PORT=@@port:handbook@@
 Environment=RHB_SSO_PUBLIC_KEY_FILE=@@sso_public_key@@
 Environment=RHB_SSO_ISSUER=@@issuer@@

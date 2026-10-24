@@ -16,6 +16,9 @@ derivation.
     http_service  HTTP@<domain>
     code          /opt/<name>-site        the installed code and its virtualenv (both packages)
     portal_root   /account                where the account portal is served
+    title         <realm>                 the site's name as every page shows it (M00NNY.KR)
+    admin_group   admin                   the POSIX group of the site's administrators
+    helpdesk_group helpdesk               the group that may reset passwords and unlock accounts
     router        (none)                  a TLS-terminating proxy in front (IP or CIDR, or a list of
                                           them): nginx then serves plain HTTP on `listen` (80) to it
     router_address, router_cert, router_key   the router's side (deploy.ROUTER_KEYS): this host's
@@ -50,7 +53,7 @@ RUNS_AS = {"runner": "handbook"}
 # Where the site sign-in lives (portal/sso.py): its pages, its check for nginx, its stylesheet.
 SIGNIN = "/auth"
 USED = {"realm", "name", "base_dn", "domain", "users_ou", "groups_ou", "ldap_uri", "sso_issuer", "http_service",
-        "code", "ports", "aliases", "router", "listen", "portal_root"}
+        "code", "ports", "aliases", "router", "listen", "portal_root", "title", "admin_group", "helpdesk_group"}
 
 
 class FactError(ValueError):
@@ -92,6 +95,9 @@ class Facts:
     router: tuple[str, ...] = ()  # TLS ends there; empty = nginx holds the certificate itself
     listen: int = 80  # the plain-HTTP port the router connects to
     portal_root: str = "/account"
+    title: str = ""  # the site's name on every page; the realm unless [site] title says otherwise
+    admin_group: str = "admin"
+    helpdesk_group: str = "helpdesk"
 
     def unit(self, role: str) -> str:
         return f"{self.name}-{role}"
@@ -202,7 +208,8 @@ def facts(site_file: str | None = None) -> Facts:
         code=given.get("code") or f"/opt/{name}-site", ports=ports,
         extra={k: v for k, v in given.items() if isinstance(v, str) and k not in USED},
         router=router, listen=int(given.get("listen", 80)),
-        portal_root=get("portal_root", Facts.portal_root).rstrip("/"))
+        portal_root=get("portal_root", Facts.portal_root).rstrip("/"), title=get("title", realm),
+        admin_group=get("admin_group", Facts.admin_group), helpdesk_group=get("helpdesk_group", Facts.helpdesk_group))
 
 
 def running_dir(kind: str, fallback: str) -> str:

@@ -7,7 +7,6 @@
     <h2>Account</h2>
     <dl>
       <dt>Username</dt><dd><code>{{ me.uid }}</code></dd>
-      <dt>Kerberos</dt><dd>{% for p in me.principals %}<code>{{ p }}</code><br>{% endfor %}</dd>
       <dt>UID / GID</dt><dd>{{ me.uid_number }} / {{ me.gid_number }}</dd>
       <dt>Home</dt><dd><code>{{ me.home }}</code></dd>
       <dt>Groups</dt><dd>{% for g in me.groups %}<span class="tag">{{ g }}</span>{% endfor %}</dd>
@@ -37,7 +36,7 @@
       <label>Repeat new password <input name="confirm" type="password" minlength="12" autocomplete="new-password" required></label>
       <button>Change password</button>
     </form>
-    <p class="muted small">Changes your Kerberos password, which is also your LDAP/SSH password.</p>
+    <p class="muted small">Changes the password you use on this site and for SSH.</p>
   </section>
 </div>
 {% endblock %}

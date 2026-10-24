@@ -1,5 +1,6 @@
 """FastAPI app: login, self-service profile/password, account requests, invitation sign-up, and the
 admin/helpdesk console."""
+import secrets
 import time
 from pathlib import Path
 
@@ -165,8 +166,10 @@ def create_app(settings: Settings | None = None, directory=None, kerberos=None, 
     @app.exception_handler(DirectoryError)
     @app.exception_handler(KerberosError)
     async def _backend_error(request: Request, exc: Exception):
-        audit.record(request.session.get("uid"), "backend_error", None, False, ip(request), str(exc))
-        resp = render(request, "error.html", message=f"Directory operation failed: {exc}")
+        ref = secrets.token_hex(4)  # the page says this; the audit log says what went wrong, under it
+        audit.record(request.session.get("uid"), "backend_error", None, False, ip(request), f"[{ref}] {exc}")
+        resp = render(request, "error.html", message=f"The operation could not be completed. "
+                                                     f"Tell an administrator the reference {ref}.")
         resp.status_code = 502
         return resp
 

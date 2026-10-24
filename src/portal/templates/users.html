@@ -16,7 +16,7 @@
       <td>{{ u.display_name }}</td>
       <td>{{ u.mail }}</td>
       <td>{{ u.uid_number }}</td>
-      <td>{% if u.disabled %}<span class="tag bad">disabled</span>{% elif not u.principals %}<span class="tag warn">no Kerberos</span>{% else %}<span class="tag ok">active</span>{% endif %}</td>
+      <td>{% if u.disabled %}<span class="tag bad">disabled</span>{% elif not u.principals %}<span class="tag warn">incomplete</span>{% else %}<span class="tag ok">active</span>{% endif %}</td>
     </tr>
   {% else %}
     <tr><td colspan="5" class="muted">No users found.</td></tr>

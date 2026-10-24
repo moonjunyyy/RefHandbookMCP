@@ -203,9 +203,25 @@ def test_the_main_page_knows_who_is_signed_in(tmp_path, key):
     for title in ("계정", "에이전트 · 샌드박스", "핸드북 (Claude MCP)"):  # a card per app of the site file
         assert f"<h2>{title}</h2>" in page
     assert "https://www.m00nny.kr/mcp</code>" in page  # the derived domain
+    assert '<a class="brand" href="/">M00NNY.KR</a>' in page and "<h1>M00NNY.KR</h1>" in page  # one name
     c, _ = sign_in(app)
     page = c.get("/").text
     assert "안녕하세요, alice 님" in page and 'href="/auth/logout">로그아웃' in page and 'href="/account/"' in page
+    assert 'href="/account/admin/users"' not in page  # alice is not an admin (as NSS sees her: not at all here)
+
+
+def test_an_admin_finds_the_admin_pages_on_the_main_page(tmp_path, key, monkeypatch):
+    from portal import sso as sso_mod
+
+    monkeypatch.setattr(sso_mod, "nss_groups", lambda uid: {"admin", "user"} if uid == "moon" else {"user"})
+    s = Settings(session_secret="x" * 40, sso_secret="y" * 40, cookie_secure=False,
+                 audit_log=str(tmp_path / "a.log"), sso_issuer=ISS, site_file=str(SITE))
+    app = create_app(s, FakeKerberos(), key)
+    c, _ = sign_in(app, uid="moon", pw="moon-password-1")
+    page = c.get("/").text
+    assert 'href="/account/admin/users">사용자 관리' in page and 'href="/account/admin/invites">초대 링크' in page
+    c, _ = sign_in(app)
+    assert "사용자 관리" not in c.get("/").text
 
 
 def test_a_broken_keytab_is_a_message_not_a_crash(sso, tmp_path):
@@ -217,3 +233,14 @@ def test_a_broken_keytab_is_a_message_not_a_crash(sso, tmp_path):
     _, r = sign_in(app)
     assert r.status_code == 503 and "관리자에게 알려 주세요" in r.text and "keytab" not in r.text
     assert "keytab is nonexistent" in (tmp_path / "audit.log").read_text()
+
+
+def test_no_sign_in_page_tells_how_the_site_is_built(sso):
+    from .test_app import BACKEND_WORDS
+
+    s, k, app = sso
+    anon = TestClient(app)
+    for path in ("/", "/auth/login", "/auth/expired", "/auth/logout"):
+        assert not BACKEND_WORDS.search(anon.get(path).text), path
+    c, _ = sign_in(app)
+    assert not BACKEND_WORDS.search(c.get("/").text)

@@ -1,17 +1,17 @@
 {% extends "sso_base.html" %}
-{% block title %}{{ settings.site_name }}{% endblock %}
+{% block title %}홈{% endblock %}
 {% block content %}
 <section class="hero">
   {% if current %}
   <h1>안녕하세요, {{ current }} 님</h1>
-  <p class="lead">계정 하나(Kerberos)로 아래 서비스를 모두 씁니다.</p>
+  <p class="lead">계정 하나로 아래 서비스를 모두 씁니다.</p>
   <div class="actions">
     <a class="button" href="{{ portal }}/">내 계정</a>
     <a class="button secondary" href="{{ portal }}/#password">비밀번호 변경</a>
   </div>
   {% else %}
-  <h1>{{ settings.site_name }}</h1>
-  <p class="lead">계정 하나(Kerberos)로 이 사이트의 서비스를 모두 씁니다.</p>
+  <h1>{{ settings.site_title }}</h1>
+  <p class="lead">계정 하나로 이 사이트의 서비스를 모두 씁니다.</p>
   <div class="actions">
     <a class="button" href="{{ signin }}/login">로그인</a>
     <a class="button secondary" href="{{ portal }}/request">계정 신청</a>

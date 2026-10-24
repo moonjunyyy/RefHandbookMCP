@@ -475,7 +475,7 @@ def _consent(req: str, client: str, dest: str, uid: str, cfg: Config, error: str
             '<button type="submit" name="action" value="allow">허용</button> '
             '<button class="secondary" type="submit" name="action" value="deny" formnovalidate>취소</button>'
             "</form></section>")
-    return page("refhandbook", body, login_url=cfg.login_url, status=status, form_action=f"'self' {back}".strip())
+    return page("Claude 연결", body, login_url=cfg.login_url, status=status, form_action=f"'self' {back}".strip())
 
 
 def _origin(uri: str) -> str:

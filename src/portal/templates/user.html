@@ -9,7 +9,7 @@
     <h2>Details</h2>
     <dl>
       <dt>DN</dt><dd><code>{{ target.dn }}</code></dd>
-      <dt>Kerberos</dt><dd>{% for p in target.principals %}<code>{{ p }}</code><br>{% else %}<span class="muted">none</span>{% endfor %}</dd>
+      <dt>Sign-in</dt><dd>{% for p in target.principals %}<code>{{ p }}</code><br>{% else %}<span class="muted">none</span>{% endfor %}</dd>
       <dt>Email</dt><dd>{{ target.mail }}</dd>
       <dt>UID / GID</dt><dd>{{ target.uid_number }} / {{ target.gid_number }}</dd>
       <dt>Shell</dt><dd><code>{{ target.login_shell }}</code></dd>
@@ -46,8 +46,7 @@
       <summary class="danger-text">Delete account…</summary>
       <form method="post" action="{{ settings.root_path }}/admin/users/{{ target.uid }}/delete">
         <input type="hidden" name="csrf" value="{{ csrf }}">
-        <p class="muted small">Removes the directory entry (and with it the Kerberos principal), the private group and every
-          group membership. This cannot be undone. Files the account owns (home directory, data) are not touched.</p>
+        <p class="muted small">Removes the account, its private group and every group membership. This cannot be undone. Files the account owns (home directory, data) are not touched.</p>
         <label>Type <code>{{ target.uid }}</code> to confirm
           <input name="confirm" autocomplete="off" autocapitalize="none" required pattern="{{ target.uid }}"></label>
         <button class="danger">Delete {{ target.uid }}</button>

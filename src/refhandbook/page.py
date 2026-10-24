@@ -2,6 +2,7 @@
 look, from the site's own stylesheet, and one set of security headers."""
 from __future__ import annotations
 
+import os
 from html import escape
 
 from starlette.responses import HTMLResponse
@@ -21,10 +22,12 @@ def page(title: str, body: str, *, login_url: str, status: int = 200, form_actio
     Referrer-Policy same-origin, never no-referrer: under no-referrer a browser sends `Origin: null` on
     the page's own form POSTs (Fetch, "append a request Origin header"), and every POST here is
     refused unless its Origin is the site's. same-origin still sends nothing to other sites."""
+    brand = os.environ.get("RHB_SITE_TITLE", "")  # the site's name as every page of it shows it: the realm
     doc = ("<!doctype html><html lang=ko><head><meta charset=utf-8>"
            "<meta name=viewport content='width=device-width,initial-scale=1'>"
-           f"<title>{escape(title)}</title><link rel=stylesheet href='{escape(stylesheet(login_url))}'></head>"
-           f"<body><header><a class=brand href='/'>{escape(title)}</a></header><main>{body}</main></body></html>")
+           f"<title>{escape(title)}{' · ' + escape(brand) if brand else ''}</title><link rel=stylesheet href='{escape(stylesheet(login_url))}'></head>"
+           f"<body><header><a class=brand href='/'>{escape(brand)}{f' <span>{escape(title)}</span>' if brand else escape(title)}"
+           f"</a></header><main>{body}</main></body></html>")
     return HTMLResponse(doc, status_code=status, headers={
         "Cache-Control": "no-store", "X-Frame-Options": "DENY", "Referrer-Policy": referrer,
         "Content-Security-Policy": f"default-src 'none'; style-src 'self'; form-action {form_action}; "

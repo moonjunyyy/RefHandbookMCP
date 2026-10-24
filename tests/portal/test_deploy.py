@@ -266,7 +266,7 @@ def test_the_handbook_takes_its_settings_from_the_sites_facts(fresh, tmp_path):
     assert env == {"RHB_PUBLIC_URL": f"https://{f.domain}", "RHB_PORT": str(f.ports["handbook"]),
                    "RHB_SSO_PUBLIC_KEY_FILE": f"{f.conf_dir('sso')}/sso-public.pem", "RHB_SSO_ISSUER": f.issuer,
                    "RHB_SSO_AUDIENCE": "refhandbook", "RHB_LOGIN_URL": "/auth/login",
-                   "RHB_SANDBOX_MOUNT_STAGE": f"/run/{f.name}-mounts"}
+                   "RHB_SANDBOX_MOUNT_STAGE": f"/run/{f.name}-mounts", "RHB_SITE_TITLE": f.realm}
     files = deploy.rendered(f, SITE)
     runner = files[f"/etc/systemd/system/{f.unit('runner')}.service"][0]
     assert f"User={f.user('handbook')}" in runner and f"StateDirectory={f.unit('handbook')}" in runner

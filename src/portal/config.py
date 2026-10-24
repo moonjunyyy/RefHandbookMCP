@@ -75,8 +75,8 @@ class Settings:
     http_keytab: str = field(default_factory=lambda: _env("HTTP_KEYTAB", _conf("portal", "http.keytab")))
 
     default_group: str = field(default_factory=lambda: _env("DEFAULT_GROUP", "user"))
-    admin_group: str = field(default_factory=lambda: _env("ADMIN_GROUP", "admin"))
-    helpdesk_group: str = field(default_factory=lambda: _env("HELPDESK_GROUP", "helpdesk"))
+    admin_group: str = field(default_factory=lambda: _f().admin_group)  # PORTAL_ADMIN_GROUP, [site], or "admin"
+    helpdesk_group: str = field(default_factory=lambda: _f().helpdesk_group)
     # Members of these groups can only be changed by portal admins, never by helpdesk.
     protected_groups: tuple[str, ...] = field(default_factory=lambda: _env_list("PROTECTED_GROUPS", "admin"))
 
@@ -157,8 +157,9 @@ class Settings:
         return cached
 
     @property
-    def site_name(self) -> str:
-        return _f().name
+    def site_title(self) -> str:
+        """The site's name as every page shows it (portal/facts.py `title`)."""
+        return _f().title
 
     def audiences(self) -> tuple[str, ...]:
         """What the SSO may mint tokens for: PORTAL_SSO_AUDIENCES and every audience of the site file."""

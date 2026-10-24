@@ -49,7 +49,7 @@ def test_a_mount_is_the_users_grant_under_the_servers_roots(ws, data, monkeypatc
     with pytest.raises(KernelError, match="mount target"):
         ws.set_policy("x", actor="user", mounts=[{"source": src, "target": "/usr/local"}])
     monkeypatch.delenv("RHB_SANDBOX_MOUNT_ROOTS")
-    with pytest.raises(KernelError, match="mounts are off on this server"):
+    with pytest.raises(KernelError, match="no directories are offered"):
         ws.set_policy("x", actor="user", mounts=[{"source": src, "target": "/data"}])
 
 
@@ -98,8 +98,9 @@ def test_a_mount_names_an_offered_directory_and_a_path_inside_it(ws, offered, mo
         ws.set_policy("z", actor="user", mounts=[{"source": "arxiv", "target": "/d", "rw": True}])
     for bad in ("relative=data", "/x=", "/x=a b", "/x=a:rw", "/x=a,/y=a"):
         monkeypatch.setenv("RHB_SANDBOX_MOUNTS", bad)
-        with pytest.raises(KernelError, match="RHB_SANDBOX_MOUNTS"):
+        with pytest.raises(KernelError, match="mount settings are invalid") as e:
             mount_roots(ws)
+        assert "RHB_" not in str(e.value) and "/" not in str(e.value)  # the setting and paths: the log's
 
 
 @needs_sandbox

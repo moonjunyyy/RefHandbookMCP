@@ -104,11 +104,11 @@ def keys_page(uid: str, keys: list[KeyInfo], hidden: str, q: Any, can_add: str |
                + _select("format", [(f, FORMAT_NAMES[f]) for f in FORMATS], "openai-chat")
                + "</label><label>Base URL <span class='muted small'>버전 경로까지 (예: https://openrouter.ai/api/v1)"
                "</span><input name=base_url placeholder='https://…/v1'></label></div>"
-               "<p class='muted small'>사설 주소나 http 서버는 관리자가 RHB_AGENT_PRIVATE_ENDPOINTS에 둔 호스트만 쓸 수 "
+               "<p class='muted small'>사설 주소나 http 서버는 관리자가 허용한 곳만 쓸 수 "
                "있습니다.</p></details>"
                "<div class='actions'><button>확인하고 등록</button></div></form>")
-    return (_head("API 키", "에이전트가 쓰는 본인의 키입니다. 키는 등록 즉시 암호화되어, 에이전트를 실행하는 러너만 열 수 "
-                  "있습니다. 모델도, 이 웹 서버도 키를 볼 수 없습니다.", "/agents/keys", uid)
+    return (_head("API 키", "에이전트가 쓰는 본인의 키입니다. 키는 등록 즉시 암호화되어 에이전트 실행에만 쓰이고, "
+                  "모델에게는 보이지 않습니다.", "/agents/keys", uid)
             + _flash(q)
             + f"<section class='card section'><h2>등록된 키 ({len(keys)})</h2>{table}</section>"
             + "<section class='card section'><h2>키 등록</h2><p class='muted small'>등록할 때 제공자의 모델 목록을 한 번 "
@@ -291,7 +291,7 @@ def run_page(uid: str, t: Team, run: str, keys: list[KeyInfo], policies: list[st
     if phase == "requested" and r["state"] == "open":
         sugg = a.get("proposal") or {}
         out.append("<section class='card section'><h2>승인</h2><p class='muted small'>모델이 제안한 값으로 채워져 "
-                   "있습니다. 키·모델·한도를 정해 승인하면 러너가 시작합니다.</p>"
+                   "있습니다. 키·모델·한도를 정해 승인하면 시작합니다.</p>"
                    + (grant_form(f"/agents/runs/{run}/approve", keys, policies, hidden, goal=False, proposal=sugg,
                                  reject=f"/agents/runs/{run}/cancel") if keys
                       else grant_form("", keys, policies, hidden, goal=False)
@@ -313,7 +313,7 @@ def run_page(uid: str, t: Team, run: str, keys: list[KeyInfo], policies: list[st
     out.append(f"<section class='card section'><h2>에이전트</h2><p class='muted small'>입력 {usage.get('input', 0):,} · "
                f"출력 {usage.get('output', 0):,} · 캐시 {usage.get('cache_read', 0):,} 토큰. "
                f"<a href='/agents/runs/{_e(run)}'>새로고침</a></p>"
-               + (_tree(t.tree(run)) or "<p class='empty muted'>러너가 아직 시작하지 않았습니다.</p>")
+               + (_tree(t.tree(run)) or "<p class='empty muted'>아직 시작하지 않았습니다.</p>")
                + (f"<div class='actions'>{cancel.replace('{label}', '실행 취소')}</div>" if r["state"] == "open" else "")
                + "</section>")
     res = t.result(run)
@@ -381,7 +381,7 @@ def presets_page(uid: str, presets: list[dict[str, Any]], schedules: list[dict[s
     body = "".join(cards) or "<p class='empty muted'>아직 프리셋이 없습니다. 아래에서 만들거나, 새 실행을 시작할 때 "\
                               "이름을 적어 저장하세요.</p>"
     return (_head("프리셋 · 예약", "자주 하는 실행을 목표와 허가째로 저장해 두고, 한 번에 실행하거나 정해진 때에 저절로 "
-                  "실행되게 합니다. 예약은 미리 해 둔 승인입니다: 때가 되면 러너가 이 설정 그대로 실행을 엽니다.",
+                  "실행되게 합니다. 예약은 미리 해 둔 승인입니다: 때가 되면 이 설정 그대로 실행이 시작됩니다.",
                   "/agents/presets", uid)
             + _flash(q)
             + f"<section class='card section'><h2>프리셋 ({len(presets)})</h2>"
@@ -400,14 +400,14 @@ def presets_page(uid: str, presets: list[dict[str, Any]], schedules: list[dict[s
 
 
 def files_page(uid: str, rel: str, rows: list[tuple[str, str, int]] | None, text: str | None, size: int,
-               work: str, q: Any) -> str:
+               q: Any) -> str:
     """A directory listing (`rows`) or a file (`text`, None when it is not text) of the workspace."""
     parts = [x for x in rel.split("/") if x not in ("", ".")]
     crumbs = ["<a href='/agents/files'>/work</a>"] + [
         f"<a href='/agents/files?path={_e('/'.join(parts[:i + 1]))}'>{_e(x)}</a>" for i, x in enumerate(parts)]
     head = (_head("파일", "샌드박스의 <code>/work</code>: 스크립트와 에이전트가 쓰는 작업 공간입니다(읽기 전용으로 "
                   "보여 줍니다). 에이전트 실행은 <code>/work/runs/&lt;실행&gt;</code>에서 일합니다.", "/agents/files", uid)
-            + _flash(q) + f"<p class='muted small'>서버의 위치: <code>{_e(work)}</code></p>"
+            + _flash(q)
             + f"<section class='card section'><h2>{' / '.join(crumbs)}</h2>")
     if rows is not None:
         base = "/".join(parts)

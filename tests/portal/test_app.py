@@ -233,6 +233,14 @@ def test_admin_cannot_lock_self_out_and_reserved_names(env):
     assert "Username:" in r.text
 
 
+def test_every_portal_page_leads_back_to_the_main_page(env):
+    s, d, k, ka, app, _ = env
+    c, _ = login(app, "moon", "moon-password-1")
+    for path in ("/", "/admin/users", "/admin/users/alice"):
+        page = c.get(path).text
+        assert f'<a class="brand" href="/">{s.realm} <span>Account</span></a>' in page and s.realm.isupper()
+
+
 def test_an_admin_deletes_an_account_after_typing_its_name(env):
     s, d, k, ka, app, _ = env
     c, _ = login(app, "moon", "moon-password-1")
@@ -433,3 +441,28 @@ def test_a_new_principal_keeps_the_realms_default_flags(monkeypatch, tmp_path):
     queries.clear()
     ka.create_principal("inv/user@M00NNY.KR", "uid=inv,ou=Users,dc=m00nny,dc=kr", "pw", None, needchange=False)
     assert len(queries) == 1 and "+" not in queries[0]  # a password the user chose: nothing to add
+
+
+# What the pages may not say: how the site is built (its backends, settings, paths) is not the user's business.
+BACKEND_WORDS = re.compile(r"(?i)kerberos|ldap|kadmin|keytab|principal|nginx|sqlite|runner|러너|RHB_|PORTAL_|/var/lib|/etc/")
+
+
+def test_no_page_tells_how_the_site_is_built(env):
+    s, d, k, ka, app, _ = env
+    anon = TestClient(app)
+    assert not BACKEND_WORDS.search(anon.get("/login").text)
+    c, _ = login(app, "moon", "moon-password-1")
+    for path in ("/", "/admin/users", "/admin/users/alice", "/admin/users/new"):
+        page = c.get(path).text
+        assert not BACKEND_WORDS.search(page), (path, BACKEND_WORDS.search(page).group(0))
+
+
+def test_a_backend_failure_shows_a_reference_not_the_backends_words(env):
+    s, d, k, ka, app, _ = env
+    ka.fail = True
+    c, _ = login(app, "moon", "moon-password-1")
+    r = c.post("/admin/users/new", data={"uid": "carol", "name": "", "mail": "", "loginShell": "/bin/bash",
+                                          "csrf": csrf(c, "/")})
+    assert r.status_code == 502 and "Policy does not exist" not in r.text
+    ref = re.search(r"reference ([0-9a-f]{8})", r.text).group(1)
+    assert f"[{ref}] add_principal: Policy does not exist" in Path(s.audit_log).read_text()

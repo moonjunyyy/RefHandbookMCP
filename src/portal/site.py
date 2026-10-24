@@ -38,6 +38,10 @@ class SiteError(ValueError):
 class Link:
     label: str
     href: str
+    groups: tuple[str, ...] = ()  # shown only to members of one of these (the backend still checks)
+
+    def shown_to(self, groups: set[str] | frozenset[str]) -> bool:
+        return not self.groups or bool(set(self.groups) & set(groups))
 
 
 @dataclass(frozen=True)
@@ -89,6 +93,14 @@ class Site:
         return [Link(a.menu, a.menu_href or (a.links[0].href if a.links else "/")) for a in self.apps
                 if a.menu and (not a.groups or set(a.groups) & set(groups))]
 
+    def cards(self, groups: set[str] | frozenset[str] = frozenset()) -> list[App]:
+        """The main page's cards for someone in `groups`: the apps they may see, each with the links
+        they may see."""
+        from dataclasses import replace
+
+        return [replace(a, links=tuple(ln for ln in a.links if ln.shown_to(groups))) for a in self.apps
+                if a.card and (not a.groups or set(a.groups) & set(groups))]
+
 
 def _route(app_id: str, d: dict) -> Route:
     known = set(Route.__dataclass_fields__)
@@ -134,7 +146,7 @@ def load(path: str | Path, f=None) -> Site:  # noqa: ANN001 — f: portal.facts.
     for d in data.get("app", []):
         d = dict(d)
         routes = tuple(_route(d.get("id", "?"), r) for r in d.pop("route", []))
-        links = tuple(Link(**ln) for ln in d.pop("link", []))
+        links = tuple(Link(**{**ln, "groups": tuple(ln.get("groups", ()))}) for ln in d.pop("link", []))
         d["groups"] = tuple(d.get("groups", ()))
         known = set(App.__dataclass_fields__) - {"routes", "links"}
         bad = set(d) - known

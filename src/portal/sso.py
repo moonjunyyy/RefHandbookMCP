@@ -42,6 +42,20 @@ def safe_next(value: str | None) -> str:
     return value
 
 
+def nss_groups(uid: str) -> set[str]:
+    """The user's groups as the system sees them (NSS: the directory's posixGroups), for what the main
+    page shows; nothing on failure (the apps check access themselves)."""
+    import grp
+    import os
+    import pwd
+
+    try:
+        pw = pwd.getpwnam(uid)
+        return {grp.getgrgid(g).gr_name for g in os.getgrouplist(uid, pw.pw_gid)}
+    except (KeyError, OSError):
+        return set()
+
+
 def next_from_query(query: str) -> str:
     """nginx sends `?next=$request_uri` unencoded, so next= is the last parameter and everything
     after it is the value (a request URI may itself carry ?a=1&b=2). `switch=1&next=...` works too."""
@@ -129,8 +143,10 @@ def create_app(settings: Settings | None = None, kerberos=None, signing_key=None
 
     @app.get("/")
     async def home(request: Request):
-        return render(request, "sso_home.html", current=session_user(request),
-                      apps=[a for a in s.site().apps if a.card], portal=facts().portal_root)
+        uid = session_user(request)
+        groups = await run_in_threadpool(nss_groups, uid) if uid else set()
+        return render(request, "sso_home.html", current=uid, apps=s.site().cards(groups),
+                      portal=facts().portal_root)
 
     # ---- sign-in -----------------------------------------------------------------------------
 
@@ -155,7 +171,7 @@ def create_app(settings: Settings | None = None, kerberos=None, signing_key=None
         except KerberosError as e:  # the host's side (keytab, KDC), not the user's password
             audit.record(raw_uid, "sso_login", None, False, ip(request), f"error: {e}")
             return render(request, "sso_login.html", 503, next=nxt, current=None, uid=raw_uid,
-                          error="지금은 로그인할 수 없습니다 (서버의 Kerberos 설정 문제). 관리자에게 알려 주세요.")
+                          error="지금은 로그인할 수 없습니다. 잠시 뒤 다시 시도하고, 계속되면 관리자에게 알려 주세요.")
         audit.record(uid or raw_uid, "sso_login", None, uid is not None, ip(request), result.value)
         if result is LoginResult.EXPIRED:
             request.session["expired_uid"] = raw_uid

@@ -17,6 +17,7 @@ into force: policy:<name> and script:<name> (as before the registry), and the la
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import shutil
@@ -26,6 +27,8 @@ from typing import Any
 
 from ..kernel.capabilities import DAY, CapError, Kind, Registry, register
 from . import sandbox
+
+log = logging.getLogger("refhandbook.agents.capkinds")
 
 NUMBERS = {"timeout": float, "memory_mb": int, "cpus": float, "tmp_mb": int, "disk_mb": int, "concurrent": int}
 POLICY_FIELDS = {"commands", "network", "ports", "mounts", "layers", "exec_work", "egress", "description", *NUMBERS}
@@ -69,8 +72,9 @@ def mount_roots(ws: Any) -> list[MountRoot]:
 
     try:
         offered = mounts.offers()
-    except mounts.MountError as e:
-        raise CapError(str(e)) from e
+    except mounts.MountError as e:  # the administrator's settings: the detail is for the server's log
+        log.warning("mount settings: %s", e)
+        raise CapError("this server's mount settings are invalid; tell the administrator") from e
     stage = mounts.stage_root()
     out: list[MountRoot] = []
     for o in offered:
@@ -86,7 +90,8 @@ def _expand(template: str, ws: Any, var: str) -> str:
     try:
         return os.path.realpath(template.format(user=ws.owner, uid=ws.owner_uid))
     except (KeyError, IndexError, ValueError) as e:
-        raise CapError(f"{var}: bad template {template!r}: {e}") from e
+        log.warning("%s: bad template %r: %s", var, template, e)
+        raise CapError("this server's mount settings are invalid; tell the administrator") from e
 
 
 def _under(path: str, root: str) -> bool:
@@ -99,13 +104,12 @@ def mount_resolve(ws: Any, source: str) -> tuple[str, MountRoot]:
     the resolved path (symlinks followed) must stay inside it."""
     roots = mount_roots(ws)
     if not roots:
-        raise CapError("mounts are off on this server: the administrator offers directories with "
-                       "RHB_SANDBOX_MOUNTS (e.g. /home/{user}/data=data)")
+        raise CapError("no directories are offered for mounting here; the administrator can offer some")
     try:
         src = source.format(user=ws.owner, uid=ws.owner_uid).strip()
     except (KeyError, IndexError, ValueError) as e:
         raise CapError(f"mount source {source!r}: {e}") from e
-    names = ", ".join(r.name + (" (ro)" if r.ro else "") for r in roots)
+    names = ", ".join(r.name + (" (ro)" if r.ro else "") for r in roots if r.name != r.host) or "none by name"
     if src.startswith("/"):
         path = os.path.realpath(src)
         root = next((r for r in roots if _under(path, r.host)), None)
@@ -127,7 +131,7 @@ def mount_resolve(ws: Any, source: str) -> tuple[str, MountRoot]:
         if stage_root() and root.host.startswith(str(stage_root())) and not os.path.exists(root.host):
             raise CapError(f"mount source {source!r}: {root.name} is not prepared for you: the directory is not "
                            "there or not yours, or the server has not staged it yet (it does every few minutes)")
-        raise CapError(f"mount source {source!r} does not exist ({path})")
+        raise CapError(f"mount source {source!r} does not exist")
     return path, root
 
 
