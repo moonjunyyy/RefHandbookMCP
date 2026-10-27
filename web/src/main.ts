@@ -4,7 +4,8 @@
 
 import { frame, site } from './lib/api';
 import { h, replace } from './lib/dom';
-import { loadPrefs } from './lib/prefs';
+import { setLang, t } from './lib/i18n';
+import { loadPrefs, prefs } from './lib/prefs';
 import { flash, header, main, message, pageHead, section, showPending } from './lib/ui';
 import * as account from './pages/account';
 import * as agents from './pages/agents';
@@ -49,12 +50,12 @@ async function render(): Promise<void> {
       await page(...m.slice(1).filter((x): x is string => x !== undefined).map(decodeURIComponent));
       showPending();
     } catch (e) {
-      replace(main(), pageHead('문제가 생겼습니다', null), section('', h('p', null, message(e))));
+      replace(main(), pageHead(t('문제가 생겼습니다'), null), section('', h('p', null, message(e))));
     }
     return;
   }
-  replace(main(), pageHead('없는 페이지', null), section('', h('p', null, '이 주소에는 페이지가 없습니다. '),
-    h('a', { href: '/' }, '홈으로')));
+  replace(main(), pageHead(t('없는 페이지'), null), section('', h('p', null, t('이 주소에는 페이지가 없습니다.')),
+    h('a', { href: '/' }, t('홈으로'))));
 }
 
 async function start(): Promise<void> {
@@ -64,6 +65,7 @@ async function start(): Promise<void> {
     flash('error', message(e));
   }
   await loadPrefs();
+  setLang(prefs.lang);
   header();
   window.addEventListener('popstate', () => void render());
   await render();

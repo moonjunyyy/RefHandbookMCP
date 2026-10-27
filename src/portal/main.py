@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import audit, tokens, validators
+from . import audit, i18n, tokens, validators
 from .accounts import Accounts, Forbidden
 from .config import Settings
 from .facts import SIGNIN
@@ -20,6 +20,7 @@ from .kerberos import KAdmin, Kerberos, KerberosError, LoginResult
 from .rbac import Actor, can, roles_for
 from .requests import RequestError, RequestStore
 from .security import SecurityHeadersMiddleware, Throttle, csrf_ok, csrf_token
+from .i18n import t
 from .validators import ValidationError
 
 HERE = Path(__file__).parent
@@ -77,9 +78,11 @@ def create_app(settings: Settings | None = None, directory=None, kerberos=None, 
     app.add_middleware(SessionMiddleware, secret_key=s.session_secret, session_cookie="portal_session",
                        max_age=s.session_max_age, same_site="strict", https_only=s.cookie_secure,
                        path=s.root_path or "/")
+    app.add_middleware(i18n.Language)  # the request's language, for every message and page under it
     app.add_middleware(RootPath, prefix=s.root_path)  # added last, so it runs first
     app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
     templates = Jinja2Templates(directory=HERE / "templates")
+    templates.env.globals.update(t=i18n.t, lang=i18n.current)
 
     # ---- helpers -----------------------------------------------------------------------------
 
@@ -287,14 +290,14 @@ def create_app(settings: Settings | None = None, directory=None, kerberos=None, 
         data = await form(request)
         key = f"req:{ip(request)}"
         if request_throttle.blocked(key):
-            flash(request, "error", "신청이 너무 많습니다. 한 시간 뒤 다시 시도해 주세요.")
+            flash(request, "error", t("신청이 너무 많습니다. 한 시간 뒤 다시 시도해 주세요."))
             return render(request, "request.html", values=dict(data))
         request_throttle.fail(key)  # every submission counts, accepted or not
         try:
             if data.get("consent") != "1":
-                raise ValidationError("개인정보 수집·이용에 동의해야 신청할 수 있습니다.")
+                raise ValidationError(t("개인정보 수집·이용에 동의해야 신청할 수 있습니다."))
             uid = validators.new_uid(str(data.get("uid", "")).strip().lower())
-            name = validators.optional_name(str(data.get("name", "")), "이름")
+            name = validators.optional_name(str(data.get("name", "")), t("이름"))
             mail = validators.email(str(data.get("mail", "")))
             purpose = validators.purpose(str(data.get("purpose", "")))
         except ValidationError as e:
@@ -305,7 +308,7 @@ def create_app(settings: Settings | None = None, directory=None, kerberos=None, 
             # and it should not tell anyone which usernames exist.
             added = store.add(uid, name, mail, purpose)
         except RequestError:
-            flash(request, "error", "지금은 신청을 받을 수 없습니다. 관리자에게 직접 문의해 주세요.")
+            flash(request, "error", t("지금은 신청을 받을 수 없습니다. 관리자에게 직접 문의해 주세요."))
             return render(request, "request.html", values=dict(data))
         audit.record(None, "account_request", uid, added, ip(request), "" if added else "duplicate")
         return render(request, "request_done.html")
@@ -337,17 +340,17 @@ def create_app(settings: Settings | None = None, directory=None, kerberos=None, 
         values = {k: str(data.get(k, "")) for k in ("uid", "name", "mail")}
         key = f"join:{ip(request)}"
         if join_throttle.blocked(key):
-            flash(request, "error", "실패가 너무 많습니다. 한 시간 뒤 다시 시도해 주세요.")
+            flash(request, "error", t("실패가 너무 많습니다. 한 시간 뒤 다시 시도해 주세요."))
             return join_page(request, token, 429, **values)
         try:
             if data.get("consent") != "1":
-                raise ValidationError("개인정보 수집·이용에 동의해야 가입할 수 있습니다.")
+                raise ValidationError(t("개인정보 수집·이용에 동의해야 가입할 수 있습니다."))
             uid = validators.new_uid(values["uid"].strip().lower())
             password = validators.new_password(str(data.get("password", "")), str(data.get("confirm", "")))
-            name = validators.optional_name(values["name"], "이름")
+            name = validators.optional_name(values["name"], t("이름"))
             mail = validators.email(values["mail"])
             if directory.get_user(uid) is not None:  # the holder of a link may know which names are taken
-                raise ValidationError(f"'{uid}'은(는) 이미 쓰이는 사용자명입니다. 다른 이름을 고르세요.")
+                raise ValidationError(t("'{uid}'은(는) 이미 쓰이는 사용자명입니다. 다른 이름을 고르세요.", uid=uid))
         except ValidationError as e:
             join_throttle.fail(key)
             flash(request, "error", str(e))
@@ -363,7 +366,7 @@ def create_app(settings: Settings | None = None, directory=None, kerberos=None, 
         except (DirectoryError, KerberosError) as e:
             store.restore(inv)  # the link still works: the person can try again
             join_throttle.fail(key)
-            flash(request, "error", f"계정을 만들지 못했습니다: {e}")
+            flash(request, "error", t("계정을 만들지 못했습니다: {reason}", reason=e))
             return join_page(request, token, 400, **values)
         return render(request, "join_done.html", uid=uid)
 

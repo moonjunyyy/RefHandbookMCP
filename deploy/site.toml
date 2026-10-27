@@ -28,7 +28,8 @@
 # clients that answer it), nginx (raw directives), note. App fields: id, title,
 # description, audience, upstream, groups (who sees it in the menu; the backend enforces its own
 # access), menu, menu_href, code (an address on the card), card, icon (an emoji or a letter or two on its
-# card and in the app list), [[app.link]] (label, href, groups: shown only to their members), [[app.route]].
+# card and in the app list), tr (the app's words in another language: tr.en = { title, description, menu }),
+# [[app.link]] (label, href, groups: shown only to their members, tr: { en = "label" }), [[app.route]].
 # Every app with a card shows on the main page and in the app list (/apps) to whoever may see it; each
 # person orders them, hides some and picks a start page in their settings (/settings).
 #
@@ -61,12 +62,13 @@ id = "account"
 title = "계정"
 icon = "👤"
 description = "프로필과 비밀번호. 관리자는 여기서 사용자, 사용 신청, 초대 링크를 관리합니다."
+tr.en = { title = "Account", description = "Your profile and password. Admins manage users, account requests and invitation links here." }
 audience = "account"
 upstream = "@@upstream:portal@@"
-link = [{ label = "내 계정", href = "@@portal_root@@/" },
-        { label = "사용자 관리", href = "@@portal_root@@/admin/users", groups = ["@@admin_group@@", "@@helpdesk_group@@"] },
-        { label = "사용 신청", href = "@@portal_root@@/admin/requests", groups = ["@@admin_group@@"] },
-        { label = "초대 링크", href = "@@portal_root@@/admin/invites", groups = ["@@admin_group@@"] }]
+link = [{ label = "내 계정", href = "@@portal_root@@/", tr = { en = "My account" } },
+        { label = "사용자 관리", href = "@@portal_root@@/admin/users", groups = ["@@admin_group@@", "@@helpdesk_group@@"], tr = { en = "Users" } },
+        { label = "사용 신청", href = "@@portal_root@@/admin/requests", groups = ["@@admin_group@@"], tr = { en = "Account requests" } },
+        { label = "초대 링크", href = "@@portal_root@@/admin/invites", groups = ["@@admin_group@@"], tr = { en = "Invitation links" } }]
   [[app.route]]
   path = "@@portal_root@@"
   match = "exact"
@@ -107,6 +109,7 @@ id = "wordgen"
 title = "글타래"
 icon = "✍️"
 description = "소설 창작용 무작위 키워드 생성기와 집필 메모. 저장한 키워드 세트와 메모는 계정에 남습니다."
+tr.en = { title = "Geultarae", description = "A random keyword generator and writing notes for fiction. Saved keyword sets and notes stay with your account." }
 static = true
 storage = true
 
@@ -115,12 +118,13 @@ id = "agents"
 title = "에이전트 · 샌드박스"
 icon = "🤖"
 description = "본인 API 키(Claude·OpenAI·Gemini·호환 서버)로 에이전트 팀 실행, 모델이 제안한 규칙의 승인·거절, 샌드박스 정책(쓸 수 있는 명령·네트워크·한도), 스크립트와 작업 현황."
+tr.en = { title = "Agents · Sandbox", menu = "Agents", description = "Run agent teams with your own API keys (Claude, OpenAI, Gemini, compatible servers), approve or reject rules the model proposes, sandbox policies (commands, network, limits), scripts and jobs." }
 audience = "refhandbook"
 upstream = "@@upstream:handbook@@"
 menu = "에이전트"
 menu_href = "/agents/"
-link = [{ label = "에이전트 실행", href = "/agents/" }, { label = "프리셋", href = "/agents/presets" },
-        { label = "승인", href = "/approvals" }, { label = "API 키", href = "/agents/keys" }]
+link = [{ label = "에이전트 실행", href = "/agents/", tr = { en = "Runs" } }, { label = "프리셋", href = "/agents/presets", tr = { en = "Presets" } },
+        { label = "승인", href = "/approvals", tr = { en = "Approvals" } }, { label = "API 키", href = "/agents/keys", tr = { en = "API keys" } }]
   [[app.route]]
   path = "/approvals"
   limit = "oauth"
@@ -145,6 +149,7 @@ id = "refhandbook"
 title = "핸드북 (Claude MCP)"
 icon = "📘"
 description = "Claude에서 커스텀 커넥터로 추가하고 Connect를 누르면, 이 사이트 로그인 후 허용 화면이 나옵니다."
+tr.en = { title = "Handbook (Claude MCP)", description = "Add it in Claude as a custom connector and press Connect: after signing in to this site you are asked to allow it." }
 code = "https://@@domain@@/mcp"
 audience = "refhandbook"
 upstream = "@@upstream:handbook@@"

@@ -3,6 +3,7 @@
 
 import { ApiError, frame } from './api';
 import { Child, h, replace } from './dom';
+import { locale, t } from './i18n';
 
 export const main = () => document.getElementById('main') as HTMLElement;
 
@@ -12,15 +13,15 @@ export function header(): void {
   const nav = document.getElementById('nav') as HTMLElement;
   replace(nav,
     frame.uid && [
-      h('a', { href: '/' }, '홈'),
-      h('a', { href: '/apps' }, '앱'),
-      h('a', { href: `${frame.portal}/` }, '내 계정'),
+      h('a', { href: '/' }, t('홈')),
+      h('a', { href: '/apps' }, t('앱')),
+      h('a', { href: `${frame.portal}/` }, t('내 계정')),
       frame.menu.map(m => h('a', { href: m.href }, m.label)),
-      h('a', { href: '/settings', title: '설정' }, h('code', null, frame.uid)),
-      h('a', { href: `${frame.signin}/logout` }, '로그아웃'),
+      h('a', { href: '/settings', title: t('설정') }, h('code', null, frame.uid)),
+      h('a', { href: `${frame.signin}/logout` }, t('로그아웃')),
     ],
-    !frame.uid && [h('a', { href: '/apps' }, '앱'),
-      h('a', { href: `${frame.signin}/login?next=${encodeURIComponent(location.pathname)}` }, '로그인')]);
+    !frame.uid && [h('a', { href: '/apps' }, t('앱')),
+      h('a', { href: `${frame.signin}/login?next=${encodeURIComponent(location.pathname)}` }, t('로그인'))]);
 }
 
 export function title(text: string): void {
@@ -108,8 +109,8 @@ export function form(attrs: Record<string, unknown>, fn: (f: HTMLFormElement, b:
 }
 
 export const when = (t: number | null | undefined): string =>
-  t ? new Date(t * 1000).toLocaleString('ko-KR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-';
-export const num = (n: number | null | undefined): string => (n ? n.toLocaleString('ko-KR') : '-');
+  t ? new Date(t * 1000).toLocaleString(locale(), { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-';
+export const num = (n: number | null | undefined): string => (n ? n.toLocaleString(locale()) : '-');
 
 /** Go to a page of the app without a reload (links inside the app). */
 export function go(path: string): void {

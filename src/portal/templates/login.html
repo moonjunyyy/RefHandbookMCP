@@ -11,6 +11,6 @@
     <button>Sign in</button>
   </form>
   <p class="muted small"><a href="{{ settings.root_path }}/expired">Change an expired or one-time password</a>
-  {% if requests_enabled %}· <a href="{{ settings.root_path }}/request">계정이 없나요? 사용 신청</a>{% endif %}</p>
+  {% if requests_enabled %}· <a href="{{ settings.root_path }}/request">{{ t('계정이 없나요? 사용 신청') }}</a>{% endif %}</p>
 </section>
 {% endblock %}

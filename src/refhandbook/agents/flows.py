@@ -22,6 +22,8 @@ import datetime as dt
 import re
 from typing import Any
 
+from portal.i18n import t
+
 from .team import ROLES, TeamError, check_grant
 
 STEP_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
@@ -104,7 +106,7 @@ def from_grant(goal: str, grant: dict[str, Any] | None) -> dict[str, Any]:
     routes = (grant or {}).get("routes") or []
     lead = next((r for r in routes if "lead" in r.get("roles", []) or "*" in r.get("roles", [])),
                 routes[0] if routes else {})
-    return {"steps": [{"id": "main", "title": "실행", "key": lead.get("key", ""), "model": lead.get("model", ""),
+    return {"steps": [{"id": "main", "title": t("실행"), "key": lead.get("key", ""), "model": lead.get("model", ""),
                        "command": goal.strip(), "team": True, "x": 40.0, "y": 60.0}],
             "edges": [], "start": "main", "max_visits": 3}
 

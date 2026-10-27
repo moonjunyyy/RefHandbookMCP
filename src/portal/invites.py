@@ -14,6 +14,8 @@ import threading
 import time
 from dataclasses import dataclass
 
+from .i18n import t
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS invites (
     id         TEXT PRIMARY KEY,
@@ -71,7 +73,7 @@ class InviteStore:
         with self._lock:
             self._sweep()
             if self.db.execute("SELECT count(*) FROM invites").fetchone()[0] >= self.max_active:
-                raise InviteError("살아 있는 초대 링크가 너무 많습니다. 몇 개를 먼저 거두세요.")
+                raise InviteError(t("살아 있는 초대 링크가 너무 많습니다. 몇 개를 먼저 거두세요."))
             self.db.execute("INSERT INTO invites VALUES (?,?,?,?,?,?)",
                             (inv.id, inv.token_hash, inv.note, inv.created_by, inv.created, inv.expires))
         return inv, token

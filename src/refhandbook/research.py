@@ -162,7 +162,7 @@ END;
 LEAKS = [
     (re.compile(r"⟵"), "basis tag"),
     (re.compile(r"\b(RECEIPT|TOKEN|PENDING|CONFLICT)\b|NEXT:|\bSESSION S\d+-"), "device output"),
-    (re.compile(r"\[unverified\]"), "status token [unverified]; write 미검증 / unverified in words"),
+    (re.compile(r"\[unverified\]"), "status token [unverified]; write 미검증 / unverified in words"),  # i18n: data (a word the deliverable may use)
     (re.compile(r"\[(?:[UCRSAZTEHXPK]\d+(?:\s*[;,]\s*|\s+)?)+\]"), "bracketed ledger ids; move them to the section's basis comment"),
     (re.compile(r"`(computed|measured|sourced|followed|proposed|superseded|stale|entailed|pointer)[^`]*`"), "status vocabulary in code"),
     (re.compile(r"(?<![\w.])@(USER|N\d\w*|X\d|RF|EX|QM|DV|FM|VF|IM)\b"), "page reference"),

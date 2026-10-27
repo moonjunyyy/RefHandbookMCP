@@ -7,6 +7,8 @@ from html import escape
 
 from starlette.responses import HTMLResponse
 
+from portal.i18n import current
+
 
 def stylesheet(login_url: str) -> str:
     """The site's stylesheet, which the sign-in serves beside its pages (portal.sso: /auth/login,
@@ -23,7 +25,7 @@ def page(title: str, body: str, *, login_url: str, status: int = 200, form_actio
     the page's own form POSTs (Fetch, "append a request Origin header"), and every POST here is
     refused unless its Origin is the site's. same-origin still sends nothing to other sites."""
     brand = os.environ.get("RHB_SITE_TITLE", "")  # the site's name as every page of it shows it: the realm
-    doc = ("<!doctype html><html lang=ko><head><meta charset=utf-8>"
+    doc = (f"<!doctype html><html lang={current()}><head><meta charset=utf-8>"
            "<meta name=viewport content='width=device-width,initial-scale=1'>"
            f"<title>{escape(title)}{' · ' + escape(brand) if brand else ''}</title><link rel=stylesheet href='{escape(stylesheet(login_url))}'></head>"
            f"<body><header><a class=brand href='/'>{escape(brand)}{f' <span>{escape(title)}</span>' if brand else escape(title)}"

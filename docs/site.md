@@ -271,7 +271,8 @@ pages, as long as the API keeps its version.
 
 | path | who answers |
 |---|---|
-| `/`, `/account/…`, `/agents/…` | the pages app (`[[app]] id = "site"`, `pages = [...]`): nginx answers each with its `index.html` |
+| `/`, `/apps`, `/settings`, `/account/…`, `/agents/…` | the pages app (`[[app]] id = "site"`, `pages = [...]`): nginx answers each with its `index.html` |
+| `/apps/site/api/store/prefs` | each person's settings, in the pages app's own store (`portal/apps.py`) |
 | `/auth/api/v1/me`, `/account/api/v1/…`, `/agents/api/v1/…` | the sign-in, the portal (`portal/account_api.py`), the handbook (`refhandbook/agents/api.py`) |
 | `/auth/login`, `/auth/expired`, `/login` (Claude's consent), `/approvals/…` | server pages with no script: who someone is, and what a model may do, are decided there |
 | `/account/request`, `/account/join/…` | the portal's public pages (no account yet) |
@@ -302,6 +303,37 @@ Updates do not refuse anyone:
   build is kept.
 - nginx is reloaded, not restarted. The runner resumes its agents after a restart (their leases
   expire and the next runner takes them).
+
+## Each person's site: apps, start page, language
+
+Every app of the site file with a card (`[[app]]`, `card = true`, the default) is offered to whoever
+may see it (`groups`): on the main page, and in the app list (`/apps`), which shows apps added to
+the file later as well (new to a person until they have seen the list). An app may have an `icon`
+and its words in other languages (`tr.en = { title, description, menu }`, a link's `tr = { en = … }`);
+the frame (`/auth/api/v1/me`) gives them in the person's language, with each card's `href` (where it
+opens).
+
+What a person chooses is kept with their account, not their browser: the pages app has `storage`,
+so `/apps/site/api/store/prefs` holds it (`web/src/lib/prefs.ts`): the language, the page to open
+after signing in, and the main page's apps (their order, which are hidden, which have been seen). The
+settings page (`/settings`) changes them. Signing in to no page in particular lands on `/?start`,
+which opens the start page; a link to a page signs in to that page.
+
+### Languages
+
+Korean and English. Korean is the source everywhere: a text is written in Korean and is its own key;
+each other language has a catalog, falling back to the Korean.
+
+| where | how | catalog |
+|---|---|---|
+| the pages (`web/`) | `t('…', {values})`, `n_()` in tables (`web/src/lib/i18n.ts`) | `web/src/i18n/en/*.ts` |
+| server pages, messages | `t("…", **values)`, `N_()` in tables (`portal/i18n.py`); templates `{{ t('…') }}` | `portal/locale/en.py` |
+
+The language of a request: the person's setting (the site-wide `lang` cookie, which the pages write
+from their settings; `auto` follows the browser), else the browser's Accept-Language, else Korean.
+`portal.i18n.Language` (ASGI middleware, on the sign-in, the portal and the handbook) decides it
+once per request for everything under it. `tests/portal/test_i18n.py` fails on Korean left outside
+t() and on a text with no English; adding a language is a catalog per side and its code in `LANGS`.
 
 ## Not included (on purpose)
 

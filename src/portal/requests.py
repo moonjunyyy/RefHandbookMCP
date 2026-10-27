@@ -11,6 +11,8 @@ import threading
 import time
 from dataclasses import dataclass
 
+from .i18n import t
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS requests (
     id      TEXT PRIMARY KEY,
@@ -61,7 +63,7 @@ class RequestStore:
         with self._lock:
             self._sweep()
             if self.db.execute("SELECT count(*) FROM requests").fetchone()[0] >= self.max_pending:
-                raise RequestError("대기 중인 신청이 너무 많습니다.")
+                raise RequestError(t("대기 중인 신청이 너무 많습니다."))
             cur = self.db.execute("INSERT OR IGNORE INTO requests VALUES (?,?,?,?,?,?)",
                                   (secrets.token_urlsafe(12), uid, name, mail, purpose, time.time()))
             return cur.rowcount == 1

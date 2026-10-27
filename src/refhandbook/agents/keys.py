@@ -74,7 +74,7 @@ class KeyError_(ValueError):
 def fingerprint(secret: str) -> str:
     s = secret.strip()
     if not s:
-        return "(없음)"
+        return "(없음)"  # i18n: data (kept with the key)
     return f"{s[:6]}…{s[-4:]}" if len(s) > 12 else "…" + s[-2:]
 
 

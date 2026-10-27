@@ -3,6 +3,7 @@
 // page to open after signing in, and which apps the main page shows, in what order.
 
 import { Card, frame } from './api';
+import { t } from './i18n';
 
 export interface Prefs {
   lang: string;      // 'auto' (the browser's), or a language of lib/i18n.ts
@@ -37,7 +38,7 @@ export async function savePrefs(change: Partial<Prefs>): Promise<true> {
   remember();
   const r = await fetch(URL, { method: 'PUT', credentials: 'same-origin', body: JSON.stringify(prefs),
                                headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'fetch' } });
-  if (!r.ok) throw new Error(`설정을 저장하지 못했습니다 (${r.status})`);
+  if (!r.ok) throw new Error(t('설정을 저장하지 못했습니다 ({status})', { status: r.status }));
   return true;
 }
 

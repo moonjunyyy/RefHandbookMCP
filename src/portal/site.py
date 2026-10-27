@@ -24,6 +24,8 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .i18n import N_, t
+
 NAME = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 MATCHES = ("prefix", "exact", "regex", "priority")  # priority = `^~` (a prefix that wins over regexes)
 AUTH = ("site", "public")
@@ -40,9 +42,13 @@ class Link:
     label: str
     href: str
     groups: tuple[str, ...] = ()  # shown only to members of one of these (the backend still checks)
+    tr: dict[str, str] = field(default_factory=dict, compare=False, hash=False)  # the label in other languages
 
     def shown_to(self, groups: set[str] | frozenset[str]) -> bool:
         return not self.groups or bool(set(self.groups) & set(groups))
+
+    def label_in(self, lang: str) -> str:
+        return self.tr.get(lang) or t(self.label)  # a label of ours (N_) has its words in the catalog
 
 
 @dataclass(frozen=True)
@@ -76,6 +82,8 @@ class App:
     code: str = ""  # a line shown in a <code> on its card on the main page (an address to connect to)
     card: bool = True
     icon: str = ""  # a short mark for the app (an emoji or a letter or two) on its card and in the app list
+    # the app's words in other languages: {lang: {title, description, menu}} (Korean is the file's own)
+    tr: dict[str, dict[str, str]] = field(default_factory=dict, compare=False, hash=False)
     # An app hosted by the site itself (portal/apps.py): `static` serves its built files at /apps/<id>/
     # (true: from <apps_root>/<id>, or a directory), `storage` gives each user a JSON store at
     # /apps/<id>/api/. Their routes are generated; the app's audience is its id.
@@ -89,6 +97,10 @@ class App:
     build: str = ""  # its built files in the code tree (web/dist): the installer publishes them when there
     routes: tuple[Route, ...] = ()
 
+    def text(self, name: str, lang: str) -> str:
+        """`title`, `description` or `menu`, in `lang` if the file says it there."""
+        return (self.tr.get(lang) or {}).get(name) or getattr(self, name)
+
 
 @dataclass(frozen=True)
 class Site:
@@ -98,8 +110,8 @@ class Site:
     def audiences(self) -> tuple[str, ...]:
         return tuple(sorted({a.audience for a in self.apps if a.audience}))
 
-    def menu(self, groups: set[str] | frozenset[str] = frozenset()) -> list[Link]:
-        return [Link(a.menu, a.menu_href or (a.links[0].href if a.links else "/")) for a in self.apps
+    def menu(self, groups: set[str] | frozenset[str] = frozenset(), lang: str = "ko") -> list[Link]:
+        return [Link(a.text("menu", lang), a.menu_href or (a.links[0].href if a.links else "/")) for a in self.apps
                 if a.menu and (not a.groups or set(a.groups) & set(groups))]
 
     def cards(self, groups: set[str] | frozenset[str] = frozenset()) -> list[App]:
@@ -156,6 +168,9 @@ def load(path: str | Path, f=None) -> Site:  # noqa: ANN001 — f: portal.facts.
         d = dict(d)
         routes = tuple(_route(d.get("id", "?"), r) for r in d.pop("route", []))
         links = tuple(Link(**{**ln, "groups": tuple(ln.get("groups", ()))}) for ln in d.pop("link", []))
+        for lang, words in (d.get("tr") or {}).items():
+            if not isinstance(words, dict) or set(words) - {"title", "description", "menu"}:
+                raise SiteError(f"app {d.get('id')}: tr.{lang} names title, description or menu")
         d["groups"] = tuple(d.get("groups", ()))
         d["pages"] = tuple(d.get("pages", ()))
         known = set(App.__dataclass_fields__) - {"routes", "links"}
@@ -214,7 +229,7 @@ def _hosted(a: App, f) -> App:  # noqa: ANN001 — f: portal.facts.Facts
         routes.append(Route(path=page, match="exact" if page == "/" or not page.endswith("/") else "prefix",
                             auth="public", page=True,
                             nginx=f"rewrite ^ {base}/index.html last;", note="the site's pages (an app)"))
-    links = a.links or ((Link("열기", f"{base}/"),) if a.static else ())
+    links = a.links or ((Link(N_("열기"), f"{base}/"),) if a.static else ())
     return replace(a, audience=audience, links=links, routes=(*routes, *a.routes))
 
 

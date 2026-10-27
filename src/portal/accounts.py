@@ -22,6 +22,7 @@ from .kerberos import KerberosError
 from .rbac import Actor, can, roles_for
 from .requests import RequestStore
 from .security import Throttle
+from .i18n import t
 from .validators import ValidationError
 
 
@@ -52,7 +53,7 @@ class Accounts:
 
     def require(self, actor: Actor, action: str, target: User | None = None) -> None:
         if not can(actor, action, self.s, target):
-            raise Forbidden("이 작업을 할 권한이 없습니다.")
+            raise Forbidden(t("이 작업을 할 권한이 없습니다."))
 
     def may(self, actor: Actor, action: str, target: User | None = None) -> bool:
         return can(actor, action, self.s, target)
@@ -63,14 +64,14 @@ class Accounts:
         except ValidationError:
             user = None
         if user is None:
-            raise Forbidden("그런 사용자가 없습니다.")
+            raise Forbidden(t("그런 사용자가 없습니다."))
         return user
 
     # ── oneself ──────────────────────────────────────────────────────────
 
     def update_profile(self, actor: Actor, values: dict[str, Any], ip: str) -> User:
         changes = {
-            "displayName": validators.optional_name(str(values.get("displayName", "")), "표시 이름"),
+            "displayName": validators.optional_name(str(values.get("displayName", "")), t("표시 이름")),
             "mail": validators.email(str(values.get("mail", ""))),
             "loginShell": validators.shell(str(values.get("loginShell", "")), self.s.allowed_shells),
         }
@@ -82,7 +83,7 @@ class Accounts:
         """Raises Forbidden while throttled, ValidationError or KerberosError with the reason."""
         key = f"pw:{actor.uid}"
         if self.throttle.blocked(key):
-            raise Forbidden("실패가 너무 많습니다. 15분 뒤 다시 시도하세요.")
+            raise Forbidden(t("실패가 너무 많습니다. 15분 뒤 다시 시도하세요."))
         try:
             pw = validators.new_password(new, confirm)
             self.kerberos.change_own_password(self.s.principal(actor.uid), old, pw)
@@ -112,7 +113,7 @@ class Accounts:
         """An account made by an admin, with a one-time password (returned once, never kept)."""
         self.require(actor, "create_user")
         uid = validators.new_uid(str(values.get("uid", "")))
-        name = validators.optional_name(str(values.get("name", "")), "이름")
+        name = validators.optional_name(str(values.get("name", "")), t("이름"))
         mail = validators.email(str(values.get("mail", "")))
         shell = validators.shell(str(values.get("loginShell", "")), self.s.allowed_shells)
         password = validators.temp_password()
@@ -160,7 +161,7 @@ class Accounts:
         except ValidationError as e:
             raise Forbidden(str(e)) from e
         if group == target.uid or group not in {g for g, _ in self.directory.list_groups()}:
-            raise Forbidden("이 그룹은 여기서 바꿀 수 없습니다.")
+            raise Forbidden(t("이 그룹은 여기서 바꿀 수 없습니다."))
         self.directory.set_membership(group, target.uid, member)
         audit.record(actor.uid, "group_add" if member else "group_remove", target.uid, True, ip, group)
         return self.directory.get_user(target.uid)
@@ -172,7 +173,7 @@ class Accounts:
         target = self.target(uid)
         self.require(actor, "delete_user", target)
         if confirm.strip() != target.uid:
-            raise ValidationError(f"계정을 지우려면 사용자명({target.uid})을 그대로 입력하세요.")
+            raise ValidationError(t("계정을 지우려면 사용자명({uid})을 그대로 입력하세요.", uid=target.uid))
         self.directory.delete_user(target.uid)
         audit.record(actor.uid, "delete_user", target.uid, True, ip,
                      f"uidNumber={target.uid_number} groups={','.join(target.groups)}")
@@ -182,12 +183,12 @@ class Accounts:
 
     def _requests(self) -> RequestStore:
         if self.requests is None:
-            raise Forbidden("이 사이트는 사용 신청을 받지 않습니다.")
+            raise Forbidden(t("이 사이트는 사용 신청을 받지 않습니다."))
         return self.requests
 
     def _invites(self) -> InviteStore:
         if self.invites is None:
-            raise Forbidden("이 사이트는 초대 링크를 쓰지 않습니다.")
+            raise Forbidden(t("이 사이트는 초대 링크를 쓰지 않습니다."))
         return self.invites
 
     def pending_requests(self, actor: Actor) -> list[Any]:
@@ -197,7 +198,7 @@ class Accounts:
     def _pending(self, rid: str) -> Any:
         r = self._requests().get(rid[:32])
         if r is None:
-            raise Forbidden("그 신청은 더 이상 없습니다 (승인·거절되었거나 기한이 지났습니다).")
+            raise Forbidden(t("그 신청은 더 이상 없습니다 (승인·거절되었거나 기한이 지났습니다)."))
         return r
 
     def approve_request(self, actor: Actor, rid: str, shell: str, ip: str) -> tuple[User, str]:

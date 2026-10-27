@@ -23,11 +23,12 @@ from fastapi.templating import Jinja2Templates
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import audit, tokens, validators
+from . import audit, i18n, tokens, validators
 from .config import Settings
 from .facts import SIGNIN, facts
 from .kerberos import Kerberos, KerberosError, LoginResult
 from .security import SecurityHeadersMiddleware, Throttle, csrf_ok, csrf_token
+from .i18n import t
 from .validators import ValidationError
 
 HERE = Path(__file__).parent
@@ -83,6 +84,8 @@ def create_app(settings: Settings | None = None, kerberos=None, signing_key=None
                        max_age=s.sso_max_age, same_site="lax", https_only=s.cookie_secure, path="/")
     app.mount(f"{SIGNIN}/static", StaticFiles(directory=HERE / "static"), name="static")
     templates = Jinja2Templates(directory=HERE / "templates")
+    templates.env.globals.update(t=i18n.t, lang=i18n.current)
+    app.add_middleware(i18n.Language)  # the request's language, for every message and page under it
 
     def ip(request: Request) -> str:
         return request.client.host if request.client else "-"
@@ -171,18 +174,18 @@ def create_app(settings: Settings | None = None, kerberos=None, signing_key=None
         except KerberosError as e:  # the host's side (keytab, KDC), not the user's password
             audit.record(raw_uid, "sso_login", None, False, ip(request), f"error: {e}")
             return render(request, "sso_login.html", 503, next=nxt, current=None, uid=raw_uid,
-                          error="지금은 로그인할 수 없습니다. 잠시 뒤 다시 시도하고, 계속되면 관리자에게 알려 주세요.")
+                          error=t("지금은 로그인할 수 없습니다. 잠시 뒤 다시 시도하고, 계속되면 관리자에게 알려 주세요."))
         audit.record(uid or raw_uid, "sso_login", None, uid is not None, ip(request), result.value)
         if result is LoginResult.EXPIRED:
             request.session["expired_uid"] = raw_uid
             request.session["expired_next"] = nxt
-            flash(request, "info", "비밀번호를 먼저 바꿔야 합니다 (임시 비밀번호이거나 만료됨).")
+            flash(request, "info", t("비밀번호를 먼저 바꿔야 합니다 (임시 비밀번호이거나 만료됨)."))
             # the name rides along in the address too: the page fills it in even when the session
             # cookie did not come back (an old cookie of the same name, a blocked one)
             return redirect(f"{SIGNIN}/expired?uid={quote(raw_uid)}")
         if uid is None:
-            msg = ("사용자명 또는 비밀번호가 맞지 않습니다." if result is LoginResult.BAD
-                   else "비활성화되었거나 잠긴 계정입니다.")
+            msg = (t("사용자명 또는 비밀번호가 맞지 않습니다.") if result is LoginResult.BAD
+                   else t("비활성화되었거나 잠긴 계정입니다."))
             return render(request, "sso_login.html", 401, next=nxt, current=None, error=msg, uid=raw_uid)
         request.session.clear()  # new session on sign-in
         request.session.update(uid=uid, login_at=time.time())
@@ -217,7 +220,7 @@ def create_app(settings: Settings | None = None, kerberos=None, signing_key=None
         raw_uid = str(data.get("uid", "")).strip().lower()[:64]
         keys = (f"ip:{ip(request)}", f"uid:{raw_uid}")
         if throttle.blocked(*keys):
-            flash(request, "error", "실패가 너무 많습니다. 15분 뒤 다시 시도하세요.")
+            flash(request, "error", t("실패가 너무 많습니다. 15분 뒤 다시 시도하세요."))
             return redirect(f"{SIGNIN}/expired")
         try:
             uid = validators.uid(raw_uid)
@@ -231,7 +234,7 @@ def create_app(settings: Settings | None = None, kerberos=None, signing_key=None
         audit.record(uid, "change_expired_password", uid, True, ip(request))
         nxt = request.session.pop("expired_next", "/")
         request.session.pop("expired_uid", None)
-        flash(request, "ok", "비밀번호를 바꿨습니다. 새 비밀번호로 로그인하세요.")
+        flash(request, "ok", t("비밀번호를 바꿨습니다. 새 비밀번호로 로그인하세요."))
         return redirect(f"{SIGNIN}/login?next=" + nxt)
 
     @app.get(f"{SIGNIN}/api/v1/me")
@@ -243,14 +246,16 @@ def create_app(settings: Settings | None = None, kerberos=None, signing_key=None
         groups = await run_in_threadpool(nss_groups, uid) if uid else set()
         site = s.site()
 
+        lang = i18n.current()  # the words of the site file in the person's language, where it has them
+
         def card(a):  # noqa: ANN001, ANN202 — `href`: where the app opens (its first link, or its menu's)
-            return {"id": a.id, "title": a.title, "description": a.description, "code": a.code, "icon": a.icon,
-                    "href": a.menu_href or (a.links[0].href if a.links else ""),
-                    "links": [{"label": ln.label, "href": ln.href} for ln in a.links]}
+            return {"id": a.id, "title": a.text("title", lang), "description": a.text("description", lang),
+                    "code": a.code, "icon": a.icon, "href": a.menu_href or (a.links[0].href if a.links else ""),
+                    "links": [{"label": ln.label_in(lang), "href": ln.href} for ln in a.links]}
         return JSONResponse({"uid": uid, "title": s.site_title, "signin": SIGNIN, "portal": facts().portal_root,
-                             "cards": [card(a) for a in site.cards(groups)],
-                             "menu": [{"label": ln.label, "href": ln.href} for ln in site.menu(groups)]},
-                            headers={"Cache-Control": "no-store"})
+                             "lang": lang, "cards": [card(a) for a in site.cards(groups)],
+                             "menu": [{"label": ln.label, "href": ln.href} for ln in site.menu(groups, lang)]},
+                            headers={"Cache-Control": "no-store", "Vary": "Cookie, Accept-Language"})
 
     @app.get(f"{SIGNIN}/healthz")
     async def healthz():

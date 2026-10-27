@@ -41,6 +41,7 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, PlainTextResponse, RedirectResponse, Response
 
 from portal.facts import SIGNIN
+from portal.i18n import N_, t
 
 from .page import page
 from .store import Handbook
@@ -465,17 +466,18 @@ def _consent(req: str, client: str, dest: str, uid: str, cfg: Config, error: str
     """Allow `client` to act as `uid`? The user is signed in to the site already (nginx put /login
     behind the sign-in). `back` is the client's redirect origin: CSP form-action also governs the
     redirect after the POST."""
-    e = html.escape
+    e = html.escape  # a text is escaped before its values (markup of ours) go in
     switch = f"{cfg.login_url}?switch=1&next=/login?req={req}"
-    body = (f'<section class="card narrow"><h1>Claude 연결</h1>'
-            f'<p class="muted"><b>{e(client)}</b>이(가) 연구 원장 접근을 요청합니다.<br>돌아갈 곳: <code>{e(dest)}</code></p>'
+    body = (f'<section class="card narrow"><h1>{e(t("Claude 연결"))}</h1>'
+            f'<p class="muted">{e(t("{client}이(가) 연구 원장 접근을 요청합니다.")).format(client=f"<b>{e(client)}</b>")}<br>'
+            f'{e(t("돌아갈 곳:"))} <code>{e(dest)}</code></p>'
             + (f'<div class="flash error">{e(error)}</div>' if error else "")
             + f'<form method="post" action="login"><input type="hidden" name="req" value="{e(req)}">'
-            f'<p><b>{e(uid)}</b>(으)로 연결합니다. <a href="{e(switch)}">다른 계정으로</a></p>'
-            '<button type="submit" name="action" value="allow">허용</button> '
-            '<button class="secondary" type="submit" name="action" value="deny" formnovalidate>취소</button>'
+            f'<p>{e(t("{uid}(으)로 연결합니다.")).format(uid=f"<b>{e(uid)}</b>")} <a href="{e(switch)}">{e(t("다른 계정으로 연결"))}</a></p>'
+            f'<button type="submit" name="action" value="allow">{e(t("허용"))}</button> '
+            f'<button class="secondary" type="submit" name="action" value="deny" formnovalidate>{e(t("취소"))}</button>'
             "</form></section>")
-    return page("Claude 연결", body, login_url=cfg.login_url, status=status, form_action=f"'self' {back}".strip())
+    return page(t("Claude 연결"), body, login_url=cfg.login_url, status=status, form_action=f"'self' {back}".strip())
 
 
 def _origin(uri: str) -> str:
@@ -531,7 +533,9 @@ def build(cfg: Config, accounts: Accounts | None = None, sso_tokens: SsoTokens |
         # buffers (a router terminating TLS, say) cannot hold a reply back.
         app = m.streamable_http_app(transport_security=security, host=cfg.host, json_response=True)
         _advertise_public_clients(app, m.settings.auth)  # type: ignore[arg-type]
-        return app
+        from portal.i18n import Language
+
+        return Language(app)  # the request's language (portal/i18n.py), for the pages and their messages
 
     def serve() -> None:
         import uvicorn
@@ -545,7 +549,7 @@ def build(cfg: Config, accounts: Accounts | None = None, sso_tokens: SsoTokens |
     m.http_app = http_app  # type: ignore[attr-defined]
     m.serve = serve  # type: ignore[attr-defined]
 
-    expired = "로그인 요청이 만료되었습니다. Claude에서 연결을 다시 시작하세요."
+    expired = N_("로그인 요청이 만료되었습니다. Claude에서 연결을 다시 시작하세요.")  # shown as t(expired)
 
     def request_of(rid: str):  # noqa: ANN202 — (client_id, AuthorizationParams) of a pending request, or None
         got = provider.pending(rid)
@@ -563,7 +567,7 @@ def build(cfg: Config, accounts: Accounts | None = None, sso_tokens: SsoTokens |
         rid = request.query_params.get("req", "")
         got = request_of(rid)
         if got is None:
-            return _message(expired, 400)
+            return _message(t(expired), 400)
         name, dest, back = await describe(*got)
         uid = sso_tokens.uid(request.headers.get("x-auth-token", ""))
         if uid is None:  # nginx normally sends the browser to the sign-in page before this
@@ -578,7 +582,7 @@ def build(cfg: Config, accounts: Accounts | None = None, sso_tokens: SsoTokens |
         rid = str(form.get("req", ""))[:64]
         got = request_of(rid)
         if got is None:
-            return _message(expired, 400)
+            return _message(t(expired), 400)
         client_id, params = got
         name, dest, back = await describe(client_id, params)
         if form.get("action") == "deny":
@@ -587,20 +591,20 @@ def build(cfg: Config, accounts: Accounts | None = None, sso_tokens: SsoTokens |
         origin = request.headers.get("origin")
         if origin is not None and origin.rstrip("/") != cfg.public_url:
             log.warning("consent POST from foreign origin %s refused", origin)
-            return _message("다른 사이트에서 보낸 요청은 받지 않습니다.", 403)
+            return _message(t("다른 사이트에서 보낸 요청은 받지 않습니다."), 403)
         uid = sso_tokens.uid(request.headers.get("x-auth-token", ""))
         if uid is None:
             return RedirectResponse(f"{cfg.login_url}?next=/login?req={rid}", status_code=303)
         if form.get("action") != "allow":
-            return _consent(rid, name, dest, uid, cfg, "허용 또는 취소 버튼으로 제출해 주세요.", 400, back=back)
+            return _consent(rid, name, dest, uid, cfg, t("허용 또는 취소 버튼으로 제출해 주세요."), 400, back=back)
         if not await anyio.to_thread.run_sync(accounts.exists, uid):
             log.info("consent refused for %s: unknown here or not in the required group", uid)
-            return _consent(rid, name, dest, uid, cfg, "이 계정은 핸드북을 쓸 수 없습니다. 관리자에게 문의하세요.", 403,
+            return _consent(rid, name, dest, uid, cfg, t("이 계정은 핸드북을 쓸 수 없습니다. 관리자에게 문의하세요."), 403,
                             back=back)
         try:
             target = await provider.grant(rid, uid)
         except AuthorizeError:  # a concurrent submit already used this request
-            return _message(expired, 400)
+            return _message(t(expired), 400)
         log.info("consent given by %s (client %s)", uid, client_id)
         return RedirectResponse(target, status_code=303)
 

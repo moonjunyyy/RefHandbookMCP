@@ -1,6 +1,8 @@
 // The services' JSON APIs (docs/site.md "APIs and pages"): every write carries the header the
 // backends require of the site's own pages; an error answer is {"error": {code, message}}.
 
+import { t } from './i18n';
+
 export class ApiError extends Error {
   constructor(public status: number, public code: string, message: string) {
     super(message);
@@ -18,7 +20,7 @@ async function call(method: string, url: string, body?: unknown): Promise<Json> 
     r = await fetch(url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body),
                            credentials: 'same-origin' });
   } catch {
-    throw new ApiError(0, 'network', '서버에 닿지 않습니다. 잠시 뒤 다시 시도하세요.');
+    throw new ApiError(0, 'network', t('서버에 닿지 않습니다. 잠시 뒤 다시 시도하세요.'));
   }
   const text = await r.text();
   let data: Json = null;
@@ -28,7 +30,7 @@ async function call(method: string, url: string, body?: unknown): Promise<Json> 
     location.assign(`/auth/login?next=${encodeURIComponent(location.pathname + location.search)}`);
   }
   const e = data?.error;
-  throw new ApiError(r.status, e?.code ?? 'http', e?.message ?? `요청이 실패했습니다 (${r.status})`);
+  throw new ApiError(r.status, e?.code ?? 'http', e?.message ?? t('요청이 실패했습니다 ({status})', { status: r.status }));
 }
 
 /** One service's API at its prefix: api('/agents/api/v1').get('/runs'). */

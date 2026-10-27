@@ -1,15 +1,15 @@
 <!doctype html>
-<html lang="ko">
+<html lang="{{ lang() }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}로그인{% endblock %} · {{ settings.site_title }}</title>
+  <title>{% block title %}{{ t('로그인') }}{% endblock %} · {{ settings.site_title }}</title>
   <link rel="stylesheet" href="{{ signin }}/static/style.css">
 </head>
 <body>
 <header>
   <a class="brand" href="/">{{ settings.site_title }}</a>
-  <nav>{% if current %}<code>{{ current }}</code><a href="{{ signin }}/logout">로그아웃</a>{% else %}<a href="{{ signin }}/login">로그인</a>{% endif %}</nav>
+  <nav>{% if current %}<code>{{ current }}</code><a href="{{ signin }}/logout">{{ t('로그아웃') }}</a>{% else %}<a href="{{ signin }}/login">{{ t('로그인') }}</a>{% endif %}</nav>
 </header>
 <main>
   {% for kind, msg in flashes %}<div class="flash {{ kind }}">{{ msg }}</div>{% endfor %}
