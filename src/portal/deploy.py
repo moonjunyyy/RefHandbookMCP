@@ -221,17 +221,25 @@ def _chown(p: Path, user: str, real: bool) -> None:
 
 
 def _sync_code(src: Path, dst: Path) -> None:
+    """Copy the code tree to where the services run it. Every file is made readable by all (0644, 0755
+    if it was executable) and every directory 0755, whatever the working tree had: an editor that saves
+    a file 0600 would otherwise leave it readable by root alone, and the services (their own users) fail
+    to import it."""
     if src.resolve() == dst.resolve():
         return
     dst.mkdir(parents=True, exist_ok=True)
+    dst.chmod(0o755)
     keep = set()
     for dirpath, dirnames, filenames in os.walk(src):
         dirnames[:] = [d for d in dirnames if d not in SKIP]
         rel = Path(dirpath).relative_to(src)
         (dst / rel).mkdir(parents=True, exist_ok=True)
+        (dst / rel).chmod(0o755)
         keep.add(rel)
         for name in filenames:
-            shutil.copy2(Path(dirpath) / name, dst / rel / name)
+            to = dst / rel / name
+            shutil.copy2(Path(dirpath) / name, to)
+            to.chmod(0o755 if to.stat().st_mode & 0o111 else 0o644)
             keep.add(rel / name)
     for dirpath, dirnames, filenames in os.walk(dst, topdown=False):  # files the repository no longer has
         rel = Path(dirpath).relative_to(dst)

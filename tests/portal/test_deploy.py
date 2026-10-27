@@ -330,3 +330,24 @@ def test_the_pages_take_over_their_paths_once_published_and_not_before(fresh, tm
     assert "location = / {" not in after[f"/etc/nginx/sites-available/{f.domain}.conf"][0]
     apps = after[f"/etc/nginx/snippets/{f.name}-apps.conf"][0]
     assert "location = / {" in apps and apps.count("rewrite ^ /apps/site/index.html last;") == 5
+
+
+def test_the_code_is_copied_readable_whatever_the_working_tree_had(tmp_path):
+    """An editor that saves a file 0600 (or 0700) must not leave the services unable to import it."""
+    from portal.deploy import _sync_code
+
+    src, dst = tmp_path / "src", tmp_path / "opt" / "code"
+    (src / "pkg").mkdir(parents=True)
+    (src / "pkg" / "mod.py").write_text("x = 1\n")
+    (src / "pkg" / "mod.py").chmod(0o600)
+    (src / "pkg" / "tool.sh").write_text("#!/bin/sh\n")
+    (src / "pkg" / "tool.sh").chmod(0o700)
+    (src / "pkg").chmod(0o700)
+    _sync_code(src, dst)
+    mode = lambda p: oct(p.stat().st_mode & 0o777)  # noqa: E731
+    assert mode(dst / "pkg" / "mod.py") == "0o644" and mode(dst / "pkg" / "tool.sh") == "0o755"
+    assert mode(dst / "pkg") == "0o755"
+    # a copy already there with the bad mode is mended on the next install
+    (dst / "pkg" / "mod.py").chmod(0o600)
+    _sync_code(src, dst)
+    assert mode(dst / "pkg" / "mod.py") == "0o644"
