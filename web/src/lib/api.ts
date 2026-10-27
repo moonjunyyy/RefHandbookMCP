@@ -47,7 +47,8 @@ export const agents = api('/agents/api/v1');
 /** The account portal's API: under the portal's root, which the site's frame says (/account). */
 export const account = () => api(`${frame.portal}/api/v1`);
 
-export interface Card { id: string; title: string; description: string; code: string; links: { label: string; href: string }[] }
+export interface Card { id: string; title: string; description: string; code: string; icon: string; href: string;
+                      links: { label: string; href: string }[] }
 export interface Frame { uid: string | null; title: string; signin: string; portal: string; cards: Card[];
                          menu: { label: string; href: string }[] }
 export const frame: Frame = { uid: null, title: '', signin: '/auth', portal: '/account', cards: [], menu: [] };

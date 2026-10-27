@@ -13,12 +13,14 @@ export function header(): void {
   replace(nav,
     frame.uid && [
       h('a', { href: '/' }, '홈'),
+      h('a', { href: '/apps' }, '앱'),
       h('a', { href: `${frame.portal}/` }, '내 계정'),
       frame.menu.map(m => h('a', { href: m.href }, m.label)),
-      h('code', null, frame.uid),
+      h('a', { href: '/settings', title: '설정' }, h('code', null, frame.uid)),
       h('a', { href: `${frame.signin}/logout` }, '로그아웃'),
     ],
-    !frame.uid && h('a', { href: `${frame.signin}/login?next=${encodeURIComponent(location.pathname)}` }, '로그인'));
+    !frame.uid && [h('a', { href: '/apps' }, '앱'),
+      h('a', { href: `${frame.signin}/login?next=${encodeURIComponent(location.pathname)}` }, '로그인')]);
 }
 
 export function title(text: string): void {

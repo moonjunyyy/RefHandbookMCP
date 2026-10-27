@@ -329,4 +329,4 @@ def test_the_pages_take_over_their_paths_once_published_and_not_before(fresh, tm
     after = deploy.rendered(f, SITE, root=tmp_path)
     assert "location = / {" not in after[f"/etc/nginx/sites-available/{f.domain}.conf"][0]
     apps = after[f"/etc/nginx/snippets/{f.name}-apps.conf"][0]
-    assert "location = / {" in apps and apps.count("rewrite ^ /apps/site/index.html last;") == 3
+    assert "location = / {" in apps and apps.count("rewrite ^ /apps/site/index.html last;") == 5

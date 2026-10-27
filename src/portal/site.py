@@ -75,13 +75,15 @@ class App:
     links: tuple[Link, ...] = ()
     code: str = ""  # a line shown in a <code> on its card on the main page (an address to connect to)
     card: bool = True
+    icon: str = ""  # a short mark for the app (an emoji or a letter or two) on its card and in the app list
     # An app hosted by the site itself (portal/apps.py): `static` serves its built files at /apps/<id>/
     # (true: from <apps_root>/<id>, or a directory), `storage` gives each user a JSON store at
     # /apps/<id>/api/. Their routes are generated; the app's audience is its id.
     static: bool | str = False
     storage: bool = False
-    # A static app that is the site's pages: every path here (and below, but "/" exactly) serves its
-    # index.html; it reads the services' APIs. `public`: its files need no sign-in (the APIs do).
+    # A static app that is the site's pages: every path here serves its index.html (a path ending in
+    # "/": it and everything below; any other, "/" too: that path exactly); it reads the services' APIs.
+    # `public`: its files need no sign-in (the APIs do; `storage` gives it each user's store, too).
     pages: tuple[str, ...] = ()
     public: bool = False
     build: str = ""  # its built files in the code tree (web/dist): the installer publishes them when there
@@ -209,7 +211,8 @@ def _hosted(a: App, f) -> App:  # noqa: ANN001 — f: portal.facts.Facts
         if not a.static or not page.startswith("/") or any(c in page for c in "{};\n "):
             raise SiteError(f"app {a.id}: pages are paths (/, /account/) of a static app")
         # the page's address stays; nginx answers it with the app's index.html, which routes itself
-        routes.append(Route(path=page, match="exact" if page == "/" else "prefix", auth="public", page=True,
+        routes.append(Route(path=page, match="exact" if page == "/" or not page.endswith("/") else "prefix",
+                            auth="public", page=True,
                             nginx=f"rewrite ^ {base}/index.html last;", note="the site's pages (an app)"))
     links = a.links or ((Link("열기", f"{base}/"),) if a.static else ())
     return replace(a, audience=audience, links=links, routes=(*routes, *a.routes))

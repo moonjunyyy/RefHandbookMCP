@@ -15,10 +15,16 @@ def load():
 
 def test_the_shipped_file_declares_the_site():
     s = load()
-    assert s.audiences == ("account", "refhandbook", "wordgen")
+    assert s.audiences == ("account", "refhandbook", "site", "wordgen")
     assert {a.id for a in s.apps} >= {"account", "agents", "refhandbook", "site"}
     pages = next(a for a in s.apps if a.id == "site")
-    assert pages.pages == ("/", "/account/", "/agents/") and pages.public and not pages.audience and not pages.card
+    assert pages.pages == ("/", "/apps", "/settings", "/account/", "/agents/") and pages.public and not pages.card
+    # its files are public; each person's settings are in its store, behind the sign-in, for it alone
+    assert pages.audience == "site" and pages.storage
+    routes = {(r.match, r.path): r for r in pages.routes}
+    assert routes[("exact", "/apps")].page and routes[("exact", "/settings")].page  # /apps/<id>/ stay the apps'
+    assert routes[("prefix", "/apps/site/api/")].auth == "site" and routes[("prefix", "/apps/site/")].auth == "public"
+    assert all(a.icon for a in s.apps if a.card)
 
 
 def _blocks(out):

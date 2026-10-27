@@ -186,7 +186,8 @@ def create_app(settings: Settings | None = None, kerberos=None, signing_key=None
             return render(request, "sso_login.html", 401, next=nxt, current=None, error=msg, uid=raw_uid)
         request.session.clear()  # new session on sign-in
         request.session.update(uid=uid, login_at=time.time())
-        return redirect(nxt)
+        # signed in to no page in particular: the main page, which opens the person's start page if they chose one
+        return redirect(nxt if nxt != "/" else "/?start")
 
     @app.get(f"{SIGNIN}/logout")
     async def logout_page(request: Request):
@@ -242,8 +243,9 @@ def create_app(settings: Settings | None = None, kerberos=None, signing_key=None
         groups = await run_in_threadpool(nss_groups, uid) if uid else set()
         site = s.site()
 
-        def card(a):  # noqa: ANN001, ANN202
-            return {"id": a.id, "title": a.title, "description": a.description, "code": a.code,
+        def card(a):  # noqa: ANN001, ANN202 — `href`: where the app opens (its first link, or its menu's)
+            return {"id": a.id, "title": a.title, "description": a.description, "code": a.code, "icon": a.icon,
+                    "href": a.menu_href or (a.links[0].href if a.links else ""),
                     "links": [{"label": ln.label, "href": ln.href} for ln in a.links]}
         return JSONResponse({"uid": uid, "title": s.site_title, "signin": SIGNIN, "portal": facts().portal_root,
                              "cards": [card(a) for a in site.cards(groups)],

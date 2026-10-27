@@ -98,9 +98,12 @@ def test_the_frame_knows_who_and_what_they_may_see(tmp_path, key, monkeypatch):
     app = create_app(s, FakeKerberos(), key)
     anon = TestClient(app).get("/auth/api/v1/me").json()
     assert anon["uid"] is None and anon["title"] == "M00NNY.KR" and anon["cards"]
-    c, _ = sign_in(app, uid="moon", pw="moon-password-1")
+    c, r = sign_in(app, uid="moon", pw="moon-password-1")
+    assert r.headers["location"] == "/?start"  # to the main page, which opens their start page if they chose one
+    assert sign_in(app, uid="moon", pw="moon-password-1", nxt="/agents/")[1].headers["location"] == "/agents/"
     me = c.get("/auth/api/v1/me").json()
     account = next(x for x in me["cards"] if x["id"] == "account")
+    assert account["icon"] and account["href"] == "/account/"  # where it opens, for the app list
     assert me["uid"] == "moon" and "사용자 관리" in [ln["label"] for ln in account["links"]]
     c, _ = sign_in(app)
     account = next(x for x in c.get("/auth/api/v1/me").json()["cards"] if x["id"] == "account")

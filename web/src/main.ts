@@ -4,11 +4,14 @@
 
 import { frame, site } from './lib/api';
 import { h, replace } from './lib/dom';
+import { loadPrefs } from './lib/prefs';
 import { flash, header, main, message, pageHead, section, showPending } from './lib/ui';
 import * as account from './pages/account';
 import * as agents from './pages/agents';
 import { presets } from './pages/flows';
+import { apps } from './pages/apps';
 import { home } from './pages/home';
+import { settings } from './pages/settings';
 
 type Page = (...args: string[]) => Promise<void>;
 
@@ -16,6 +19,8 @@ function routes(): [RegExp, Page][] {
   const p = frame.portal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return [
     [/^\/$/, home],
+    [/^\/apps\/?$/, apps],
+    [/^\/settings\/?$/, settings],
     [new RegExp(`^${p}/?$`), account.mine],
     [new RegExp(`^${p}/admin/users/?$`), account.users],
     [new RegExp(`^${p}/admin/users/new/?$`), account.newUser],
@@ -58,6 +63,7 @@ async function start(): Promise<void> {
   } catch (e) {
     flash('error', message(e));
   }
+  await loadPrefs();
   header();
   window.addEventListener('popstate', () => void render());
   await render();
