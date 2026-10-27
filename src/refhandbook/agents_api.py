@@ -113,8 +113,19 @@ def agent_run(
 
                 p = Presets(t.g).get(preset)
                 proposal = {**p["attrs"]["grant"], "preset": preset}  # the user's own settings, for the form
-                goal = goal.strip() or fill(p["content"], dt.datetime.now())
+                now = dt.datetime.now()
+                flow = p["attrs"].get("flow")  # the preset's flow runs, its commands dated as a schedule's are
+                if flow:
+                    from .agents.flows import dated
+
+                    flow = dated(flow, now)
+                given = goal.strip() or fill(p["content"], now)
                 title = title or p["attrs"]["title"]
+                rid = t.request_run(given or title, actor="model", proposal=proposal, title=title)
+                t.g.update_node(rid, actor="kernel", attrs={"flow": flow, "preset": preset,
+                                                            **({} if given else {"no_input": True})})
+                return (f"run {rid} requested from preset {preset}. Nothing runs until the user approves it at "
+                        f"{approval_url(rid)}. Follow it with agent_run(action='status', run='{rid}').")
             if not goal.strip():
                 raise TeamError("request needs a goal")
             rid = t.request_run(goal, actor="model", proposal=proposal, title=title)

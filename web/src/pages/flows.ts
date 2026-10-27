@@ -1,32 +1,32 @@
-// The flow designer: a run drawn as blocks and arrows (agents/flows.py). A block is one agent: a key, a
+// Presets, each a flow: a run drawn as blocks and arrows (agents/flows.py). A block is one agent: a key, a
 // model on it and a command. An arrow is a next action with a name; when a block's agent finishes it
 // picks one of its arrows by name (one arrow: no choice; none: the flow ends there). Arrows may lead
 // back (a review that sends a draft back), up to a number of visits per block.
 //
 // Blocks move by dragging; an arrow is drawn from a block's right dot to another block (or added from
-// the block's panel); the background pans, the wheel zooms. A flow is kept as a preset, so this page
-// saves it, runs it and schedules it; the backend checks it and says what is wrong.
+// the block's panel); the background pans, the wheel zooms. Every preset is a flow (one block is the
+// simple case), so this one editor saves, runs and schedules them all; a past run opens here too
+// (?from=<run>), to start again as it was or changed. The backend checks a flow and says what is wrong.
 
 import { agents, Json } from '../lib/api';
 import { h, replace, svg, values } from '../lib/dom';
-import { act, empty, flash, flashNext, form, go, link, main, pageHead, section, tag } from '../lib/ui';
+import { act, buttonLink, empty, flash, flashNext, form, go, link, main, pageHead, section, tag, when } from '../lib/ui';
 import { grantForm, Key, keyLabel, modelPicker, Options } from './grant';
 import { cronHelp, scheduling } from './schedule';
+import { AGENT_TABS as TABS } from './tabs';
 
-export interface Step { id: string; title: string; key: string; model: string; command: string; x: number; y: number }
+export interface Step { id: string; title: string; key: string; model: string; command: string; team: boolean;
+                       x: number; y: number }
 export interface Edge { from: string; to: string; label: string }
 export interface Flow { steps: Step[]; edges: Edge[]; start: string; max_visits: number }
 
-const TABS = [{ href: '/agents/', label: '실행' }, { href: '/agents/flows', label: '순서도' },
-  { href: '/agents/presets', label: '프리셋 · 예약' }, { href: '/agents/keys', label: 'API 키' },
-  { href: '/agents/files', label: '파일' }, { href: '/approvals', label: '승인' }];
 const W = 220, H = 86, GAP_X = 340, GAP_Y = 140;
 
 /** A flow as kept (or as an earlier version kept it: a goal for a command, no key, unnamed arrows). */
 export function normalize(raw: Json): Flow {
   const steps: Step[] = (raw.steps ?? []).map((s: Json) => ({
     id: s.id, title: s.title ?? s.id, key: s.key ?? '', model: s.model ?? '', command: s.command ?? s.goal ?? '',
-    x: Number(s.x) || 0, y: Number(s.y) || 0 }));
+    team: !!s.team, x: Number(s.x) || 0, y: Number(s.y) || 0 }));
   return { steps, edges: (raw.edges ?? []).map((e: Json) => ({ from: e.from, to: e.to, label: e.label ?? '' })),
            start: raw.start ?? steps[0]?.id ?? '', max_visits: Number(raw.max_visits) || 3 };
 }
@@ -92,7 +92,7 @@ function blockShape(s: Step, opts: { selected?: boolean; start?: boolean; state?
                     transform: `translate(${s.x},${s.y})`, 'data-step': s.id },
     svg('rect', { width: W, height: H, rx: 10 }),
     svg('text', { x: 14, y: 26, class: 'flow-title' }, (opts.start ? '▶ ' : '') + clip(s.title || s.id, 20)),
-    svg('text', { x: 14, y: 48, class: 'flow-meta' }, s.model ? clip(s.model, 30) : '모델 없음'),
+    svg('text', { x: 14, y: 48, class: 'flow-meta' }, (s.team ? '팀 · ' : '') + (s.model ? clip(s.model, 28) : '모델 없음')),
     svg('text', { x: 14, y: 70, class: 'flow-goal' },
       st ? st.label : missing ? `${missing}을(를) 정하세요` : clip(s.command.replace(/\s+/g, ' '), 28)),
     svg('circle', { class: 'port in', cx: 0, cy: H / 2, r: 6, 'data-port': 'in' }),
@@ -170,38 +170,47 @@ export function flowProgress(run: Json): { states: Record<string, StepState>; ta
 
 // ── the list ────────────────────────────────────────────────────────────
 
-export async function flows(name?: string): Promise<void> {
+/** The presets: each a flow, run now (with an input) or on its schedules, or opened to change. */
+export async function presets(name?: string): Promise<void> {
   if (name) return editor(name === 'new' ? null : name);
-  const list = ((await agents.get('/presets')) as Json[]).filter(p => p.flow);
+  const [list, keys] = await Promise.all([agents.get('/presets') as Promise<Json[]>, agents.get('/keys') as Promise<Key[]>]);
+  const mine = new Set(keys.map(k => k.ref));
   replace(main(),
-    pageHead('순서도', '블럭마다 모델과 명령을 정하고, 끝난 뒤 어디로 갈지를 화살표로 잇습니다. 갈래가 여럿이면 그 블럭의 모델이 ' +
-      '결과를 보고 고릅니다. 순서도는 그대로 저장·실행·예약됩니다.', TABS),
-    section(`순서도 (${list.length})`,
-      h('div', { class: 'actions' }, link('/agents/flows/new', h('span', { class: 'button' }, '새 순서도'))),
-      list.length ? list.map(p => {
-        const f = normalize(p.flow);
-        const todo = f.steps.filter(lacks).length;
-        return h('div', { class: 'item' },
-          h('div', { class: 'item-head' }, link(`/agents/flows/${p.name}`, h('b', null, p.title)), h('code', null, p.name),
-            h('span', { class: 'muted small' }, `블럭 ${f.steps.length} · 화살표 ${f.edges.length}` +
-              (p.schedules.length ? ` · 예약 ${p.schedules.length}` : '')),
-            todo > 0 && tag(`블럭 ${todo}개 고칠 것`, 'warn')),
-          h('p', { class: 'small muted' }, f.steps.map(s => s.title).join(' → ')),
-          h('div', { class: 'actions' },
-            link(`/agents/flows/${p.name}`, h('span', { class: 'button secondary' }, '열기')),
-            h('button', { class: 'secondary', disabled: todo > 0, onclick: async (e: Event) => {
-              const r = await act(e.target as HTMLButtonElement, () => agents.post(`/presets/${encodeURIComponent(p.name)}/run`));
-              if (r) { flashNext('ok', '순서도대로 실행을 시작했습니다.'); go(`/agents/runs/${r.id}`); }
-            } }, '바로 실행')));
-      }) : empty('아직 순서도가 없습니다.')));
+    pageHead('프리셋', '자주 하는 실행을 순서도로 저장해 두고, 바로 실행하거나 예약합니다. 블럭 하나짜리가 가장 단순한 프리셋이고, ' +
+      '블럭을 이어 단계를 나누거나 결과에 따라 갈래를 둘 수 있습니다.', TABS),
+    section(`프리셋 (${list.length})`,
+      h('div', { class: 'actions' }, buttonLink('/agents/presets/new', '새 프리셋')),
+      list.length ? list.map(p => presetItem(p, mine)) : empty('아직 프리셋이 없습니다. 새 프리셋으로 블럭 하나부터 시작하세요.')));
+}
+
+/** One preset: what it runs, what it lacks, its schedules; run it with an input, or open it. */
+export function presetItem(p: Json, mine: Set<string>): HTMLElement {
+  const f = normalize(p.flow ?? {});
+  const todo = f.steps.filter(s => lacks(s) || !mine.has(s.key)).length;
+  const on = (p.schedules ?? []).filter((s: Json) => s.enabled);
+  const input = h('input', { name: 'input', placeholder: p.goal ? `입력 (비우면: ${clip(p.goal, 30)})` : '입력 (선택)' });
+  return h('div', { class: 'item' },
+    h('div', { class: 'item-head' }, link(`/agents/presets/${p.name}`, h('b', null, p.title)), h('code', null, p.name),
+      h('span', { class: 'muted small' }, f.steps.length === 1 ? `${f.steps[0].model}${f.steps[0].team ? ' · 팀' : ''}`
+        : `블럭 ${f.steps.length} · ${f.steps.map(s => s.title).join(' → ')}`),
+      on.length > 0 && tag(`예약 ${on.length} · 다음 ${when(Math.min(...on.map((s: Json) => s.next_at || Infinity)))}`, 'ok'),
+      todo > 0 && tag(`블럭 ${todo}개 고칠 것 (키·모델·명령)`, 'warn')),
+    form({ class: 'launch' }, async (_f, b) => {
+      const body = input.value.trim() ? { goal: input.value } : undefined;
+      const r = await act(b, () => body ? agents.post('/runs', { ...body, title: p.title, flow: p.flow, grant: p.grant })
+        : agents.post(`/presets/${encodeURIComponent(p.name)}/run`));
+      if (r) { flashNext('ok', `${p.title}: 실행을 시작했습니다.`); go(`/agents/runs/${r.id}`); }
+    }, input, h('button', { disabled: todo > 0 }, '실행'),
+      buttonLink(`/agents/presets/${p.name}`, '열기 · 예약', true)));
 }
 
 // ── the editor ──────────────────────────────────────────────────────────
 
-function starter(keys: Key[]): Flow {
+function starter(keys: Key[], example = false): Flow {
   const k = keys[0];
   const b = (id: string, title: string, command: string, x: number, y: number): Step =>
-    ({ id, title, key: k?.ref ?? '', model: k?.models[0] ?? '', command, x, y });
+    ({ id, title, key: k?.ref ?? '', model: k?.models[0] ?? '', command, team: false, x, y });
+  if (!example) return { steps: [b('s1', '실행', '', 40, 60)], edges: [], start: 's1', max_visits: 3 };
   return {
     steps: [b('s1', '작성', '입력에 맞는 초안을 쓴다.', 40, 60),
             b('s2', '검토', '받은 초안을 검토한다. 고칠 점이 있으면 무엇을 고칠지 적고 "고쳐"를, 충분하면 "통과"를 고른다.', 40 + GAP_X, 60),
@@ -212,13 +221,21 @@ function starter(keys: Key[]): Flow {
 }
 
 async function editor(name: string | null): Promise<void> {
-  const [keys, opts, presets] = await Promise.all([agents.get('/keys') as Promise<Key[]>, agents.get('/options') as Promise<Options>,
-    name ? agents.get('/presets') as Promise<Json[]> : Promise.resolve([])]);
-  const preset = name ? presets.find(p => p.name === name) : null;
-  if (name && !preset) throw new Error(`순서도 ${name}이(가) 없습니다.`);
-  const flow: Flow = preset?.flow ? normalize(preset.flow) : starter(keys);
+  const from = name ? null : new URLSearchParams(location.search).get('from');  // a past run, to start again
+  const [keys, opts, list, past] = await Promise.all([agents.get('/keys') as Promise<Key[]>, agents.get('/options') as Promise<Options>,
+    name ? agents.get('/presets') as Promise<Json[]> : Promise.resolve([]),
+    from ? agents.get(`/runs/${encodeURIComponent(from)}`) : Promise.resolve(null)]);
+  const preset = name ? list.find(p => p.name === name) : null;
+  if (name && !preset) throw new Error(`프리셋 ${name}이(가) 없습니다.`);
+  // what the page starts from: the preset, or a past run's recipe (always a flow), or one empty block
+  const recipe = past?.recipe;
+  const start = preset ? { flow: preset.flow, input: preset.goal, title: preset.title, grant: preset.grant }
+    : recipe ? { flow: recipe.flow, input: recipe.input, title: recipe.title.replace(/ · \d\d-\d\d \d\d:\d\d$/, ''), grant: recipe.grant }
+      : null;
+  let flow: Flow = start?.flow ? normalize(start.flow) : starter(keys);
+  if (recipe && !flow.steps.some(s => s.x || s.y)) arrange(flow);
   const byRef = new Map(keys.map(k => [k.ref, k]));
-  const gf = grantForm(keys, opts, preset?.grant, { routes: false });
+  const gf = grantForm(opts, start?.grant);
   let sel: { kind: 'step' | 'edge'; id: string } | null = null;
   let dirty = !preset;
   const view = { x: 0, y: 0, k: 1 };
@@ -321,6 +338,9 @@ async function editor(name: string | null): Promise<void> {
         : h('p', { class: 'flash error' }, '먼저 ', link('/agents/keys', 'API 키'), '를 등록하세요.'),
       k && field('모델', '이 키의 모델', modelPicker(k.models, s.model, m => {
         if (m !== s.model) { s.model = m; changed(); drawShapes(); } })),
+      h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: s.team, onchange: (e: Event) => {
+        s.team = (e.target as HTMLInputElement).checked; changed(); drawShapes(); } }), '팀으로 실행'),
+      h('p', { class: 'muted small' }, '켜면 이 블럭의 에이전트가 일을 나눠 하위 에이전트에게 맡기고 결과를 모읍니다.'),
       field('명령', '이 블럭이 할 일', h('textarea', { rows: 7, oninput: (e: Event) => {
         s.command = (e.target as HTMLTextAreaElement).value; changed(); drawShapes(); } }, s.command)),
       h('p', { class: 'muted small' }, s.id === flow.start
@@ -358,7 +378,7 @@ async function editor(name: string | null): Promise<void> {
     while (flow.steps.some(o => Math.abs(o.x - x) < W && Math.abs(o.y - y) < H + 10)) y += GAP_Y;
     const base = (at && byRef.get(at.key)) ?? keys[0];
     const s: Step = { id: `s${n}`, title: `블럭 ${n}`, key: at?.key || base?.ref || '', model: at?.model || base?.models[0] || '',
-                      command: '', x, y };
+                      command: '', team: false, x, y };
     flow.steps.push(s);
     if (!flow.start) flow.start = s.id;
     sel = { kind: 'step', id: s.id };
@@ -478,10 +498,16 @@ async function editor(name: string | null): Promise<void> {
     return null;
   }
 
-  async function save(b: HTMLButtonElement | null, f: HTMLFormElement, then: 'stay' | 'run'): Promise<void> {
+  async function save(b: HTMLButtonElement | null, f: HTMLFormElement, then: 'stay' | 'run' | 'once'): Promise<void> {
     const bad = problems();
     if (bad) { flash('error', bad); return; }
     const v = values(f);
+    if (then === 'once') {  // run as it is on the page, keeping nothing
+      const r = await act(b, () => agents.post('/runs', { goal: v.goal, title: v.title || (preset?.title ?? ''), grant: gf.grant(), flow }));
+      if (r) { flashNext('ok', '실행을 시작했습니다.'); go(`/agents/runs/${r.id}`); }
+      return;
+    }
+    if (!name && !String(v.name).trim()) { flash('error', '저장하려면 이름을 적으세요 (저장 없이 실행만 해도 됩니다).'); return; }
     const id = name ?? String(v.name);
     const body = { goal: v.goal, title: v.title, grant: gf.grant(), flow };
     const p = await act(b, () => agents.put(`/presets/${encodeURIComponent(id)}`, body), then === 'stay' && name ? '저장했습니다.' : undefined);
@@ -493,22 +519,25 @@ async function editor(name: string | null): Promise<void> {
       if (r) { flashNext('ok', '순서도대로 실행을 시작했습니다.'); go(`/agents/runs/${r.id}`); }
     } else if (!name) {
       flashNext('ok', '저장했습니다. 이제 바로 실행하거나 예약할 수 있습니다.');
-      go(`/agents/flows/${p.name}`);
+      go(`/agents/presets/${p.name}`);
     }
   }
 
   const visits = h('input', { type: 'number', min: 1, max: 20, value: flow.max_visits, class: 'short', oninput: () => {
     flow.max_visits = Math.max(1, Math.min(20, Math.round(Number(visits.value) || 3))); changed(); } });
-  const head = form({}, async (f, b) => save(b, f, (b?.value as 'stay' | 'run') ?? 'stay'),
+  const head = form({}, async (f, b) => save(b, f, (b?.value as 'stay' | 'run' | 'once') ?? 'stay'),
+    past && h('p', { class: 'flash ok' }, '실행 ', link(`/agents/runs/${past.id}`, past.title || past.id),
+      '의 설정을 불러왔습니다. 그대로 또는 고쳐서 실행하고, 이름을 적으면 프리셋으로 남깁니다.'),
     h('div', { class: 'cols' },
-      h('label', null, '이름 ', h('span', { class: 'muted small' }, '영문 소문자·숫자·.-_'),
-        h('input', { name: 'name', required: true, pattern: '[a-z0-9][a-z0-9._\\-]*', value: preset?.name ?? '', readonly: !!name })),
-      h('label', null, '제목', h('input', { name: 'title', value: preset?.title ?? '', oninput: changed }))),
-    h('label', null, '입력 ', h('span', { class: 'muted small' }, '실행마다 시작 블럭에 주는 내용 (없어도 됩니다). {date}·{time}은 실행한 때로 바뀝니다'),
-      h('textarea', { name: 'goal', rows: 2, oninput: changed }, preset?.goal ?? '')),
+      h('label', null, '이름 ', h('span', { class: 'muted small' }, name ? '' : '영문 소문자·숫자·.-_ (저장할 때만)'),
+        h('input', { name: 'name', pattern: '[a-z0-9][a-z0-9._\\-]*', value: preset?.name ?? '', readonly: !!name })),
+      h('label', null, '제목', h('input', { name: 'title', value: start?.title ?? '', oninput: changed }))),
+    h('label', null, '입력 ', h('span', { class: 'muted small' }, '실행마다 시작 블럭에 주는 내용 (없어도 됩니다). 입력과 명령의 {date}·{time}은 실행한 때로 바뀝니다'),
+      h('textarea', { name: 'goal', rows: 2, oninput: changed }, start?.input ?? '')),
     h('div', { class: 'actions' },
       h('button', { value: 'stay' }, '저장'),
       h('button', { value: 'run', class: 'secondary' }, '저장하고 실행'),
+      h('button', { value: 'once', class: 'secondary' }, '저장 없이 실행'),
       unsaved));
 
   const schedules = h('div');
@@ -520,8 +549,8 @@ async function editor(name: string | null): Promise<void> {
   }
 
   replace(main(),
-    pageHead(preset ? preset.title : '새 순서도', [link('/agents/flows', '순서도 목록'), ' · 블럭마다 키·모델·명령을 정하고, 끝난 뒤 ' +
-      '어디로 갈지를 다음 동작(화살표)으로 잇습니다.'], TABS),
+    pageHead(preset ? preset.title : past ? '지난 실행으로 새 실행' : '새 프리셋', [link('/agents/presets', '프리셋 목록'),
+      ' · 블럭마다 키·모델·명령을 정하고, 끝난 뒤 어디로 갈지를 다음 동작(화살표)으로 잇습니다.'], TABS),
     !keys.length && h('p', { class: 'flash error' }, '블럭에 쓸 API 키가 없습니다. ', link('/agents/keys', 'API 키를 먼저 등록'), '하세요.'),
     section('순서도', head),
     section('흐름',
@@ -529,6 +558,10 @@ async function editor(name: string | null): Promise<void> {
         h('button', { type: 'button', onclick: () => addStep() }, '블럭 추가'),
         h('button', { type: 'button', class: 'secondary', onclick: () => { arrange(flow); changed(); draw(); fit(); } }, '자동 정렬'),
         h('button', { type: 'button', class: 'secondary', onclick: () => fit() }, '전체 보기'),
+        !preset && !past && h('button', { type: 'button', class: 'secondary', onclick: () => {
+          if (flow.steps.some(s => s.command.trim()) && !confirm('지금 블럭을 지우고 작성·검토 예시로 바꿀까요?')) return;
+          flow = starter(keys, true); sel = null; changed(); draw(); fit();
+        } }, '예시: 작성 → 검토 반복'),
         h('label', { class: 'inline-field' }, '한 블럭 최대 반복 ', visits, h('span', { class: 'muted small' }, '회'))),
       h('div', { class: 'flow-editor' }, canvas, panel)),
     section('예약', schedules),

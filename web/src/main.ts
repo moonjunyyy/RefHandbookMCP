@@ -7,7 +7,7 @@ import { h, replace } from './lib/dom';
 import { flash, header, main, message, pageHead, section, showPending } from './lib/ui';
 import * as account from './pages/account';
 import * as agents from './pages/agents';
-import { flows } from './pages/flows';
+import { presets } from './pages/flows';
 import { home } from './pages/home';
 
 type Page = (...args: string[]) => Promise<void>;
@@ -24,8 +24,12 @@ function routes(): [RegExp, Page][] {
     [new RegExp(`^${p}/admin/invites/?$`), account.invites],
     [/^\/agents\/?$/, agents.runs],
     [/^\/agents\/runs\/([^/]+)\/?$/, agents.run],
-    [/^\/agents\/flows(?:\/([^/]+))?\/?$/, flows],
-    [/^\/agents\/presets\/?$/, agents.presets],
+    [/^\/agents\/presets(?:\/([^/]+))?\/?$/, presets],
+    // the flows were a page of their own before every preset was one
+    [/^\/agents\/flows(?:\/([^/]+))?\/?$/, async (name?: string) => {
+      history.replaceState(null, '', `/agents/presets${name ? '/' + name : ''}${location.search}`);
+      return presets(name);
+    }],
     [/^\/agents\/keys\/?$/, agents.keys],
     [/^\/agents\/files\/?$/, agents.files],
   ];

@@ -308,10 +308,12 @@ On the Claude API, requests to the models that take it carry the server-side ref
 
 ### Flows
 
-A run can follow a flow drawn on the pages (`/agents/flows`, `agents/flows.py`) instead of being led.
+Every preset, and every run started from the pages, is a flow drawn on the pages (`/agents/presets`,
+`agents/flows.py`); one block is the simple case.
 A block is one agent: a title, one of the user's keys, a model on it, and a command (what it is
 told to do). An arrow is a next action with a name ("고쳐", "통과"; unnamed, it is named for the
-block it leads to). One block is the start (the first, unless another is marked).
+block it leads to). One block is the start (the first, unless another is marked). A team block's agent
+leads (it may split its command among helpers it spawns); a plain one works alone.
 
 The run's root agent is then the crew's conductor, which calls no model. It opens the start block;
 when a block's agent finishes, it follows the arrow the agent chose, `finish(next=<name>)`. With one
@@ -327,6 +329,12 @@ The result is the last block's text after the path taken; the conductor keeps th
 the blocks' keys and models, so a flow needs no route table; the grant is raised to what it needs
 (the conductor and one block at once, a ticket per block run, depth 1). A flow is kept in a preset
 (`flow`), with an optional input (the goal), so it runs now or on a schedule as any preset does.
+
+A goal with a routing table (a preset or a run from before flows, or a run Claude asked for with
+routes) reads as a flow of one team block on the route that leads (`flows.from_grant`): presets are
+migrated so when the store is opened, and a run's `recipe` (to start it again) is always a flow.
+Claude asking for a run from a preset (`agent_run(preset=...)`) gets the preset's flow; its approval
+shows the blocks and sets only the limits. `{date}`/`{time}` fill in the input and the commands.
 
 ## 7. The sandbox: Linux primitives only
 

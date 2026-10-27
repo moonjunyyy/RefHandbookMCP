@@ -113,7 +113,7 @@ audience = "refhandbook"
 upstream = "@@upstream:handbook@@"
 menu = "에이전트"
 menu_href = "/agents/"
-link = [{ label = "에이전트 실행", href = "/agents/" }, { label = "프리셋 · 예약", href = "/agents/presets" },
+link = [{ label = "에이전트 실행", href = "/agents/" }, { label = "프리셋", href = "/agents/presets" },
         { label = "승인", href = "/approvals" }, { label = "API 키", href = "/agents/keys" }]
   [[app.route]]
   path = "/approvals"

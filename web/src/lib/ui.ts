@@ -123,6 +123,13 @@ export function link(href: string, ...children: Child[]): HTMLAnchorElement {
   } }, ...children);
 }
 
+/** A link inside the app that looks like a button (secondary: the outlined one). */
+export function buttonLink(href: string, text: string, secondary = false): HTMLAnchorElement {
+  const a = link(href, text);
+  a.className = secondary ? 'button secondary' : 'button';
+  return a;
+}
+
 export function tag(text: string, kind = ''): HTMLElement {
   return h('span', { class: `tag ${kind}`.trim() }, text);
 }

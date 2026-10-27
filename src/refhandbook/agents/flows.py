@@ -1,6 +1,8 @@
 """Flows: a run drawn as blocks and arrows (docs/agents.md "Flows").
 
 A block is one agent: a title, a key and model of the user's, and a command (what it is told to do).
+A team block's agent leads: it may split its command among helpers it spawns (any of the flow's models)
+and returns one result; a plain block does its command itself.
 An arrow from A to B is a next action, named (a label, e.g. "검토 필요", "완료"). When a block's agent
 finishes, it chooses which of its arrows to follow (finish(next=<label>)); with one arrow there is
 nothing to choose, with none the flow ends there. The block the arrow leads to gets the previous
@@ -9,10 +11,14 @@ block runs at most `max_visits` times in a run, and the flow stops when one woul
 
 A run with a flow is conducted, not led: its root agent is the crew's conductor, which never calls a
 model. The run's routing is the blocks' keys and models; the user sets only the limits and levels.
+
+Every preset is a flow; a goal with a routing table (a preset or run of before flows, or a run Claude
+asked for) reads as a flow of one team block (from_grant), so all of them open in the same editor.
 """
 
 from __future__ import annotations
 
+import datetime as dt
 import re
 from typing import Any
 
@@ -54,7 +60,7 @@ def check(flow: Any, keys: set[str] | None = None) -> dict[str, Any]:
         if not command:
             raise TeamError(f"block {title}: a command (what it is told to do)")
         steps.append({"id": sid, "title": title, "key": key, "model": model, "command": command[:8000],
-                      "x": _num(s.get("x")), "y": _num(s.get("y"))})
+                      "team": bool(s.get("team")), "x": _num(s.get("x")), "y": _num(s.get("y"))})
     titles = {s["id"]: s["title"] for s in steps}
     edges, seen = [], set()
     for e in edges_in if isinstance(edges_in, list) else []:
@@ -76,6 +82,36 @@ def check(flow: Any, keys: set[str] | None = None) -> dict[str, Any]:
     if not 1 <= visits <= MAX_VISITS:
         raise TeamError(f"max_visits: 1–{MAX_VISITS}")
     return {"steps": steps, "edges": edges, "start": start, "max_visits": visits}
+
+
+def fill(goal: str, at: dt.datetime) -> str:
+    """The goal with {date}, {time} and {datetime} filled in (only these: a goal is not a format string)."""
+    for k, v in (("{datetime}", at.strftime("%Y-%m-%d %H:%M")), ("{date}", at.strftime("%Y-%m-%d")),
+                 ("{time}", at.strftime("%H:%M"))):
+        goal = goal.replace(k, v)
+    return goal
+
+
+def dated(flow: dict[str, Any], at: dt.datetime) -> dict[str, Any]:
+    """The flow as it runs at `at`: each block's command with {date}, {time} and {datetime} filled in."""
+    return {**flow, "steps": [{**s, "command": fill(s.get("command", ""), at)} for s in flow["steps"]]}
+
+
+def from_grant(goal: str, grant: dict[str, Any] | None) -> dict[str, Any]:
+    """A goal and a routing table as a flow: one team block on the route that leads (the first route
+    serving the lead, else the first), told the goal. Not checked: a grant with no route gives a
+    block with no key or model, for the user to choose."""
+    routes = (grant or {}).get("routes") or []
+    lead = next((r for r in routes if "lead" in r.get("roles", []) or "*" in r.get("roles", [])),
+                routes[0] if routes else {})
+    return {"steps": [{"id": "main", "title": "실행", "key": lead.get("key", ""), "model": lead.get("model", ""),
+                       "command": goal.strip(), "team": True, "x": 40.0, "y": 60.0}],
+            "edges": [], "start": "main", "max_visits": 3}
+
+
+def limits(grant: dict[str, Any] | None) -> dict[str, Any]:
+    """A grant without its routing and its bookkeeping: what a flow's run is given besides its blocks."""
+    return {k: v for k, v in (grant or {}).items() if k not in ("routes", "run", "approved")}
 
 
 def _num(v: Any) -> float:

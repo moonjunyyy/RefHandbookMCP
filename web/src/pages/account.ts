@@ -3,7 +3,7 @@
 
 import { account, frame, Json } from '../lib/api';
 import { h, replace, values } from '../lib/dom';
-import { act, empty, flash, flashNext, form, go, link, main, pageHead, section, tag, when } from '../lib/ui';
+import { act, buttonLink, empty, flash, flashNext, form, go, link, main, pageHead, section, tag, when } from '../lib/ui';
 
 interface Me { user: Json; roles: string[]; may: Record<string, boolean>; shells: string[]; requests: boolean; invites: boolean }
 
@@ -83,7 +83,7 @@ export async function users(): Promise<void> {
       h('div', { class: 'actions' },
         form({ class: 'search' }, async f => { go(`${p}/admin/users?q=${encodeURIComponent(String(values(f).q))}`); },
           h('input', { name: 'q', value: q, placeholder: '이름, 사용자명, 이메일' }), h('button', { class: 'secondary' }, '찾기')),
-        m.may.create_user && link(`${p}/admin/users/new`, h('span', { class: 'button' }, '새 사용자'))),
+        m.may.create_user && buttonLink(`${p}/admin/users/new`, '새 사용자')),
       list.length ? h('div', { class: 'table-wrap' }, h('table', null,
         h('thead', null, h('tr', null, ['사용자명', '이름', '이메일', '그룹', '상태'].map(t => h('th', null, t)))),
         h('tbody', null, list.map(u => h('tr', null,

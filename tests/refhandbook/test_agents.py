@@ -613,7 +613,9 @@ def test_a_schedule_fires_its_preset_once_per_time_and_not_over_a_running_one(tm
     runs = ps.due(dt.datetime(2026, 10, 24, 9, 0, 5))
     assert len(runs) == 1
     r = ws.g.node(runs[0])
-    assert r["content"] == "report for 2026-10-24" and r["attrs"]["phase"] == "approved"
+    # a preset of before flows is a flow of one team block told its goal
+    assert r["attrs"]["flow"]["steps"][0]["command"] == "report for 2026-10-24" and r["attrs"]["flow"]["steps"][0]["team"]
+    assert r["attrs"]["phase"] == "approved" and r["attrs"]["no_input"]
     assert r["attrs"]["preset"] == "daily" and r["attrs"]["schedule"] == s["id"] and r["origin"] == "user"
     assert ps.due(dt.datetime(2026, 10, 24, 9, 0, 30)) == []  # once
     # the next day, the first run still going: skipped, and said so
@@ -671,20 +673,31 @@ def test_a_run_the_model_asked_for_is_approved_on_the_approval_page(client, keye
     out = agents_api.agent_run("request", preset="weekly")
     asked = re.search(r"run (run:[0-9a-f]+)", out).group(1)
     assert f"/approvals/runs/{asked}" in out
+    # from a preset: its flow runs (the preset of before flows: one team block told its goal); the page
+    # shows the blocks, and the user sets the limits only
     page = c.get(f"/approvals/runs/{asked}", headers=tok).text
-    assert "summarize the week" in page and page.count("name=route") >= 6 * 5  # six routes drawn, not four
+    assert "summarize the week" in page and "name=route" not in page and "순서도" in page
+    limits = {"max_agents": "2", "max_spawns": "4", "max_depth": "1", "max_steps": "10", "max_tokens": "0",
+              "context": "trim", "handoff": "digest", "retention": "verified", "policy": "default", "effort": ""}
+    r = c.post(f"/approvals/runs/{asked}/approve", data={"csrf": _csrf(page), **limits}, headers=tok,
+               follow_redirects=False)
+    assert r.headers["location"].startswith(f"/agents/runs/{asked}")
+    t = Team(ws.g)
+    assert [(x["key"], x["model"]) for x in t.grant(asked)["routes"]] == [("anthropic/main", "claude-opus-5-5")]
+    assert t.g.node(asked)["attrs"]["flow"]["steps"][0]["team"]
+    # asked for with routes of its own: as many rows as it suggests, each key with its own models
+    asked = t.request_run("survey it", actor="model", proposal={"routes": routes})
+    page = c.get(f"/approvals/runs/{asked}", headers=tok).text
+    assert page.count("name=route") >= 6 * 5  # six routes drawn, not four
     assert "list='models-custom/gpu'" in page and "<datalist id='models-custom/gpu'><option value='qwen3'>" in page
     f = {"csrf": _csrf(page), "route0_key": "anthropic/main", "route0_model": "claude-opus-5-5", "route0_lead": "on",
          **{k: v for i in range(1, 6) for k, v in ((f"route{i}_key", "custom/gpu"), (f"route{i}_model", "qwen3"),
-                                                     (f"route{i}_worker", "on"))},
-         "max_agents": "2", "max_spawns": "4", "max_depth": "1", "max_steps": "10", "max_tokens": "0",
-         "context": "trim", "handoff": "digest", "retention": "verified", "policy": "default", "effort": ""}
+                                                     (f"route{i}_worker", "on"))}, **limits}
     r = c.post(f"/approvals/runs/{asked}/approve", data={**f, "max_steps": "0", "max_agents": "3.0"}, headers=tok)
     assert r.status_code == 400 and "max_steps" in r.text  # refused, and the form as it was filled in:
     assert page.count("name=route") <= r.text.count("name=route") and "value='3.0'" in r.text
     r = c.post(f"/approvals/runs/{asked}/approve", data=f, headers=tok, follow_redirects=False)
     assert r.headers["location"].startswith(f"/agents/runs/{asked}")
-    t = Team(ws.g)
     assert len(t.grant(asked)["routes"]) == 6 and t.g.node(asked)["attrs"]["phase"] == "approved"
     # approved: nothing to approve any more, the page sends to the run's own
     r = c.get(f"/approvals/runs/{asked}", headers=tok, follow_redirects=False)

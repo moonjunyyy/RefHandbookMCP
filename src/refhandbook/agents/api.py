@@ -119,23 +119,24 @@ def install(m: Any, *, stores: Callable[[str], Handbook], who: Callable[[Request
         ws = Workspace(stores(uid))
         return ws, Team(ws.g), Presets(ws.g, crew.schedules_marker(ws))
 
-    def grant_of(data: dict[str, Any], uid: str) -> dict[str, Any]:
-        """The grant from a request, its keys checked to be the user's (check_grant does the rest). With
-        a flow, the keys are its blocks' (its routing comes from them)."""
-        g = data.get("grant") or ({} if data.get("flow") is not None else None)
+    def grant_of(data: dict[str, Any], uid: str) -> tuple[dict[str, Any], dict[str, Any], str]:
+        """What a run or preset is given, from a request: the limits, the flow (its blocks' keys checked
+        to be the user's) and the input. A goal with a routing table, as before flows, reads as a flow
+        of one team block told that goal (flows.from_grant), with no input."""
+        g = data.get("grant") or {}
         if not isinstance(g, dict):
-            raise bad("grant: an object (routes, limits, levels, policy, effort)")
+            raise bad("grant: an object (limits, levels, policy, effort)")
+        flow, given = data.get("flow"), str(data.get("goal", ""))
+        if flow is None:
+            if not given.strip():
+                raise bad("a goal, or a flow")
+            flow, given = flows.from_grant(given, g), ""
         mine = {k.ref for k in keystore().list(uid)}
-        if data.get("flow") is not None:
-            try:
-                flows.check(data["flow"], mine)
-            except TeamError as e:
-                raise bad(str(e)) from e
-            return {k: v for k, v in g.items() if k != "routes"}
-        for i, r in enumerate(g.get("routes") or []):
-            if not isinstance(r, dict) or r.get("key") not in mine:
-                raise bad(f"route {i + 1}: a key you registered")
-        return g
+        try:
+            flow = flows.check(flow, mine)
+        except TeamError as e:
+            raise bad(str(e)) from e
+        return flows.limits(g), flow, given
 
     def approve_url(run: str) -> str:
         return f"/approvals/runs/{run}"
@@ -160,7 +161,17 @@ def install(m: Any, *, stores: Callable[[str], Handbook], who: Callable[[Request
     @route("/keys", ["GET"])
     async def keys_list(request: Request) -> Any:
         uid = user(request)
-        return [_key(k) for k in await anyio.to_thread.run_sync(lambda: keystore().list(uid))]
+
+        def get() -> Any:
+            _, _, ps = space(uid)
+            used: dict[str, list[str]] = {}
+            for p in ps.list():
+                for st in (p["attrs"].get("flow") or {}).get("steps", []):
+                    names = used.setdefault(st.get("key", ""), [])
+                    if p["attrs"]["name"] not in names:
+                        names.append(p["attrs"]["name"])
+            return [{**_key(k), "used_by": used.get(k.ref, [])} for k in keystore().list(uid)]
+        return await locked(get)
 
     @route("/keys", ["POST"])
     async def keys_add(request: Request) -> Any:
@@ -208,14 +219,13 @@ def install(m: Any, *, stores: Callable[[str], Handbook], who: Callable[[Request
     async def runs_start(request: Request) -> Any:
         uid = user(request)
         d = await body(request)
-        grant = grant_of(d, uid)
+        grant, flow, given = grant_of(d, uid)
 
         def act() -> Any:
             ws, t, ps = space(uid)
             if str(d.get("save_as", "")).strip():
-                ps.save(str(d["save_as"]), str(d.get("goal", "")), grant, title=str(d.get("title", "")),
-                        flow=d.get("flow"))
-            run = t.begin(str(d.get("goal", "")), grant, title=str(d.get("title", "")).strip(), flow=d.get("flow"))
+                ps.save(str(d["save_as"]), given, grant, title=str(d.get("title", "")), flow=flow)
+            run = t.begin(given, grant, title=str(d.get("title", "")).strip(), flow=flow)
             crew.mark(ws, run)
             return _run_summary(t, t.g.node(run))
         return answer(await locked(act), 201)
@@ -236,7 +246,12 @@ def install(m: Any, *, stores: Callable[[str], Handbook], who: Callable[[Request
             res = t.result(run)
             root = t.root(run)
             ra = t.g.node(root)["attrs"] if root else {}
-            return {**_run_summary(t, r), "goal": r["content"], "input": "" if a.get("no_input") else r["content"],
+            given = "" if a.get("no_input") else r["content"]
+            # what it was started with, to start it again or keep as a preset, always as a flow
+            recipe = ({"input": given, "flow": a["flow"]} if a.get("flow")
+                      else {"input": "", "flow": flows.from_grant(r["content"], grant or a.get("proposal"))})
+            recipe.update(title=a.get("title", ""), grant=flows.limits(grant))
+            return {**_run_summary(t, r), "goal": r["content"], "input": given, "recipe": recipe,
                     "error": a.get("error"), "grant": grant,
                     "flow": a.get("flow"), "flow_path": ra.get("flow_path") or [], "flow_end": ra.get("flow_end"),
                     "proposal": a.get("proposal") if a.get("phase") == "requested" else None,
@@ -275,12 +290,11 @@ def install(m: Any, *, stores: Callable[[str], Handbook], who: Callable[[Request
     async def preset_put(request: Request) -> Any:
         uid = user(request)
         d = await body(request)
-        grant = grant_of(d, uid)
+        grant, flow, given = grant_of(d, uid)
 
         def act() -> Any:
             _, _, ps = space(uid)
-            p = ps.save(request.path_params["name"], str(d.get("goal", "")), grant, title=str(d.get("title", "")),
-                        flow=d.get("flow"))
+            p = ps.save(request.path_params["name"], given, grant, title=str(d.get("title", "")), flow=flow)
             return _preset(p, ps.schedules())
         return await locked(act)
 

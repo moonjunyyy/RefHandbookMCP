@@ -127,7 +127,12 @@ class Team:
             raise TeamError(f"{run} is not an open run")
         if _attr(r, "phase") != "requested":
             raise TeamError(f"{run} is {_attr(r, 'phase')}, not awaiting approval")
-        cfg = check_grant(grant)
+        if _attr(r, "flow"):  # asked for from a preset: its blocks' keys and models are the routing
+            from . import flows
+
+            cfg = flows.fit(flows.limits(grant), _attr(r, "flow"))
+        else:
+            cfg = check_grant(grant)
         g = f"{run}:grant"
         with self.g.tx():
             self.g.put_node(g, "grant", actor="user", attrs={**cfg, "run": run, "approved": _now()})
@@ -141,14 +146,18 @@ class Team:
         return cfg
 
     def begin(self, goal: str, grant: dict[str, Any], *, title: str = "", flow: dict[str, Any] | None = None,
-              actor: str = "user", **attrs: Any) -> str:
+              at: Any = None, actor: str = "user", **attrs: Any) -> str:
         """Open a run and approve it at once, as the user (a run the user starts: the pages, a preset, a
         schedule). With a flow (agents/flows.py) the run is conducted along it: its routing is the
         blocks' keys and models, and the grant is raised to what the flow needs."""
         from . import flows
 
         if flow is not None:
-            flow = flows.check(flow)
+            import datetime as dt
+
+            # the input and the commands say when it ran ({date}, {time}, {datetime})
+            at = at or dt.datetime.now()
+            flow, goal = flows.dated(flows.check(flow), at), flows.fill(goal, at)
             cfg = flows.fit(grant, flow)
             if not goal.strip():  # a flow's input may be none: the run is named, and says it had none
                 goal, attrs = title.strip() or flow["steps"][0]["title"], {**attrs, "no_input": True}

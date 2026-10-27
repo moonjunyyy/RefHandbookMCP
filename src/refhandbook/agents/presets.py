@@ -11,7 +11,7 @@ started is still going (that firing is recorded as skipped), and after a stop it
 per missed time. The store has a marker, <db>.sandbox/schedules, while any schedule is enabled, so the
 runner opens the store without one being asked for.
 
-A goal may name {date}, {time} and {datetime}: a scheduled run's goal says when it ran.
+An input or a block's command may name {date}, {time} and {datetime}: a scheduled run says when it ran.
 """
 
 from __future__ import annotations
@@ -24,7 +24,8 @@ from typing import Any
 
 from ..kernel.graph import Graph
 from . import cron, flows, package
-from .team import Team, TeamError, check_grant
+from .flows import fill  # noqa: F401 — the tools' import
+from .team import Team, TeamError
 
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,47}$")
 U = "user"
@@ -34,20 +35,28 @@ def _now() -> float:
     return round(time.time(), 3)
 
 
-def fill(goal: str, at: dt.datetime) -> str:
-    """The goal with {date}, {time} and {datetime} filled in (only these: a goal is not a format string)."""
-    for k, v in (("{datetime}", at.strftime("%Y-%m-%d %H:%M")), ("{date}", at.strftime("%Y-%m-%d")),
-                 ("{time}", at.strftime("%H:%M"))):
-        goal = goal.replace(k, v)
-    return goal
-
-
 class Presets:
     def __init__(self, g: Graph, marker: Any = None):
         """`marker`: the schedules marker file (a Path); kept present while a schedule is enabled."""
         self.g = g
         self.marker = marker
         package.install(g)
+        self._migrate()
+
+    def _migrate(self) -> None:
+        """A preset kept before flows (a goal and a routing table) becomes a flow of one team block told
+        that goal, so every preset opens in the flow editor and runs the same way."""
+        for p in self.list():
+            a = p["attrs"]
+            if a.get("flow"):
+                continue
+            flow = flows.from_grant(p["content"], a.get("grant"))
+            try:
+                flow = flows.check(flow)
+                grant = flows.fit(a.get("grant") or {}, flow)
+            except TeamError:
+                grant = a.get("grant")  # no usable route: the editor shows the block to finish
+            self.g.update_node(p["id"], actor=U, content="", attrs={"flow": flow, "grant": grant})
 
     # ── presets ──────────────────────────────────────────────────────────
 
@@ -60,13 +69,12 @@ class Presets:
         name = name.strip().lower()
         if not NAME_RE.match(name):
             raise TeamError("preset name: lowercase letters, digits, . _ - (up to 48)")
-        if flow is not None:
-            flow = flows.check(flow)
-            cfg = flows.fit(grant, flow)
-        elif not goal.strip():
-            raise TeamError("a preset needs a goal")
-        else:
-            cfg = check_grant(grant)
+        if flow is None:  # a goal and a routing table: one team block told the goal, with no input
+            if not goal.strip():
+                raise TeamError("a preset needs a goal")
+            flow, goal = flows.from_grant(goal, grant), ""
+        flow = flows.check(flow)
+        cfg = flows.fit(grant, flow)
         nid = f"preset:{name}"
         attrs = {"name": name, "title": title.strip() or (goal.strip() or name).splitlines()[0][:80], "grant": cfg,
                  "flow": flow, "saved": _now()}
@@ -105,7 +113,7 @@ class Presets:
         at = at or dt.datetime.now()
         a = p["attrs"]
         return Team(self.g).begin(fill(p["content"], at), a["grant"], title=f"{a['title']} · {at:%m-%d %H:%M}",
-                                  flow=a.get("flow"), actor=U, preset=name, **attrs)
+                                  flow=a.get("flow"), at=at, actor=U, preset=name, **attrs)
 
     # ── schedules ────────────────────────────────────────────────────────
 

@@ -243,3 +243,6 @@ input.short { width: 5em; }
   table.routes tbody tr:hover td { background: none; }
   table.routes td.row-tools { text-align: right; }
 }
+/* a preset run from a list: its input, then its buttons, on one row (wrapping on a narrow screen) */
+form.launch { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; }
+form.launch input { flex: 1 1 240px; width: auto; margin: 0; }

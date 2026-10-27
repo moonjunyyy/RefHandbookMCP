@@ -90,13 +90,16 @@ def test_a_run_takes_as_many_routes_as_it_needs(api, cfg):
     assert r.json()["phase"] == "approved"
     assert (cfg.data_dir / "users" / "moon.db.sandbox" / "runs" / run.split(":")[1]).exists()  # the runner's marker
     d = call(api, "GET", f"/runs/{run}").json()
-    assert len(d["grant"]["routes"]) == 6 and d["goal"] == "survey" and d["approve_url"] is None
+    # a goal with a routing table, as before flows: one team block on the route that leads
+    assert d["flow"]["steps"][0]["command"] == "survey" and d["flow"]["steps"][0]["team"]
+    assert d["grant"]["routes"][0]["model"] == "claude-opus-5-5" and d["approve_url"] is None
+    assert d["recipe"]["flow"] == d["flow"] and d["recipe"]["input"] == "" and "routes" not in d["recipe"]["grant"]
     assert [x["id"] for x in call(api, "GET", "/runs").json()] == [run]
     assert [p["name"] for p in call(api, "GET", "/presets").json()] == ["survey"]  # kept as a preset too
     r = call(api, "POST", "/runs", {"goal": "x", "grant": grant(("openai/theirs", "gpt", ["lead"]))})
-    assert r.status_code == 400 and "a key you registered" in r.json()["error"]["message"]
-    r = call(api, "POST", "/runs", {"goal": "x", "grant": grant(*[routes[0]] * 17)})
-    assert r.status_code == 400 and "at most 16 routes" in r.json()["error"]["message"]
+    assert r.status_code == 400 and "not a key you registered" in r.json()["error"]["message"]
+    keys = {k["ref"]: k["used_by"] for k in call(api, "GET", "/keys").json()}
+    assert keys == {"anthropic/main": ["survey"], "custom/gpu": []}  # which presets a key would take with it
     assert call(api, "GET", f"/runs/{run}", uid="kim").status_code == 404  # another's store
     assert call(api, "POST", f"/runs/{run}/cancel").json()["id"] == run
     t = Team(Workspace(server._user_store("moon")).g)
@@ -151,7 +154,7 @@ def test_a_flow_preset_and_a_flow_run(api):
     assert r.status_code == 200, r.text
     p = r.json()
     assert p["flow"]["steps"][0] == {"id": "plan", "title": "계획", "key": "anthropic/main",
-                                     "model": "claude-opus-5-5", "command": "plan it", "x": 10.0, "y": 20.0}
+                                     "model": "claude-opus-5-5", "command": "plan it", "team": False, "x": 10.0, "y": 20.0}
     assert p["flow"]["start"] == "plan" and p["flow"]["max_visits"] == 3
     assert [(x["key"], x["model"]) for x in p["grant"]["routes"]] == [("anthropic/main", "claude-opus-5-5"),
                                                                        ("custom/gpu", "qwen3-32b")]

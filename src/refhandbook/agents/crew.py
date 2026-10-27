@@ -458,7 +458,7 @@ class Crew:
                      f"{before['text']}")
         choices = [{"label": e["label"], "to": flows.step(flow, e["to"])["title"]} for e in flows.outs(flow, sid)]
         try:
-            child = t.open_agent(run, role="worker", goal=goal, parent=aid, model=s["model"], key=s["key"],
+            child = t.open_agent(run, role="lead" if s.get("team") else "worker", goal=goal, parent=aid, model=s["model"], key=s["key"],
                                  give=(before or {}).get("give") or [], actor=K, variant=s["title"])
         except ScopeRefused:
             # no slot just now (the block before is still releasing its own): the next look tries again
@@ -494,7 +494,9 @@ class Crew:
                 outcome = "partial"
         for p in t.inbox(aid):  # anything else addressed to the conductor
             t.read(aid, p["id"])
-        head = "Path: " + (" → ".join(names) or "(none)") + (f"\nStopped: {why}" if why else "")
+        # one block that ran once and ended as drawn: its text is the result, nothing to add
+        head = "" if len(path) == 1 and not why else \
+            "Path: " + (" → ".join(names) or "(none)") + (f"\nStopped: {why}" if why else "")
         t.update_agent(aid, flow_path=path, flow_end=why or "end")
         t.finish(aid, outcome, f"{head}\n\n{text}".strip(), list(dict.fromkeys(refs)), actor=K)
         return True

@@ -55,7 +55,7 @@ def _flash(q: Any) -> str:
 
 
 def nav(here: str) -> str:
-    links = (("/approvals", "승인 · 샌드박스"), ("/agents/", "에이전트 실행"), ("/agents/presets", "프리셋 · 예약"),
+    links = (("/approvals", "승인 · 샌드박스"), ("/agents/", "에이전트 실행"), ("/agents/presets", "프리셋"),
              ("/agents/files", "파일"), ("/agents/keys", "API 키"))
     return "<nav class='chips'>" + "".join(
         f"<a class='chip{' warn' if href == here else ''}' href='{href}'>{label}</a>" for href, label in links) + "</nav>"
@@ -111,9 +111,11 @@ def _routes_prefill(keys: list[KeyInfo], proposal: dict[str, Any]) -> list[dict[
 
 def grant_form(action: str, keys: list[KeyInfo], policies: list[str], hidden: str, *, goal: bool,
                proposal: dict[str, Any] | None = None, submit: str = "승인하고 시작", reject: str = "",
-               values: dict[str, str] | None = None, head: str = "", buttons: str = "") -> str:
+               values: dict[str, str] | None = None, head: str = "", buttons: str = "",
+               flow: dict[str, Any] | None = None) -> str:
     """The grant form. `reject` is an action the same form can post to instead (its token rides along);
-    `values` fill the goal and title, `head` goes first (a preset's name), `buttons` after the submit."""
+    `values` fill the goal and title, `head` goes first (a preset's name), `buttons` after the submit.
+    With a `flow` (a run asked for from a preset), its blocks are the routing: shown, not chosen."""
     proposal = proposal or {}
     values = values or {}
     if not keys:
@@ -145,9 +147,10 @@ def grant_form(action: str, keys: list[KeyInfo], policies: list[str], hidden: st
                f"<textarea name=goal rows=4 required>{_e(values.get('goal', ''))}</textarea></label>"
                f"<label>제목 <input name=title value='{_e(values.get('title', ''))}'></label>"
                if goal else "")
-            + "<h3>라우팅</h3><p class='muted small'>역할마다 위에서부터 첫 경로로 시작하고, 키가 거부되거나 제공자가 "
-              "계속 실패하면 같은 역할의 다음 경로로 넘어갑니다. 워커에는 싼 모델을 두면 비용이 줄어듭니다.</p>"
-            + routes
+            + (_blocks(flow) if flow else
+               "<h3>라우팅</h3><p class='muted small'>역할마다 위에서부터 첫 경로로 시작하고, 키가 거부되거나 제공자가 "
+               "계속 실패하면 같은 역할의 다음 경로로 넘어갑니다. 워커에는 싼 모델을 두면 비용이 줄어듭니다.</p>"
+               + routes)
             + f"<h3>한도</h3><div class='fields'>{limits}</div>"
             + "<h3>정리 · 실행 환경</h3><div class='fields'>"
             + f"<label>문맥 {levels('context', CONTEXT_LEVELS)}</label>"
@@ -158,6 +161,15 @@ def grant_form(action: str, keys: list[KeyInfo], policies: list[str], hidden: st
             + f"</div><div class='actions'><button>{submit}</button>{buttons}"
             + (f"<button class=secondary formaction='{_e(reject)}' formnovalidate>거절</button>" if reject else "")
             + "</div></form>")
+
+
+def _blocks(flow: dict[str, Any]) -> str:
+    """A preset's flow on the approval page: each block's key, model and command, in the order drawn."""
+    items = "".join(f"<li><b>{_e(s['title'])}</b> <span class='muted small'>{_e(s['key'])} · {_e(s['model'])}"
+                    f"{' · 팀' if s.get('team') else ''}</span><div class='small'>{_e(s['command'][:300])}</div></li>"
+                    for s in flow.get("steps", []))
+    return ("<h3>순서도</h3><p class='muted small'>프리셋의 순서도대로 실행합니다. 블럭의 키·모델은 "
+            f"<a href='/agents/presets'>프리셋</a>에서 고칩니다.</p><ol>{items}</ol>")
 
 
 def parse_grant(f: dict[str, str], keys: list[KeyInfo]) -> dict[str, Any]:
@@ -246,7 +258,7 @@ def run_page(uid: str, t: Team, run: str, keys: list[KeyInfo], policies: list[st
         out.append("<section class='card section'><h2>승인</h2><p class='muted small'>모델이 제안한 값으로 채워져 "
                    "있습니다. 키·모델·한도를 정해 승인하면 시작합니다.</p>"
                    + (grant_form(f"/approvals/runs/{run}/approve", keys, policies, hidden, goal=False, proposal=sugg,
-                                 reject=f"/approvals/runs/{run}/reject") if keys
+                                 reject=f"/approvals/runs/{run}/reject", flow=a.get("flow")) if keys
                       else grant_form("", keys, policies, hidden, goal=False)
                       + f"<div class='actions'>{cancel.replace('{label}', '거절')}</div>")
                    + "</section>")
