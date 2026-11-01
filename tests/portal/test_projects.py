@@ -140,6 +140,27 @@ def test_settings_archiving_and_the_admin(env):
     assert api(a, s, "POST", f"{P}/paper/restore").status_code == 400
 
 
+def test_an_owner_deletes_a_project_after_typing_its_name(env):
+    s, d, k, ka, app, tmp = env
+    a, _ = login(app, "alice", "alice-password-1")
+    h, _ = login(app, "helen", "helen-password-1")
+    gid = create(a, s, "gone", join_policy="open").json()["gid"]
+    api(h, s, "POST", f"{P}/gone/join")
+    assert api(h, s, "DELETE", f"{P}/gone?confirm=gone").status_code == 403  # a member, not an owner
+    assert api(a, s, "DELETE", f"{P}/gone?confirm=gon").status_code == 400  # the name, typed again
+    assert api(a, s, "DELETE", f"{P}/gone?confirm=gone").json() == {"deleted": "gone"}
+    assert "gone" not in d.projects and api(a, s, "GET", f"{P}/gone").status_code == 403
+    assert api(h, s, "GET", P).json()["projects"] == []
+    assert '"project_delete"' in (tmp / "audit.log").read_text()
+    # the name is free again, the gid is not: files left with it stay with no one
+    assert create(a, s, "gone").json()["gid"] == gid + 1
+    # an archived project can be deleted too, and the admin may delete any
+    create(a, s, "old")
+    api(a, s, "POST", f"{P}/old/archive")
+    m, _ = login(app, "moon", "moon-password-1")
+    assert api(m, s, "DELETE", f"{P}/old?confirm=old").json() == {"deleted": "old"}
+
+
 def test_only_admins_make_projects_when_the_site_says_so(tmp_path):
     from dataclasses import replace
 

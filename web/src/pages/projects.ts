@@ -163,7 +163,19 @@ export async function project(cn: string): Promise<void> {
           may.restore && h('button', { onclick: async (e: Event) => {
             if (await act(e.target as HTMLButtonElement, () => api().post(`${path}/restore`), t('되살렸습니다.'))) reload();
           } }, t('되살리기'))),
-        h('p', { class: 'muted small' }, t('보관하면 그룹과 구성원은 그대로 남고(파일은 그대로 읽힙니다), 바꾸거나 들어올 수는 없습니다. 지우는 일은 없습니다.')))),
+        h('p', { class: 'muted small' }, t('보관하면 그룹과 구성원은 그대로 남고(파일은 그대로 읽힙니다), 바꾸거나 들어올 수는 없습니다.')),
+        may.delete && h('details', { class: 'panel' }, h('summary', null, h('span', { class: 'danger-text' }, t('프로젝트 삭제…'))),
+          form({}, async (f, b) => {
+            const c = String(values(f).confirm);
+            if (await act(b, () => api().del(`${path}?confirm=${encodeURIComponent(c)}`))) {
+              flashNext('ok', t('{cn}을(를) 지웠습니다. 그 프로젝트의 파일은 그대로입니다.', { cn }));
+              go(P);
+            }
+          },
+            h('p', { class: 'muted small' }, t('그룹과 모든 구성원 소속, 신청과 초대 링크를 지웁니다. 되돌릴 수 없습니다. 파일은 그대로 남습니다.')),
+            h('label', null, t('확인하려면 이름을 입력하세요:'), ' ', h('code', null, cn),
+              h('input', { name: 'confirm', autocomplete: 'off', required: true, pattern: cn })),
+            h('div', { class: 'actions' }, h('button', { class: 'danger' }, t('{cn} 삭제', { cn }))))))),
     h('p', null, link(P, t('프로젝트 목록으로'))));
 }
 

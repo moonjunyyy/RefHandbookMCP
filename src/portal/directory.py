@@ -264,9 +264,10 @@ class Directory:
                 return []
             return sorted(_first(e.entry_attributes_as_dict, "cn") for e in conn.entries)
 
-    def _next_gid(self, conn) -> int:
-        """Smallest free gidNumber in the projects' range (the users' private groups have theirs: uid = gid)."""
-        used: set[int] = set()
+    def _next_gid(self, conn, spent: set[int]) -> int:
+        """Smallest free gidNumber in the projects' range (the users' private groups have theirs: uid = gid),
+        never one `spent` by a deleted project (the portal remembers those: files keep their gid)."""
+        used: set[int] = set(spent)
         for r in conn.extend.standard.paged_search(self.s.base_dn, "(objectClass=posixGroup)", SUBTREE,
                                                    attributes=["gidNumber"], paged_size=500, generator=True):
             if r.get("type") == "searchResEntry" and _first(r["attributes"], "gidNumber", None) is not None:
@@ -276,7 +277,7 @@ class Directory:
                 return n
         raise DirectoryError("No free gidNumber left in the projects' range.")
 
-    def create_project(self, cn: str, description: str, members: list[str]) -> Project:
+    def create_project(self, cn: str, description: str, members: list[str], spent: set[int] = frozenset()) -> Project:
         """The group, with its first members. The name must be free among users and groups alike:
         it names the share and the path too."""
         with self._id_lock, self._conn() as conn:
@@ -285,7 +286,7 @@ class Directory:
                         attributes=[NO_ATTRIBUTES])
             if any(r.get("type") == "searchResEntry" for r in conn.response):
                 raise DirectoryError(f"'{cn}' already exists (as a user or group).")
-            attrs: dict = {"cn": cn, "gidNumber": self._next_gid(conn), "memberUid": list(members)}
+            attrs: dict = {"cn": cn, "gidNumber": self._next_gid(conn, set(spent)), "memberUid": list(members)}
             if description:
                 attrs["description"] = description
             try:
@@ -296,7 +297,7 @@ class Directory:
         return self.get_project(cn)
 
     def delete_project(self, cn: str) -> None:
-        """Only to undo a creation that failed halfway (a project is archived, never deleted)."""
+        """The group goes, and with it every membership; files it owned keep its gid."""
         with self._conn() as conn:
             try:
                 conn.delete(self.s.project_dn(cn))

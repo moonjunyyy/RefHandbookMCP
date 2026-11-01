@@ -8,6 +8,7 @@ is the site sign-in's token, as for the account API; `may` in each answer is wha
     POST   projects/join                     {token} → view                         (an invitation link)
     GET    projects/{cn}                     view, with requests and invites for one who manages it
     PATCH  projects/{cn}                     {title, description, join_policy, listed}
+    DELETE projects/{cn}?confirm={cn}        for good: the group, the record, the links → {deleted}
     POST   projects/{cn}/join                {note} → view   (open: in; request: waiting; invite: refused)
     POST   projects/{cn}/withdraw            take a waiting request back
     POST   projects/{cn}/leave
@@ -43,7 +44,8 @@ def view_json(v: View) -> dict[str, Any]:
             "members": v.members, "owners": v.owners, "role": v.role, "member": v.member, "requested": v.requested,
             "may": {"manage": manages, "leave": v.member and not (v.role == "owner" and len(v.owners) == 1),
                     "join": not v.member and not v.archived and v.join_policy in ("open", "request") and not v.requested,
-                    "archive": manages and not v.archived, "restore": manages and bool(v.archived)}}
+                    "archive": manages and not v.archived, "restore": manages and bool(v.archived),
+                    "delete": manages}}
 
 
 def request_json(r: JoinRequest) -> dict[str, Any]:
@@ -112,6 +114,12 @@ def install(app: Any, acc: Accounts, prj: Projects, *, signed_in_uid: Callable[[
         actor = await who(request)
         d = await body(request)
         return view_json(await call(prj.update, actor, cn(request), d, ip(request)))
+
+    @route("/{cn}", ["DELETE"])
+    async def project_delete(request: Request) -> Any:
+        actor = await who(request)
+        v = await call(prj.delete, actor, cn(request), request.query_params.get("confirm", ""), ip(request))
+        return {"deleted": v.cn}
 
     @route("/{cn}/join", ["POST"])
     async def join(request: Request) -> Any:

@@ -15,7 +15,7 @@ people make, and the rest hangs off it:
 
 The directory holds what every other system must see — the group, its gid, its members — and the
 portal holds what only it decides: who owns a project, how one joins it, whether it is listed, the
-join requests and the invitation links. Nothing is deleted: a project is archived.
+join requests and the invitation links. A project is archived (reversible) or deleted for good.
 
 ## The group
 
@@ -54,13 +54,18 @@ every other; membership is the directory's, policy is the portal's.
 | leave | | ✓ | ✓ (not the last owner) | |
 | add and remove members, answer requests, make and revoke links | | | ✓ | ✓ |
 | change the title, description, policy, listing; make and unmake owners; archive, restore | | | ✓ | ✓ |
+| delete, typing the name again (`DELETE projects/<cn>?confirm=<cn>`) | | | ✓ | ✓ |
 
 An owner is a member who manages the project; there is always one (the last cannot leave, be
 removed or step down: make another owner, or archive). A site admin manages every project and is a
 member of none unless added. An archived project keeps its group and its members (their files stay
 readable, and `getent group` still shows it) but takes no change and no new member until it is
-restored; the provisioner withdraws its share. The same answer, "no such project", goes to whoever
-may not see one. Every change is in the audit log (`project_create`, `project_member_add`, …).
+restored; the provisioner withdraws its share. A deleted project is gone for good — its group (so
+every membership), its record, its requests and links — except one thing the portal keeps: that its
+gid was used, so no later project gets it and the files left with that gid belong to no one (as a
+deleted account's files keep its uid). The name is free again. The same answer, "no such project",
+goes to whoever may not see one. Every change is in the audit log (`project_create`,
+`project_member_add`, `project_delete`, …).
 
 Pages: `/projects` (mine, the listed others, a new one), `/projects/<cn>`, `/projects/join/<token>`
 (an invitation link: the signed-in person joins). API: `/account/api/v1/projects` (`src/portal/projects_api.py`

@@ -38,6 +38,7 @@ LANG: dict[str, str] = {
     '쓸 수 없는 프로젝트 이름입니다.': 'That name cannot be used for a project.',
     '설명: 500자까지 쓸 수 있습니다.': 'Description: up to 500 characters.',
     '가입 방식이 올바르지 않습니다.': 'The join policy is not valid.',
+    '프로젝트를 지우려면 이름({cn})을 그대로 입력하세요.': 'To delete the project, type its name ({cn}) exactly.',
     '대기 중인 신청이 너무 많습니다.': 'Too many pending requests.',
     '비밀번호 서비스를 쓸 수 없습니다. 잠시 뒤 다시 시도하세요.': 'The password service is unavailable. Try again shortly.',
     '지금 비밀번호가 맞지 않습니다.': 'Your current password is incorrect.',

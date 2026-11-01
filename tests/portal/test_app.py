@@ -79,12 +79,12 @@ class FakeDirectory:
     def projects_of(self, uid):
         return sorted(cn for cn, p in self.projects.items() if uid in p["members"])
 
-    def create_project(self, cn, description, members):
+    def create_project(self, cn, description, members, spent=frozenset()):
         if self.fail_projects:
             raise self.fail_projects
         if cn in self.users or cn in self.groups or cn in self.projects:
             raise DirectoryError(f"'{cn}' already exists (as a user or group).")
-        used = {p["gid"] for p in self.projects.values()}
+        used = {p["gid"] for p in self.projects.values()} | set(spent)
         gid = next(n for n in range(self.s.project_gid_min, self.s.project_gid_max + 1) if n not in used)
         self.projects[cn] = {"gid": gid, "members": set(members), "description": description}
         return self._project(cn)

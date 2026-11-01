@@ -12,9 +12,10 @@ Forbidden and ValidationError as there; a backend failure (DirectoryError) propa
 
 Who is what to a project: a member (in its group); an owner (a member who manages it: there is
 always at least one); a site admin (an owner's rights on every project, a member of none unless
-added). Nothing is deleted: a project is archived — its group and its members stay, so their files
-stay theirs; the portal refuses changes until it is restored, and the provisioner withdraws what it
-set up for it.
+added). A project is archived (its group and its members stay, so their files stay theirs; the
+portal refuses changes until it is restored) or deleted for good by an owner who types its name
+again: the group and the record go, its gid is never given out again (so files left behind never
+fall to a later project), and the provisioner withdraws what it set up. Files stay, as an account's do.
 """
 
 from __future__ import annotations
@@ -68,6 +69,13 @@ CREATE TABLE IF NOT EXISTS invites (
     created_by TEXT NOT NULL,
     created    REAL NOT NULL,
     expires    REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS deleted (
+    cn      TEXT NOT NULL,
+    gid     INTEGER NOT NULL,
+    deleted REAL NOT NULL,
+    by      TEXT NOT NULL,
+    members TEXT NOT NULL DEFAULT ''
 );
 """
 
@@ -193,10 +201,21 @@ class ProjectStore:
         return self.get(cn)  # type: ignore[return-value]
 
     def remove(self, cn: str) -> None:
-        """Only to undo a creation that failed halfway: a project is otherwise archived, never removed."""
+        """Undo a creation that failed halfway (the record alone, nothing to remember)."""
         with self._lock:
             for table in ("owners", "requests", "invites", "projects"):
                 self.db.execute(f"DELETE FROM {table} WHERE cn=?", (cn,))
+
+    def delete(self, cn: str, gid: int, by: str, members: list[str]) -> None:
+        """The record goes; what is kept is that the gid was used, so it is never given out again."""
+        with self._lock:
+            for table in ("owners", "requests", "invites", "projects"):
+                self.db.execute(f"DELETE FROM {table} WHERE cn=?", (cn,))
+            self.db.execute("INSERT INTO deleted VALUES (?,?,?,?,?)", (cn, gid, time.time(), by, ",".join(members)))
+
+    def spent_gids(self) -> set[int]:
+        """The gids of deleted projects: files left with them must not fall to a new project."""
+        return {r[0] for r in self.db.execute("SELECT gid FROM deleted")}
 
     # ── join requests ─────────────────────────────────────────────────────
 
@@ -359,7 +378,8 @@ class Projects:
         listed = bool(values.get("listed", True))
         if self.store.get(cn) is not None:
             raise ValidationError(t("'{cn}'은(는) 이미 쓰이는 이름입니다. 다른 이름을 고르세요.", cn=cn))
-        p = self.directory.create_project(cn, description, [actor.uid])  # DirectoryError if a user or group has the name
+        # DirectoryError if a user or group has the name; a deleted project's gid is never given again
+        p = self.directory.create_project(cn, description, [actor.uid], self.store.spent_gids())
         try:
             rec = self.store.add(cn, title, description, policy, listed, actor.uid)
         except sqlite3.Error:
@@ -401,6 +421,19 @@ class Projects:
         rec = self.store.set_archived(p.cn, False)
         audit.record(actor.uid, "project_restore", p.cn, True, ip)
         return self._view(actor, p, rec)
+
+    def delete(self, actor: Actor, cn: str, confirm: str, ip: str) -> View:
+        """Delete a project for good: its group (every member loses the membership), its record, its
+        requests and links. `confirm` is the name typed again. Files it owned stay (their gid does too,
+        and is never given to another project)."""
+        p, rec = self._manage(actor, cn, live=False)
+        if confirm.strip() != p.cn:
+            raise ValidationError(t("프로젝트를 지우려면 이름({cn})을 그대로 입력하세요.", cn=p.cn))
+        view = self._view(actor, p, rec)
+        self.directory.delete_project(p.cn)
+        self.store.delete(p.cn, p.gid_number, actor.uid, p.members)
+        audit.record(actor.uid, "project_delete", p.cn, True, ip, f"gid={p.gid_number} members={','.join(p.members)}")
+        return view
 
     # ── members and owners ───────────────────────────────────────────────
 
