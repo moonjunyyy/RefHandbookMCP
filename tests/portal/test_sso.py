@@ -11,6 +11,7 @@ from portal.kerberos import KerberosError
 from portal.config import Settings
 from portal.main import create_app as create_portal
 from portal.invites import InviteStore
+from portal.projects import ProjectStore
 from portal.requests import RequestStore
 from portal.sso import create_app, next_from_query, safe_next
 from .conftest import SITE
@@ -121,7 +122,7 @@ def test_portal_behind_sso(tmp_path, key):
                  kadmin_policy="", root_path="/account", auth_mode="sso", sso_issuer=ISS)
     d, k = FakeDirectory(s), FakeKerberos()
     app = create_portal(s, d, k, FakeKAdmin(k, d), RequestStore(str(tmp_path / "req.db")), key.public_key(),
-                         InviteStore(":memory:"))
+                         InviteStore(":memory:"), ProjectStore(":memory:"))
     c = TestClient(app)
     r = c.get("/account/admin/users", follow_redirects=False)
     assert r.status_code == 303 and r.headers["location"] == "/auth/login?next=/account/admin/users"
@@ -176,7 +177,7 @@ def test_the_menu_shows_the_apps_each_user_may_see(tmp_path, key):
                  kadmin_policy="", root_path="/account", auth_mode="sso", sso_issuer=ISS, site_file=str(apps))
     d, k = FakeDirectory(s), FakeKerberos()
     c = TestClient(create_portal(s, d, k, FakeKAdmin(k, d), RequestStore(str(tmp_path / "req.db")), key.public_key(),
-                         InviteStore(":memory:")))
+                         InviteStore(":memory:"), ProjectStore(":memory:")))
     page = c.get("/account/", headers={"X-Auth-Token": tokens.issue(key, ISS, "account", "moon")}).text
     assert 'href="/agents">Agents</a>' in page and 'href="/lab/">Lab</a>' in page  # moon is an admin
     page = c.get("/account/", headers={"X-Auth-Token": tokens.issue(key, ISS, "account", "alice")}).text

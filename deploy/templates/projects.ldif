@@ -1,0 +1,11 @@
+# @@generated@@
+# The projects' OU: the groups people make themselves (docs/projects.md) live under it, made and
+# changed by the portal. The OU itself is made once by the directory's admin (the portal may not
+# add OUs), after the olcAccess rules of slapd-acl.ldif beside this file are in place:
+#   ldapadd -Q -Y GSSAPI -H @@ldap_uri@@ -f /etc/@@name@@/directory/projects.ldif
+# NSS must see the groups under it: nslcd's `base group` (or sssd's ldap_group_search_base) with
+# scope sub over @@groups_ou@@, which is the default.
+dn: @@projects_ou@@
+objectClass: organizationalUnit
+ou: @@projects_rdn@@
+description: Projects: groups made by their members through the portal

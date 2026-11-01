@@ -52,29 +52,38 @@ olcAccess: {6}to dn.base="@@groups_ou@@" attrs=children
 olcAccess: {7}to dn.one="@@groups_ou@@" attrs=entry,objectClass,cn,gidNumber,memberUid
   by dn.exact="@@portal_dn@@" write
   by users read
+# 6. Projects (docs/projects.md): the groups people make themselves, one level under the groups' OU.
+#    The portal adds them under @@projects_ou@@ (made once with projects.ldif beside this file) and
+#    changes their members and description; nothing else of them, nothing else there.
+olcAccess: {8}to dn.base="@@projects_ou@@" attrs=children
+  by dn.exact="@@portal_dn@@" write
+  by users read
+olcAccess: {9}to dn.one="@@projects_ou@@" attrs=entry,objectClass,cn,gidNumber,memberUid,description
+  by dn.exact="@@portal_dn@@" write
+  by users read
 # ... then the rules for service and admin accounts (ou=Services, ou=Admins), and the catch-all.
-olcAccess: {8}to dn.children="ou=Services,@@base_dn@@" filter=(objectClass=simpleSecurityObject)
+olcAccess: {10}to dn.children="ou=Services,@@base_dn@@" filter=(objectClass=simpleSecurityObject)
   by dn.regex="^(.*ou=A|cn=a)dmin(s*),@@base_dn@@$" write
   by dn.exact="uid=kadmin,ou=Services,@@base_dn@@" write
   by dn.exact="uid=kdc,ou=Services,@@base_dn@@" write
   by dn.exact="uid=www,ou=Services,@@base_dn@@" read
   by * none
-olcAccess: {9}to dn.base="ou=Services,@@base_dn@@" attrs=children
+olcAccess: {11}to dn.base="ou=Services,@@base_dn@@" attrs=children
   by dn.regex="^(.*ou=A|cn=a)dmin(s*),@@base_dn@@$" write
   by users read
-olcAccess: {10}to dn.one="ou=Services,@@base_dn@@" attrs=cn,ipServiceProtocol,ipServicePort
+olcAccess: {12}to dn.one="ou=Services,@@base_dn@@" attrs=cn,ipServiceProtocol,ipServicePort
   by dn.regex="^(.*ou=A|cn=a)dmin(s*),@@base_dn@@$" write
   by dn.exact="uid=www,ou=Services,@@base_dn@@" write
   by users read
-olcAccess: {11}to dn.children="ou=Admins,@@base_dn@@" filter=(objectClass=simpleSecurityObject)
+olcAccess: {13}to dn.children="ou=Admins,@@base_dn@@" filter=(objectClass=simpleSecurityObject)
   by dn.regex="^(.*ou=A|cn=a)dmin(s*),@@base_dn@@$" write
   by dn.exact="uid=kadmin,ou=Services,@@base_dn@@" write
   by dn.exact="uid=kdc,ou=Services,@@base_dn@@" read
   by * none
-olcAccess: {12}to dn.base="ou=Admins,@@base_dn@@" attrs=children
+olcAccess: {14}to dn.base="ou=Admins,@@base_dn@@" attrs=children
   by dn.regex="^(.*ou=A|cn=a)dmin(s*),@@base_dn@@$" write
   by * none
-olcAccess: {13}to dn.one="ou=Admins,@@base_dn@@" attrs=cn,ipServiceProtocol,ipServicePort
+olcAccess: {15}to dn.one="ou=Admins,@@base_dn@@" attrs=cn,ipServiceProtocol,ipServicePort
   by dn.regex="^(.*ou=A|cn=a)dmin(s*),@@base_dn@@$" write
   by * none
-olcAccess: {14}to * by * read
+olcAccess: {16}to * by * read

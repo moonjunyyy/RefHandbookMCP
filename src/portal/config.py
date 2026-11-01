@@ -59,6 +59,7 @@ class Settings:
     base_dn: str = field(default_factory=lambda: _env("BASE_DN", _f().base_dn))
     users_ou: str = field(default_factory=lambda: _env("USERS_OU", _f().users_ou))
     groups_ou: str = field(default_factory=lambda: _env("GROUPS_OU", _f().groups_ou))
+    projects_ou: str = field(default_factory=lambda: _env("PROJECTS_OU", _f().projects_ou))
 
     # Matches the existing layout: canonical "alice/user@REALM" with alias "alice@REALM".
     principal_format: str = field(default_factory=lambda: _env("PRINCIPAL_FORMAT", "{uid}/user"))
@@ -107,6 +108,14 @@ class Settings:
     invites_db: str = field(default_factory=lambda: _env(
         "INVITES_DB", running_dir("STATE_DIRECTORY", _f().state_dir("portal")) + "/invites.db"))
     invite_ttl_hours: int = field(default_factory=lambda: int(_env("INVITE_TTL_HOURS", "168")))
+    # Projects (portal/projects.py): groups people make themselves. Who may make one: "user" (anyone)
+    # or "admin". Their gids come from their own range, apart from the users' (uid = gid).
+    projects_enabled: bool = field(default_factory=lambda: _env("PROJECTS", "1") == "1")
+    projects_db: str = field(default_factory=lambda: _env(
+        "PROJECTS_DB", running_dir("STATE_DIRECTORY", _f().state_dir("portal")) + "/projects.db"))
+    project_create: str = field(default_factory=lambda: _env("PROJECT_CREATE", "user"))
+    project_gid_min: int = field(default_factory=lambda: int(_env("PROJECT_GID_MIN", "30000")))
+    project_gid_max: int = field(default_factory=lambda: int(_env("PROJECT_GID_MAX", "39999")))
     # Where links handed out (invitations) point: the site as browsers reach it.
     public_url: str = field(default_factory=lambda: _env("PUBLIC_URL", f"https://{_f().domain}").rstrip("/"))
     # The apps' storage (portal/apps.py): each user's JSON values, per app.
@@ -146,6 +155,8 @@ class Settings:
             raise ValueError("PORTAL_AUTH must be local or sso")
         if self.root_path and not self.root_path.startswith("/"):
             raise ValueError("PORTAL_ROOT_PATH must start with '/', e.g. /account")
+        if self.project_create not in ("user", "admin"):
+            raise ValueError("PORTAL_PROJECT_CREATE must be user or admin")
 
     def site(self):  # noqa: ANN201 — portal.site.Site
         """The declared services (empty when PORTAL_SITE is unset). Read once per process."""
@@ -178,3 +189,6 @@ class Settings:
 
     def group_dn(self, cn: str) -> str:
         return f"cn={cn},{self.groups_ou}"
+
+    def project_dn(self, cn: str) -> str:
+        return f"cn={cn},{self.projects_ou}"

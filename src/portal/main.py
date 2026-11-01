@@ -17,6 +17,7 @@ from .facts import SIGNIN
 from .directory import Directory, DirectoryError, User
 from .invites import InviteError, InviteStore
 from .kerberos import KAdmin, Kerberos, KerberosError, LoginResult
+from .projects import Projects, ProjectStore
 from .rbac import Actor, can, roles_for
 from .requests import RequestError, RequestStore
 from .security import SecurityHeadersMiddleware, Throttle, csrf_ok, csrf_token
@@ -52,7 +53,7 @@ class RootPath:
 
 def create_app(settings: Settings | None = None, directory=None, kerberos=None, kadmin=None,
                requests: RequestStore | None = None, sso_public_key=None,
-               invites: InviteStore | None = None) -> FastAPI:
+               invites: InviteStore | None = None, projects: ProjectStore | None = None) -> FastAPI:
     s = settings or Settings()
     s.site()  # apps.toml is read at start: a bad file stops the portal, not a page
     sso = s.auth_mode == "sso"
@@ -67,6 +68,8 @@ def create_app(settings: Settings | None = None, directory=None, kerberos=None, 
         requests = RequestStore(s.requests_db, s.request_ttl_days, s.request_max_pending)
     if invites is None and s.invites_enabled:
         invites = InviteStore(s.invites_db, s.invite_ttl_hours)
+    if projects is None and s.projects_enabled:
+        projects = ProjectStore(s.projects_db, s.invite_ttl_hours)
     throttle = Throttle()
     join_throttle = Throttle(limit=10, window=3600)  # failed invitation sign-ups per client address
     request_throttle = Throttle(limit=5, window=3600)  # account requests per client address
@@ -487,9 +490,12 @@ def create_app(settings: Settings | None = None, directory=None, kerberos=None, 
         flash(request, "ok", f"{'Added' if add else 'Removed'} {target.uid} {'to' if add else 'from'} {group}.")
         return redirect(f"/admin/users/{target.uid}")
 
-    from . import account_api
+    from . import account_api, projects_api
 
     account_api.install(app, acc, signed_in_uid=signed_in_uid, ip=ip,
                         join_link=lambda token: f"{s.public_url}{url('/join/' + token)}")
+    if projects is not None:  # a project's invitation link is a page of the site (web/src/pages/projects.ts)
+        projects_api.install(app, acc, Projects(s, directory, projects), signed_in_uid=signed_in_uid, ip=ip,
+                             join_link=lambda token: f"{s.public_url}/projects/join/{token}")
 
     return app

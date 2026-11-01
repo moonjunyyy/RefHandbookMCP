@@ -7,10 +7,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 from portal.config import Settings
-from portal.directory import DirectoryError, User
+from portal.directory import DirectoryError, Project, User
 from portal.kerberos import KerberosError, LoginResult
 from portal.invites import InviteStore
 from portal.main import create_app
+from portal.projects import ProjectStore
 from portal.requests import RequestStore
 
 
@@ -19,6 +20,8 @@ class FakeDirectory:
         self.s = s
         self.users = {}
         self.groups = {"user": {"moon", "alice", "helen"}, "admin": {"moon"}, "helpdesk": {"helen"}}
+        self.projects = {}  # cn -> {gid, members, description}: the groups under the projects' OU
+        self.fail_projects = None  # a DirectoryError every project write raises (the OU missing, say)
         for i, uid in enumerate(["moon", "alice", "helen"]):
             self.users[uid] = User(uid=uid, dn=s.user_dn(uid), display_name=uid.title(), uid_number=10001 + i,
                                    gid_number=10001 + i, login_shell="/bin/bash", principals=[s.principal(uid)])
@@ -59,6 +62,43 @@ class FakeDirectory:
         self.users.pop(uid, None)
         for members in self.groups.values():
             members.discard(uid)
+
+    # ---- projects (portal/projects.py) ----
+
+    def _project(self, cn):
+        p = self.projects[cn]
+        return Project(cn=cn, dn=self.s.project_dn(cn), gid_number=p["gid"], members=sorted(p["members"]),
+                       description=p["description"])
+
+    def list_projects(self):
+        return [self._project(cn) for cn in sorted(self.projects)]
+
+    def get_project(self, cn):
+        return self._project(cn) if cn in self.projects else None
+
+    def projects_of(self, uid):
+        return sorted(cn for cn, p in self.projects.items() if uid in p["members"])
+
+    def create_project(self, cn, description, members):
+        if self.fail_projects:
+            raise self.fail_projects
+        if cn in self.users or cn in self.groups or cn in self.projects:
+            raise DirectoryError(f"'{cn}' already exists (as a user or group).")
+        used = {p["gid"] for p in self.projects.values()}
+        gid = next(n for n in range(self.s.project_gid_min, self.s.project_gid_max + 1) if n not in used)
+        self.projects[cn] = {"gid": gid, "members": set(members), "description": description}
+        return self._project(cn)
+
+    def delete_project(self, cn):
+        self.projects.pop(cn, None)
+
+    def set_project_member(self, cn, uid, member):
+        if self.fail_projects:
+            raise self.fail_projects
+        (self.projects[cn]["members"].add if member else self.projects[cn]["members"].discard)(uid)
+
+    def set_project_description(self, cn, description):
+        self.projects[cn]["description"] = description
 
 
 class FakeKerberos:
@@ -114,7 +154,7 @@ def env(tmp_path):
     d, k = FakeDirectory(s), FakeKerberos()
     ka = FakeKAdmin(k, d)
     app = create_app(s, d, k, ka, RequestStore(str(tmp_path / "requests.db")),
-                     invites=InviteStore(str(tmp_path / "invites.db")))
+                     invites=InviteStore(str(tmp_path / "invites.db")), projects=ProjectStore(str(tmp_path / "projects.db")))
     return s, d, k, ka, app, tmp_path
 
 
@@ -329,7 +369,7 @@ def test_root_path(tmp_path):
                  kadmin_policy="", root_path="/account")
     d, k = FakeDirectory(s), FakeKerberos()
     app = create_app(s, d, k, FakeKAdmin(k, d), RequestStore(str(tmp_path / "requests.db")),
-                     invites=InviteStore(":memory:"))
+                     invites=InviteStore(":memory:"), projects=ProjectStore(":memory:"))
     c = TestClient(app)
     page = c.get("/account/login").text
     assert 'href="/account/static/style.css"' in page and 'action="/account/login"' in page

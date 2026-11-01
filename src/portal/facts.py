@@ -11,6 +11,7 @@ derivation.
     base_dn       dc=m00nny,dc=kr         the realm's labels
     users_ou      ou=Users,<base_dn>
     groups_ou     ou=Groups,<base_dn>
+    projects_ou   ou=Projects,<groups_ou>  the groups people make themselves (docs/projects.md)
     ldap_uri      ldaps://ldap.<realm, lowercased>
     issuer        https://<domain>
     http_service  HTTP@<domain>
@@ -52,7 +53,7 @@ ROLES = {"portal": 8080, "sso": 8090, "apps": 8100, "handbook": 8765, "runner": 
 RUNS_AS = {"runner": "handbook"}
 # Where the site sign-in lives (portal/sso.py): its pages, its check for nginx, its stylesheet.
 SIGNIN = "/auth"
-USED = {"realm", "name", "base_dn", "domain", "users_ou", "groups_ou", "ldap_uri", "sso_issuer", "http_service",
+USED = {"realm", "name", "base_dn", "domain", "users_ou", "groups_ou", "projects_ou", "ldap_uri", "sso_issuer", "http_service",
         "code", "ports", "aliases", "router", "listen", "portal_root", "title", "admin_group", "helpdesk_group"}
 
 
@@ -98,6 +99,7 @@ class Facts:
     title: str = ""  # the site's name on every page; the realm unless [site] title says otherwise
     admin_group: str = "admin"
     helpdesk_group: str = "helpdesk"
+    projects_ou: str = ""  # the groups people make themselves (projects), one level under the groups' OU
 
     def unit(self, role: str) -> str:
         return f"{self.name}-{role}"
@@ -200,16 +202,18 @@ def facts(site_file: str | None = None) -> Facts:
     ports = dict(ROLES)
     for role, port in (given.get("ports") or {}).items():
         ports[role] = int(port)
+    groups_ou = get("groups_ou", f"ou=Groups,{base_dn}")
     return Facts(
         realm=realm, name=name, domain=domain, aliases=tuple(given.get("aliases", ())),
         base_dn=base_dn, users_ou=get("users_ou", f"ou=Users,{base_dn}"),
-        groups_ou=get("groups_ou", f"ou=Groups,{base_dn}"), ldap_uri=get("ldap_uri", f"ldaps://ldap.{lower}"),
+        groups_ou=groups_ou, ldap_uri=get("ldap_uri", f"ldaps://ldap.{lower}"),
         issuer=get("sso_issuer", f"https://{domain}"), http_service=get("http_service", f"HTTP@{domain}"),
         code=given.get("code") or f"/opt/{name}-site", ports=ports,
         extra={k: v for k, v in given.items() if isinstance(v, str) and k not in USED},
         router=router, listen=int(given.get("listen", 80)),
         portal_root=get("portal_root", Facts.portal_root).rstrip("/"), title=get("title", realm),
-        admin_group=get("admin_group", Facts.admin_group), helpdesk_group=get("helpdesk_group", Facts.helpdesk_group))
+        admin_group=get("admin_group", Facts.admin_group), helpdesk_group=get("helpdesk_group", Facts.helpdesk_group),
+        projects_ou=get("projects_ou", f"ou=Projects,{groups_ou}"))
 
 
 def running_dir(kind: str, fallback: str) -> str:

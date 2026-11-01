@@ -16,6 +16,10 @@ PERMISSIONS = {
     "manage_groups": {"admin"},
     "review_requests": {"admin"},
     "manage_invites": {"admin"},
+    # Projects (portal/projects.py): who may make one is also PORTAL_PROJECT_CREATE's; inside a project,
+    # owners manage it and admins manage every one (there, not here).
+    "create_project": {"user", "admin"},
+    "manage_projects": {"admin"},
 }
 # Actions that would let you lock yourself (or the last admin) out.
 NOT_ON_SELF = {"set_enabled", "manage_groups", "reset_password", "delete_user"}

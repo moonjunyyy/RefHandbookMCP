@@ -109,6 +109,7 @@ def rendered(f: Facts, site_file: Path, root: Path = Path("/")) -> dict[str, tup
               "kdc_dn": _kdc_conf("ldap_kdc_dn") or "<ldap_kdc_dn of kdc.conf>",
               "kadmin_dn": _kdc_conf("ldap_kadmind_dn") or "<ldap_kadmind_dn of kdc.conf>",
               "portal_dn": "<the DN ldapwhoami prints for portal/service>",
+              "projects_rdn": f.projects_ou.split(",", 1)[0].partition("=")[2],  # the OU's own name (Projects)
               # the main page: the pages app's once it is published, else the sign-in's own
               "home": "" if home else ("    location = / {   # the main page: the SSO's, so it knows who is signed in\n"
                                        f"        include snippets/{f.name}-proxy.conf;\n"
@@ -136,6 +137,7 @@ def rendered(f: Facts, site_file: Path, root: Path = Path("/")) -> dict[str, tup
         # the directory's side, applied by its admin on the KDC and the LDAP server (printed at the end)
         f"/etc/{f.name}/directory/kadm5.acl": (t("kadm5.acl"), 0o644),
         f"/etc/{f.name}/directory/slapd-acl.ldif": (t("slapd-acl.ldif"), 0o644),
+        f"/etc/{f.name}/directory/projects.ldif": (t("projects.ldif"), 0o644),
     }
     if f.router:
         out[f"/etc/{f.name}/router/{f.domain}.conf"] = (t("router.conf"), 0o644)
@@ -465,7 +467,8 @@ def install(site_file: Path, root: Path = Path("/"), sh: Run = _run, src: Path =
         print("·", n)
     print(f"\nThe directory's side, for its admin to merge (on the KDC, and the LDAP server):\n"
           f"  /etc/{f.name}/directory/kadm5.acl       into /etc/krb5kdc/kadm5.acl, then restart krb5-admin-server\n"
-          f"  /etc/{f.name}/directory/slapd-acl.ldif  merge with the current olcAccess (instructions inside)")
+          f"  /etc/{f.name}/directory/slapd-acl.ldif  merge with the current olcAccess (instructions inside)\n"
+          f"  /etc/{f.name}/directory/projects.ldif   ldapadd once: the projects' OU (docs/projects.md)")
     if f.router:
         print(f"\nThe router's side, for its admin to merge (TLS ends there; this host serves plain HTTP on "
               f":{f.listen} to {', '.join(f.router)} only):\n  /etc/{f.name}/router/{f.domain}.conf")

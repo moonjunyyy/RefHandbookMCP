@@ -18,6 +18,7 @@ USER_ATTRS = ["uid", "cn", "givenName", "sn", "displayName", "mail", "loginShell
               "gidNumber", "homeDirectory", "krbPrincipalName", "krbTicketFlags", "krbLoginFailedCount",
               "krbLastPwdChange", "krbPasswordExpiration"]
 SELF_EDITABLE = {"displayName", "mail", "loginShell"}
+PROJECT_ATTRS = ["cn", "gidNumber", "memberUid", "description"]
 
 
 class DirectoryError(Exception):
@@ -42,6 +43,16 @@ class User:
     failed_logins: int = 0
     last_pwd_change: str = ""
     groups: list[str] = field(default_factory=list)
+
+
+@dataclass
+class Project:
+    """A group people made themselves (portal/projects.py): a posixGroup under the projects' OU."""
+    cn: str
+    dn: str = ""
+    gid_number: int = 0
+    members: list[str] = field(default_factory=list)
+    description: str = ""
 
 
 def _first(entry, attr, default=""):
@@ -217,3 +228,85 @@ class Directory:
     def set_membership(self, group: str, uid: str, member: bool) -> None:
         with self._conn() as conn:
             conn.modify(self.s.group_dn(group), {"memberUid": [(MODIFY_ADD if member else MODIFY_DELETE, [uid])]})
+
+    # ---- projects: the groups people make themselves, under the projects' OU (portal/projects.py) ----
+
+    def _to_project(self, dn: str, a: dict) -> Project:
+        return Project(cn=_first(a, "cn"), dn=dn, gid_number=int(_first(a, "gidNumber", 0) or 0),
+                       members=sorted(a.get("memberUid") or []), description=_first(a, "description"))
+
+    def list_projects(self) -> list[Project]:
+        with self._conn() as conn:
+            try:
+                conn.search(self.s.projects_ou, "(objectClass=posixGroup)", LEVEL, attributes=PROJECT_ATTRS)
+            except LDAPNoSuchObjectResult:
+                return []  # the OU is not made yet: no projects
+            return sorted((self._to_project(r["dn"], r["attributes"]) for r in conn.response
+                           if r.get("type") == "searchResEntry"), key=lambda p: p.cn)
+
+    def get_project(self, cn: str) -> Project | None:
+        with self._conn() as conn:
+            try:
+                conn.search(self.s.project_dn(cn), "(objectClass=posixGroup)", BASE, attributes=PROJECT_ATTRS)
+            except LDAPNoSuchObjectResult:
+                return None
+            if not conn.response:
+                return None
+            r = conn.response[0]
+            return self._to_project(r["dn"], r["attributes"])
+
+    def projects_of(self, uid: str) -> list[str]:
+        with self._conn() as conn:
+            try:
+                conn.search(self.s.projects_ou, f"(&(objectClass=posixGroup)(memberUid={escape_filter_chars(uid)}))",
+                            LEVEL, attributes=["cn"])
+            except LDAPNoSuchObjectResult:
+                return []
+            return sorted(_first(e.entry_attributes_as_dict, "cn") for e in conn.entries)
+
+    def _next_gid(self, conn) -> int:
+        """Smallest free gidNumber in the projects' range (the users' private groups have theirs: uid = gid)."""
+        used: set[int] = set()
+        for r in conn.extend.standard.paged_search(self.s.base_dn, "(objectClass=posixGroup)", SUBTREE,
+                                                   attributes=["gidNumber"], paged_size=500, generator=True):
+            if r.get("type") == "searchResEntry" and _first(r["attributes"], "gidNumber", None) is not None:
+                used.add(int(_first(r["attributes"], "gidNumber")))
+        for n in range(self.s.project_gid_min, self.s.project_gid_max + 1):
+            if n not in used:
+                return n
+        raise DirectoryError("No free gidNumber left in the projects' range.")
+
+    def create_project(self, cn: str, description: str, members: list[str]) -> Project:
+        """The group, with its first members. The name must be free among users and groups alike:
+        it names the share and the path too."""
+        with self._id_lock, self._conn() as conn:
+            name = escape_filter_chars(cn)
+            conn.search(self.s.base_dn, f"(|(uid={name})(&(objectClass=posixGroup)(cn={name})))", SUBTREE,
+                        attributes=[NO_ATTRIBUTES])
+            if any(r.get("type") == "searchResEntry" for r in conn.response):
+                raise DirectoryError(f"'{cn}' already exists (as a user or group).")
+            attrs: dict = {"cn": cn, "gidNumber": self._next_gid(conn), "memberUid": list(members)}
+            if description:
+                attrs["description"] = description
+            try:
+                conn.add(self.s.project_dn(cn), ["posixGroup"], attrs)
+            except LDAPNoSuchObjectResult as e:
+                raise DirectoryError(f"{self.s.projects_ou} does not exist: the directory's admin makes it "
+                                     "(the installer renders projects.ldif)") from e
+        return self.get_project(cn)
+
+    def delete_project(self, cn: str) -> None:
+        """Only to undo a creation that failed halfway (a project is archived, never deleted)."""
+        with self._conn() as conn:
+            try:
+                conn.delete(self.s.project_dn(cn))
+            except LDAPNoSuchObjectResult:
+                pass
+
+    def set_project_member(self, cn: str, uid: str, member: bool) -> None:
+        with self._conn() as conn:
+            conn.modify(self.s.project_dn(cn), {"memberUid": [(MODIFY_ADD if member else MODIFY_DELETE, [uid])]})
+
+    def set_project_description(self, cn: str, description: str) -> None:
+        with self._conn() as conn:
+            conn.modify(self.s.project_dn(cn), {"description": [(MODIFY_REPLACE, [description] if description else [])]})

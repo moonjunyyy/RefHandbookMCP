@@ -342,6 +342,7 @@ t() and on a text with no English; adding a language is a catalog per side and i
 - **Open self-registration.** Anyone on the network could create accounts. Sign-up takes an admin's
   invitation link, or a request an admin approves.
 - **Sending email.** The portal never mails one-time passwords; the admin passes them on.
-- **File sharing.** WebDAV was here once; files are shared over SMB instead, outside this site.
+- **File sharing.** WebDAV was here once; files are shared over SMB instead, outside this site. What
+  the site does add is the groups people make themselves and what hangs off them (docs/projects.md).
 - **2FA for admin actions.** Recommended: put the portal behind an SSO with MFA, or require
   Kerberos OTP/PKINIT for members of `admin`.

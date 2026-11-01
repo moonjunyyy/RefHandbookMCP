@@ -50,7 +50,7 @@ public = true
 storage = true  # each person's settings (language, start page, the main page's apps)
 card = false
 build = "web/dist"
-pages = ["/", "/apps", "/settings", "@@portal_root@@/", "/agents/"]
+pages = ["/", "/apps", "/settings", "/projects", "/projects/", "@@portal_root@@/", "/agents/"]
   [[app.route]]
   path = "/agents"
   match = "exact"
@@ -66,6 +66,7 @@ tr.en = { title = "Account", description = "Your profile and password. Admins ma
 audience = "account"
 upstream = "@@upstream:portal@@"
 link = [{ label = "내 계정", href = "@@portal_root@@/", tr = { en = "My account" } },
+        { label = "프로젝트", href = "/projects", tr = { en = "Projects" } },
         { label = "사용자 관리", href = "@@portal_root@@/admin/users", groups = ["@@admin_group@@", "@@helpdesk_group@@"], tr = { en = "Users" } },
         { label = "사용 신청", href = "@@portal_root@@/admin/requests", groups = ["@@admin_group@@"], tr = { en = "Account requests" } },
         { label = "초대 링크", href = "@@portal_root@@/admin/invites", groups = ["@@admin_group@@"], tr = { en = "Invitation links" } }]

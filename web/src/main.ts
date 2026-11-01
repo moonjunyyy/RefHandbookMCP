@@ -12,6 +12,7 @@ import * as agents from './pages/agents';
 import { presets } from './pages/flows';
 import { apps } from './pages/apps';
 import { home } from './pages/home';
+import * as projects from './pages/projects';
 import { settings } from './pages/settings';
 
 type Page = (...args: string[]) => Promise<void>;
@@ -22,6 +23,9 @@ function routes(): [RegExp, Page][] {
     [/^\/$/, home],
     [/^\/apps\/?$/, apps],
     [/^\/settings\/?$/, settings],
+    [/^\/projects\/?$/, projects.projects],
+    [/^\/projects\/join\/([^/]+)\/?$/, projects.join],
+    [/^\/projects\/([^/]+)\/?$/, projects.project],
     [new RegExp(`^${p}/?$`), account.mine],
     [new RegExp(`^${p}/admin/users/?$`), account.users],
     [new RegExp(`^${p}/admin/users/new/?$`), account.newUser],

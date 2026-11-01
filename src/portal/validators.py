@@ -9,6 +9,11 @@ UID_RE = re.compile(r"^[a-z][a-z0-9_-]{1,31}$")
 GROUP_RE = re.compile(r"^[a-z][a-z0-9_-]{1,31}$")
 EMAIL_RE = re.compile(r"^[^@\s,;\"<>]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
 RESERVED_UIDS = {"root", "admin", "kadmin", "krbtgt", "kdc", "portal", "nobody", "daemon", "bin", "sys"}
+# A project's name is a group's, a share's and a path's: not a role group, not an SMB section name.
+RESERVED_PROJECTS = RESERVED_UIDS | {"user", "users", "admins", "helpdesk", "global", "homes", "printers",
+                                     "project", "projects", "group", "groups", "public", "share", "shares",
+                                     "join", "new"}  # paths of the projects' pages and API
+JOIN_POLICIES = ("open", "request", "invite")
 
 
 class ValidationError(ValueError):
@@ -33,6 +38,26 @@ def group(value: str) -> str:
     value = value.strip()
     if not GROUP_RE.fullmatch(value):
         raise ValidationError(t("그룹 이름이 올바르지 않습니다."))
+    return value
+
+
+def project_name(value: str) -> str:
+    value = group(value)
+    if value in RESERVED_PROJECTS:
+        raise ValidationError(t("쓸 수 없는 프로젝트 이름입니다."))
+    return value
+
+
+def description(value: str) -> str:
+    value = " ".join(value.replace("\r\n", "\n").split(" ")).strip()
+    if len(value) > 500 or "\x00" in value:
+        raise ValidationError(t("설명: 500자까지 쓸 수 있습니다."))
+    return value
+
+
+def join_policy(value: str) -> str:
+    if value not in JOIN_POLICIES:
+        raise ValidationError(t("가입 방식이 올바르지 않습니다."))
     return value
 
 

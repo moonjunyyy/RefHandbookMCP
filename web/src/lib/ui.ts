@@ -16,6 +16,7 @@ export function header(): void {
       h('a', { href: '/' }, t('홈')),
       h('a', { href: '/apps' }, t('앱')),
       h('a', { href: `${frame.portal}/` }, t('내 계정')),
+      h('a', { href: '/projects' }, t('프로젝트')),
       frame.menu.map(m => h('a', { href: m.href }, m.label)),
       h('a', { href: '/settings', title: t('설정') }, h('code', null, frame.uid)),
       h('a', { href: `${frame.signin}/logout` }, t('로그아웃')),
