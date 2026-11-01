@@ -58,6 +58,7 @@ class Kind:
     ttl = 30 * DAY  # between reviews
     grace = 14 * DAY  # deprecated → retired, and proposed → expired
     has_body = False
+    renamable = True  # a rule keeps its name: what the user approved names it
 
     def validate(self, reg: Registry, name: str, spec: dict[str, Any], body: str | None) -> dict[str, Any]:
         return spec
@@ -392,6 +393,40 @@ class Registry:
                 self.g.update_node(rec["id"], actor="kernel", state="proposed", attrs={
                     "retire_at": out[0]["attrs"]["pending_until"], "reason": "not approved in time"})
             return self.g.node(rec["id"]), out[1]
+
+    def rename(self, kind: str, name: str, new: str, *, actor: str, why: str = "") -> tuple[dict[str, Any], str]:
+        """`name` under a new name. History is never rewritten, so a rename is a copy and a pointer: the
+        new record starts at v1 with the content of the old one's version in force (its last one, if it
+        is retired); the old one is deprecated toward the new (it keeps working, with a warning, until it
+        retires), or stays retired. What refers to the old name is the caller's to move
+        (Workspace.rename moves a policy's scripts and the aliases)."""
+        k = self.kind(kind)
+        rec = self.get(kind, name)
+        self._may(rec, actor)
+        if not k.renamable:
+            raise CapError(f"a {kind} keeps its name (what was approved names it): add a new one instead")
+        if new == name:
+            raise CapError(f"{kind} {name}: the new name is the same")
+        if self.find(kind, new) is not None:
+            raise CapError(f"{kind} {new!r} exists: pick another name")
+        v = rec["attrs"].get("version") or rec["attrs"].get("last_in_force")
+        if not v:
+            raise CapError(f"{kind} {name} was never in force: approve or reject its waiting version first")
+        old = self.version(rec, v)
+        because = f": {why.strip()}" if why.strip() else ""
+        with self.g.tx():
+            new_rec, msg = self.add(kind, new, spec=dict(old["spec"]), body=old["body"], actor=actor,
+                                    note=f"renamed from {kind} {name} v{v}{because}", ttl=rec["attrs"].get("ttl"))
+            if new_rec["attrs"].get("pending"):  # the model's grant under a new name waits; the old one stays
+                return new_rec, f"{msg}; {kind} {name} stays as it is until the user approves {new}"
+            if rec["state"] == "active":
+                self.deprecate(kind, name, actor=actor, why=f"renamed to {new}{because}", replaced_by=new)
+            elif rec["state"] == "deprecated":
+                self.g.update_node(rec["id"], actor="kernel", attrs={"reason": f"renamed to {new}{because}",
+                                                                     "replaced_by": new})
+                self.g.log(actor, f"{kind} {name} renamed to {new}", rec["id"])
+        after = "stays retired" if rec["state"] == "retired" else "is deprecated toward it (it retires on its own)"
+        return self.g.node(new_rec["id"]), f"{msg}; {kind} {name} {after}"
 
     def seed(self, kind: str, name: str, *, spec: dict[str, Any], body: str | None = None, actor: str = "kernel",
              note: str = "") -> bool:

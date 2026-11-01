@@ -19,9 +19,10 @@ validates level Ln+1 by itself.
    - the regime of validity.
 2. Check dimensions and units, covariance or coordinate dependence, symmetry
    and conservation, the initial and boundary data, and limiting regimes.
-3. Every physical identification is a row with an `int:` edge that names the
-   explicit map or limiting regime. With no map, the link is recorded as
-   **missing**. It is not filled by analogy.
+3. Every physical identification is a row that rests on the mathematical row
+   it interprets and names the explicit map or limiting regime in its evidence.
+   With no map, the identification is recorded as **missing**. It is not filled
+   by analogy.
 4. Classify every claim as one of: exact derivation, conditional consequence,
    approximation, phenomenological model, analogy, or speculation.
 5. **Comparison with an established theory:**

@@ -71,14 +71,15 @@ FINISHED = {"done", "dropped", "superseded", "refuted", "history"}
 NOT_A_BASIS = {"off", "superseded", "refuted", "stale", "false", "question", "proposed", "history", "dropped"}
 # rows a document may not cite: replaced, or waiting for a recheck
 NOT_CITABLE = {"superseded", "stale", "dropped"}
-# A dep edge is either a basis (the row rests on the target: invalidation, provenance and basis checks
-# follow it) or a link (it relates to the target without resting on it: sup is evidence, not proof;
-# con records a contradiction; ref only points). A relation the vocabulary does not know is a basis.
-BASIS_RELS = {"req", "der", "eq", "iso", "spec", "int"}
-LINK_RELS = {"sup", "con", "ref"}
-RELS = BASIS_RELS | LINK_RELS
+# One relation. A dep edge means the row rests on its target: invalidation (PENDING), provenance and
+# basis checks follow every edge. `ref:ID` (or a bare ID) names a row of this ledger; `ref:<ledger>/ID`
+# a row of another ledger of the same store, which is checked and propagated like any other basis.
+# The older relation words (req, der, eq, iso, spec, int, sup, con) are read as ref, so exported
+# ledgers and old cells still load; writing them is refused.
+REL = "ref"
+OLD_RELS = {"req", "der", "eq", "iso", "spec", "int", "sup", "con"}
 ID_RE = re.compile(r"\b([UCRSAZTEHXPK]\d+)\b")
-EDGE_RE = re.compile(r"(?:(\w+):)?([UCRSAZTEHXPK]\d+)\b")
+EDGE_RE = re.compile(r"(?:(\w+):)?(?:([a-z0-9][\w-]*)/)?([UCRSAZTEHXPK]\d+)\b")
 VIRTUAL_PAGES = {"USER": "Wait for the user's next message; it is resolved at N1 step 3 of the next session."}
 CARD_PREFIX = "rs-"
 
@@ -196,12 +197,19 @@ def key(status: str | None) -> str:
 
 
 def edges(dep: str) -> list[tuple[str, str]]:
-    return [((r or "req").lower(), i) for r, i in EDGE_RE.findall(dep or "")]
+    """The edges of a dep cell as (REL, target): the target is an id of this ledger, or `<ledger>/<id>`
+    for a row of another one. Every relation word reads as REL."""
+    return [(REL, f"{lg}/{i}" if lg else i) for _, lg, i in EDGE_RE.findall(dep or "")]
 
 
 def basis(dep: str) -> list[str]:
-    """The rows a dep cell rests on: every edge but the links."""
-    return [i for r, i in edges(dep) if r not in LINK_RELS]
+    """The rows of this ledger a dep cell rests on."""
+    return [t for _, t in edges(dep) if "/" not in t]
+
+
+def xrefs(dep: str) -> list[tuple[str, str]]:
+    """The rows of other ledgers a dep cell rests on, as (ledger, id)."""
+    return [tuple(t.split("/", 1)) for _, t in edges(dep) if "/" in t]
 
 
 def page_card_id(page: str) -> str:
@@ -689,12 +697,7 @@ class Research:
             raise ResearchError("plan objects are created with research_push, not research_add")
 
         def fn(lg):
-            known = set(self._column("SELECT id FROM rl_rows WHERE ledger = ?", ledger))
-            for r, d in edges(dep):
-                if r not in RELS:
-                    raise ResearchError(f"unknown relation {r!r}; use one of {sorted(RELS)}")
-                if d not in known:
-                    raise ResearchError(f"dep {d} does not exist")
+            self._check_dep(ledger, dep)
             n = 1 + (self.db.execute("SELECT max(num) FROM rl_rows WHERE ledger = ? AND sec = ?", (ledger, sec)).fetchone()[0] or 0)
             rid = f"{sec}{n}"
             self.db.execute("INSERT INTO rl_rows VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
@@ -732,10 +735,7 @@ class Research:
                 if main and main[0] != key(value):
                     raise ResearchError(f"REFUSED: {rid} has main verdict {main[0]!r}; change it with research_explore verdict")
             if field == "dep":
-                known = set(self._column("SELECT id FROM rl_rows WHERE ledger = ?", ledger))
-                for rel, d in edges(value):
-                    if rel not in RELS or d not in known:
-                        raise ResearchError(f"bad dep {rel}:{d}")
+                self._check_dep(ledger, value)
             old = r[field]
             self.db.execute(f"UPDATE rl_rows SET {field} = ?, turn_updated = ? WHERE ledger = ? AND id = ?",
                             (value.strip(), lg["turn"], ledger, rid))
@@ -743,7 +743,9 @@ class Research:
             self._touch(ledger, lg["turn"], rid)
             msg = [f"{rid}.{field}: {old} → {value.strip()}"]
             invalidated = field == "status" and key(value) in INVALIDATING and key(old) not in INVALIDATING
-            if invalidated or field in ("content", "dep"):
+            # a dep edit changes what the row rests on, not what it says: its own basis is checked at
+            # the end of the session (check rules), and nothing downstream is reopened for it
+            if invalidated or field == "content":
                 # switching a premise off is a main-line decision; the exploration cells that hold
                 # the premise keep it, so only supersession, refutation or new content reaches them
                 switch_only = r["sec"] in ("A", "T") and field == "status" and key(value) == "off"
@@ -754,6 +756,12 @@ class Research:
                     self._pend(ledger, rid, h)
                 if hits:
                     msg.append(f"PENDING {rid}: {' '.join(sorted(hits))} — dispose each before research_end")
+                xhits = self._cross_hits(ledger, rid)
+                for lg2, h in xhits:
+                    self._pend_cross(lg2, f"{ledger}/{rid}", h)
+                if xhits:
+                    msg.append("PENDING in other ledgers: " + " ".join(f"{lg2}/{h}" for lg2, h in xhits)
+                               + " — their next session disposes each")
             elif r["sec"] in ("A", "T") and field == "status" and (key(old) == "on") != (key(value) == "on"):
                 hits = self._main_verdict_hits(ledger)
                 for h in sorted(hits):
@@ -772,13 +780,55 @@ class Research:
         return {f"{c}@main" for c in self._column(
             "SELECT claim FROM rl_verdicts WHERE ledger = ? AND config = 'main' AND verdict NOT IN ('stale', 'open')", ledger)}
 
+    def _check_dep(self, ledger: str, dep: str) -> None:
+        """A dep cell names rows that exist, with the one relation: ref:<id> (this ledger) or
+        ref:<ledger>/<id> (another ledger of this store)."""
+        known = set(self._column("SELECT id FROM rl_rows WHERE ledger = ?", ledger))
+        for rel, lg2, d in EDGE_RE.findall(dep or ""):
+            rel = (rel or REL).lower()
+            target = f"{lg2}/{d}" if lg2 else d
+            if rel != REL:
+                raise ResearchError(f"dep {rel}:{target}: one relation — write ref:{target} (or just {target}); "
+                                    f"{rel!r} is {'an old relation word, read as ref in older cells' if rel in OLD_RELS else 'not a relation'}")
+            if lg2:
+                if lg2 == ledger:
+                    raise ResearchError(f"dep ref:{target}: a row of this ledger is named {d}, without the ledger")
+                if not self.db.execute("SELECT 1 FROM rl_ledgers WHERE id = ?", (lg2,)).fetchone():
+                    raise ResearchError(f"dep ref:{target}: no ledger {lg2!r}")
+                if not self.db.execute("SELECT 1 FROM rl_rows WHERE ledger = ? AND id = ?", (lg2, d)).fetchone():
+                    raise ResearchError(f"dep ref:{target}: {lg2} has no row {d}")
+            elif d not in known:
+                raise ResearchError(f"dep {d} does not exist")
+
+    def _cross_hits(self, ledger: str, x: str) -> list[tuple[str, str]]:
+        """Rows of other ledgers that rest on x, as (ledger, id)."""
+        out = []
+        for r in self.db.execute("SELECT ledger, id, sec, status, dep FROM rl_rows WHERE ledger != ? AND dep LIKE ?"
+                                 " ORDER BY ledger, id", (ledger, f"%{ledger}/{x}%")):
+            if r["sec"] in ("K", "U") or key(r["status"]) in FINISHED:
+                continue
+            if (ledger, x) in xrefs(r["dep"]):
+                out.append((r["ledger"], r["id"]))
+        return out
+
+    def _pend_cross(self, ledger: str, src: str, hit: str) -> None:
+        """A pending hit raised in another ledger by a change here. No session of that ledger raised
+        it, so its next chat session answers for it; the ledger is sealed (and re-projected) with it."""
+        if self.db.execute("SELECT 1 FROM rl_pending WHERE ledger = ? AND src = ? AND hit = ?",
+                           (ledger, src, hit)).fetchone():
+            return
+        self.db.execute("INSERT INTO rl_pending VALUES (?, ?, ?)", (ledger, src, hit))
+        lg = self._ledger(ledger)
+        self._log(ledger, lg["turn"], f"PENDING {hit} (from {src})")
+        self._seal(ledger)
+
     def _direct_hits(self, ledger: str, x: str, configs: bool = True) -> set[str]:
         """Everything that rests on x: rows whose dep cites it, verdict cells of configurations that
         contain it (configs=False when only x's main-line switch changed), and main verdicts."""
         hits = set()
         for r in self._rows(ledger):
-            if r["sec"] == "K" or key(r["status"]) in FINISHED or r["id"] == x:
-                continue  # a plan object's `on` ids say where it works, not what it rests on
+            if r["sec"] in ("K", "U") or key(r["status"]) in FINISHED or r["id"] == x:
+                continue  # a plan's or a directive's ids say where it works, not what it rests on
             if x in basis(r["dep"]):  # a link does not rest on x, so a change of x does not reach it
                 hits.add(r["id"])
         for c in (self._configs(ledger).values() if configs else ()):
@@ -1734,7 +1784,8 @@ def load_pages() -> tuple[str, dict[str, Any]]:
     from importlib import resources
 
     folder = resources.files("refhandbook").joinpath("research_pages")
-    texts = {f.name: f.read_text() for f in sorted(folder.iterdir(), key=lambda f: f.name) if f.name.endswith(".md")}
+    texts = {f.name: f.read_text() for f in sorted(folder.iterdir(), key=lambda f: f.name)
+             if f.name.endswith(".md") and not f.name.startswith("._")}  # (._ : macOS resource forks on a share)
     digest = hashlib.sha1("\0".join(f"{k}\n{v}" for k, v in texts.items()).encode()).hexdigest()
     entries, relations = [], []
     for name, text in texts.items():

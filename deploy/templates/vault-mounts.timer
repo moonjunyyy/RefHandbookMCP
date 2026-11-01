@@ -1,0 +1,11 @@
+# @@generated@@
+# Stage the registered vaults (and drop the ones no longer registered), whatever else happens.
+[Unit]
+Description=@@name@@ vault mounts, kept current
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+
+[Install]
+WantedBy=timers.target

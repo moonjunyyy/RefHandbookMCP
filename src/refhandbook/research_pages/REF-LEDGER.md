@@ -11,7 +11,7 @@ not a procedure and consumes no K.
 This card is an index; each part is its own card.
 
 - REF-SECTIONS — row columns, ids, section letters with their allowed statuses, the map `M`
-- REF-DEP — `dep` syntax, basis versus link relations, what follows basis edges
+- REF-DEP — `dep` syntax: one relation, `ref:<id>` and `ref:<ledger>/<id>`, what follows the edges
 - REF-CONFIG — `main` and named configurations, spec tokens, claim × configuration cells
 - REF-DOC-ROLES — document roles: `source`, `deliverable`, `working`
 - REF-TOOLS — the research_* tools and what each does

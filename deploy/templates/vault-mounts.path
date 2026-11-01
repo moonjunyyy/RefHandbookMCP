@@ -1,0 +1,12 @@
+# @@generated@@
+# Stage a vault as soon as it is registered: the vault service writes this file then (portal/vault.py),
+# and @@name@@-vault-mounts.service mounts it (@@name@@-vault-mounts.timer comes by every minute besides).
+[Unit]
+Description=@@name@@ vault mounts, staged when a vault is registered
+
+[Path]
+PathChanged=/var/lib/@@unit:vault@@/mount-requests
+Unit=@@name@@-vault-mounts.service
+
+[Install]
+WantedBy=paths.target

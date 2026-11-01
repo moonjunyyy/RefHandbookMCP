@@ -123,6 +123,16 @@ class Settings:
         "APPS_DB", running_dir("STATE_DIRECTORY", _f().state_dir("apps")) + "/store.db"))
     apps_max_value: int = field(default_factory=lambda: int(_env("APPS_MAX_VALUE", str(1 << 20))))
     apps_max_keys: int = field(default_factory=lambda: int(_env("APPS_MAX_KEYS", "200")))
+    # the calendar service (portal/calendar.py) and the vault service (portal/vault.py): each its own state
+    calendar_db: str = field(default_factory=lambda: _env(
+        "CALENDAR_DB", running_dir("STATE_DIRECTORY", _f().state_dir("calendar")) + "/calendar.db"))
+    vault_db: str = field(default_factory=lambda: _env(
+        "VAULT_DB", running_dir("STATE_DIRECTORY", _f().state_dir("vault")) + "/vault.db"))
+    vault_data: str = field(default_factory=lambda: _env("VAULT_DATA", running_dir("STATE_DIRECTORY", _f().state_dir("vault"))))
+    # where a person may register a vault from (FROM[=NAME][:ro], as RHB_SANDBOX_MOUNTS); the stage root's
+    # reconciler (<name>-vault-mounts) puts each registered directory, idmapped, under PORTAL_VAULT_STAGE
+    vault_roots: str = field(default_factory=lambda: _env("VAULT_ROOTS", "/data/{user}=storage"))
+    vault_stage: str = field(default_factory=lambda: _env("VAULT_STAGE", ""))
     # Who applicants contact about their personal data (shown in the consent notice).
     privacy_contact: str = field(default_factory=lambda: _env("PRIVACY_CONTACT", ""))
     # gecos is world-readable through NSS (getent passwd), so names are not copied into it by default.

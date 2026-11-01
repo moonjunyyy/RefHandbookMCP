@@ -168,11 +168,11 @@ def test_an_upgrade_never_makes_a_store_unopenable(api, monkeypatch):
     than forced when the store's own rules conflict."""
     m = research_api.R().k
     with m.g.tx():
-        m.g.define_rule("my_prop", "check", "my_prop(H) :- rs_has_basis(H).", actor="model", applies_to="ledger",
+        m.g.define_rule("my_prop", "check", "my_prop(H) :- rs_has_dep(H).", actor="model", applies_to="ledger",
                         message="{H}")
-    changed = [dict(r, body=r["body"].replace("rs_has_basis(H)", "rs_has_basis(H, 1)").replace("rs_has_basis(X)",
-                                                                                                 "rs_has_basis(X, 1)"))
-               if "rs_has_basis" in r["body"] else r for r in rs_pkg.RULES]
+    changed = [dict(r, body=r["body"].replace("rs_has_dep(H)", "rs_has_dep(H, 1)").replace("rs_has_dep(X)",
+                                                                                                 "rs_has_dep(X, 1)"))
+               if "rs_has_dep" in r["body"] else r for r in rs_pkg.RULES]
     assert changed != rs_pkg.RULES
     monkeypatch.setattr(rs_pkg, "RULES", changed)
     m.upgrade_packages()  # the arity changed under the model's proposal: the proposal goes, the upgrade stands
@@ -185,11 +185,11 @@ def test_an_upgrade_never_makes_a_store_unopenable(api, monkeypatch):
 def test_a_dropped_package_rule_still_in_use_stays(api, monkeypatch):
     m = research_api.R().k
     with m.g.tx():
-        m.g.define_rule("mine", "check", "mine(H) :- rs_has_basis(H).", actor="user", applies_to="ledger", message="{H}")
-    users = [r for r in rs_pkg.RULES if "rs_has_basis(" in r["body"] and r["id"] != "rs_has_basis"]
-    monkeypatch.setattr(rs_pkg, "RULES", [r for r in rs_pkg.RULES if r["id"] != "rs_has_basis" and r not in users])
+        m.g.define_rule("mine", "check", "mine(H) :- rs_has_dep(H).", actor="user", applies_to="ledger", message="{H}")
+    users = [r for r in rs_pkg.RULES if "rs_has_dep(" in r["body"] and r["id"] != "rs_has_dep"]
+    monkeypatch.setattr(rs_pkg, "RULES", [r for r in rs_pkg.RULES if r["id"] != "rs_has_dep" and r not in users])
     m.upgrade_packages()
-    assert m.g.get_rule("rs_has_basis")["state"] == "active"
+    assert m.g.get_rule("rs_has_dep")["state"] == "active"
     assert research_api.research_check("geo").startswith("check:")
 
 

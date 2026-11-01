@@ -28,10 +28,14 @@
 # clients that answer it), nginx (raw directives), note. App fields: id, title,
 # description, audience, upstream, groups (who sees it in the menu; the backend enforces its own
 # access), menu, menu_href, code (an address on the card), card, icon (an emoji or a letter or two on its
-# card and in the app list), tr (the app's words in another language: tr.en = { title, description, menu }),
+# card and in the app list), about (two or three sentences for its page in the catalog; description is its
+# one-line tagline), tags (from portal/site.py TAGS, for the catalog's chips), tr (the app's words in
+# another language: tr.en = { title, description, about, menu }),
 # [[app.link]] (label, href, groups: shown only to their members, tr: { en = "label" }), [[app.route]].
-# Every app with a card shows on the main page and in the app list (/apps) to whoever may see it; each
-# person orders them, hides some and picks a start page in their settings (/settings).
+# Every app with a card is in the catalog (/apps) for whoever may see it; nothing is on until a person
+# turns it on there (docs/frame.md §2–§3), and what they turn on is in their header and on their main page
+# (its widgets: [[app.widget]], docs/frame.md §4). `optional = false` keeps an app out of the catalog and in
+# the person's own menu (the account).
 #
 # An app the site hosts needs no routes: `static = true` serves its built files at /apps/<id>/
 # (publish them with `sudo deploy/install.sh --app <id> <dist>`), and `storage = true` gives each
@@ -44,13 +48,13 @@ portal_root = "/account"
 [[app]]
 id = "site"
 title = "사이트 화면"
-description = "The site's pages (web/): the main page, the app list, the settings, the account pages and the agents' pages, over the services' APIs."
+description = "The site's pages (web/): the main page, the catalog, the settings, the account pages, the agents' pages, the calendar and the notes, over the services' APIs."
 static = true
 public = true
-storage = true  # each person's settings (language, start page, the main page's apps)
+storage = true  # each person's settings (language, theme, start page, the apps they turned on, their main page)
 card = false
 build = "web/dist"
-pages = ["/", "/apps", "/settings", "/projects", "/projects/", "@@portal_root@@/", "/agents/"]
+pages = ["/", "/apps", "/app/", "/settings", "/projects", "/projects/", "@@portal_root@@/", "/agents/", "/calendar", "/vault", "/vault/"]
   [[app.route]]
   path = "/agents"
   match = "exact"
@@ -61,12 +65,13 @@ pages = ["/", "/apps", "/settings", "/projects", "/projects/", "@@portal_root@@/
 id = "account"
 title = "계정"
 icon = "👤"
-description = "프로필과 비밀번호. 관리자는 여기서 사용자, 사용 신청, 초대 링크를 관리합니다."
-tr.en = { title = "Account", description = "Your profile and password. Admins manage users, account requests and invitation links here." }
+optional = false  # the account is not an app a person turns on: it lives in their own menu
+description = "내 프로필과 비밀번호"
+about = "프로필과 비밀번호를 고칩니다. 관리자는 사용자, 사용 신청, 초대 링크를 여기서 봅니다."
+tr.en = { title = "Account", description = "My profile and password", about = "Change your profile and password. Admins see users, account requests and invitation links here." }
 audience = "account"
 upstream = "@@upstream:portal@@"
 link = [{ label = "내 계정", href = "@@portal_root@@/", tr = { en = "My account" } },
-        { label = "프로젝트", href = "/projects", tr = { en = "Projects" } },
         { label = "사용자 관리", href = "@@portal_root@@/admin/users", groups = ["@@admin_group@@", "@@helpdesk_group@@"], tr = { en = "Users" } },
         { label = "사용 신청", href = "@@portal_root@@/admin/requests", groups = ["@@admin_group@@"], tr = { en = "Account requests" } },
         { label = "초대 링크", href = "@@portal_root@@/admin/invites", groups = ["@@admin_group@@"], tr = { en = "Invitation links" } }]
@@ -106,20 +111,123 @@ link = [{ label = "내 계정", href = "@@portal_root@@/", tr = { en = "My accou
   auth = "public"
 
 [[app]]
+id = "projects"
+title = "프로젝트"
+icon = "🧩"
+description = "함께 쓰는 그룹 — 저장소·캘린더·볼트의 주인"
+about = "프로젝트는 사람들이 직접 만드는 그룹입니다. 구성원은 그 저장소를 함께 쓰고, 프로젝트의 캘린더와 볼트가 거기에 붙습니다. 페이지와 API 는 계정 서비스의 것입니다."
+tags = ["자료"]
+tr.en = { title = "Projects", description = "Groups you make together, with their own storage", about = "A project is a group people make themselves. Its members share its storage, and the project's calendar and vault belong to it. The pages and the API are the account service's." }
+menu_href = "/projects"
+link = [{ label = "프로젝트", href = "/projects", tr = { en = "Projects" } }]
+  [[app.widget]]
+  id = "mine"
+  title = "내 프로젝트"
+  module = "/apps/site/widgets/projects.js"
+  tr.en = { title = "My projects" }
+
+[[app]]
+id = "calendar"
+title = "캘린더"
+icon = "📅"
+description = "내 일정과 프로젝트 일정을 한 달력에"
+about = "내 캘린더와 프로젝트마다 하나씩인 캘린더를 한 달력에 겹쳐 봅니다. 구독 주소를 만들어 폰의 캘린더에 넣을 수 있습니다."
+tags = ["일정"]
+tr.en = { title = "Calendar", description = "Your events and your projects' on one calendar", about = "Your own calendar and one for each of your projects, on one page. Make a subscription address and add it to the calendar on your phone." }
+audience = "calendar"
+upstream = "@@upstream:calendar@@"
+menu_href = "/calendar"
+link = [{ label = "캘린더", href = "/calendar", tr = { en = "Calendar" } }]
+  [[app.widget]]
+  id = "today"
+  title = "오늘"
+  module = "/apps/site/widgets/calendar.js"
+  size = "2x1"
+  tr.en = { title = "Today" }
+  [[app.widget]]
+  id = "upcoming"
+  title = "다가오는 일"
+  module = "/apps/site/widgets/calendar.js"
+  tr.en = { title = "Coming up" }
+  [[app.route]]
+  path = "/calendar/api/"
+  limit = "api"
+  burst = 40
+  body = "64k"
+  signin = false
+  note = "the calendars' JSON API (portal/calendar.py): a 401 is answered as JSON, not sent to the sign-in page"
+  [[app.route]]
+  path = "/calendar/feed/"
+  auth = "public"
+  limit = "api"
+  burst = 20
+  note = "the ICS subscription feeds: the address is the key, for a phone's calendar"
+
+[[app]]
+id = "vault"
+title = "노트"
+icon = "📝"
+description = "Obsidian 볼트를 브라우저에서"
+about = "내 저장소의 마크다운 볼트를 읽고 고칩니다 — Obsidian 이 여는 그 파일 그대로. 검색, 백링크, 최근 노트."
+tags = ["글쓰기", "연구"]
+tr.en = { title = "Notes", description = "Your Obsidian vault, in the browser", about = "Read and change the markdown vaults of your storage — the very files Obsidian opens. Search, backlinks, recent notes." }
+audience = "vault"
+upstream = "@@upstream:vault@@"
+menu_href = "/vault"
+link = [{ label = "노트", href = "/vault", tr = { en = "Notes" } }]
+  [[app.widget]]
+  id = "recent"
+  title = "최근 노트"
+  module = "/apps/site/widgets/vault.js"
+  tr.en = { title = "Recent notes" }
+  [[app.widget]]
+  id = "home"
+  title = "Home"
+  module = "/apps/site/widgets/vault.js"
+  size = "2x2"
+  [[app.route]]
+  path = "/vault/api/"
+  limit = "api"
+  burst = 60
+  body = "5m"
+  signin = false
+  note = "the vaults' JSON API (portal/vault.py): notes up to 4 MB; a 401 is answered as JSON"
+
+[[app]]
+id = "eq-sandbox"
+title = "수식 플립플롭"
+icon = "🧮"
+description = "수식을 블록처럼 뒤집고 옮기는 작업판"
+about = "방정식의 항을 끌어 옮기고 뒤집어 정리합니다. 작업판은 계정에 남고, 홈의 위젯이 최근 작업판을 보여 줍니다."
+tags = ["연구", "도구"]
+tr.en = { title = "Equation Flip-Flop", description = "Equations that flip and move like blocks", about = "Drag the terms of an equation, flip them, tidy up. Boards stay with your account; a widget on the main page shows the recent ones." }
+static = true
+storage = true
+  [[app.widget]]
+  id = "boards"
+  title = "최근 작업판"
+  module = "widget.js"
+  tr.en = { title = "Recent boards" }
+
+[[app]]
 id = "wordgen"
 title = "글타래"
 icon = "✍️"
-description = "소설 창작용 무작위 키워드 생성기와 집필 메모. 저장한 키워드 세트와 메모는 계정에 남습니다."
-tr.en = { title = "Geultarae", description = "A random keyword generator and writing notes for fiction. Saved keyword sets and notes stay with your account." }
+description = "소설을 위한 키워드와 집필 메모"
+about = "무작위 키워드로 이야기를 틔우고, 떠오른 메모를 적어 둡니다. 키워드 세트와 메모는 계정에 남습니다."
+tags = ["글쓰기"]
+tr.en = { title = "Geultarae", description = "Keywords and writing notes for fiction", about = "Spark a story with random keywords and keep the notes that come. Keyword sets and notes stay with your account." }
 static = true
 storage = true
 
 [[app]]
 id = "agents"
-title = "에이전트 · 샌드박스"
+title = "에이전트"
 icon = "🤖"
-description = "본인 API 키(Claude·OpenAI·Gemini·호환 서버)로 에이전트 팀 실행, 모델이 제안한 규칙의 승인·거절, 샌드박스 정책(쓸 수 있는 명령·네트워크·한도), 스크립트와 작업 현황."
-tr.en = { title = "Agents · Sandbox", menu = "Agents", description = "Run agent teams with your own API keys (Claude, OpenAI, Gemini, compatible servers), approve or reject rules the model proposes, sandbox policies (commands, network, limits), scripts and jobs." }
+description = "내 API 키로 돌리는 에이전트 팀과 샌드박스"
+about = "Claude·OpenAI·Gemini 의 키로 에이전트 팀을 실행하고, 모델이 제안한 규칙을 승인하며, 샌드박스 정책과 작업을 봅니다."
+tags = ["AI", "도구"]
+tr.en = { title = "Agents", menu = "Agents", description = "Agent teams and a sandbox, on your own API keys", about = "Run agent teams with your Claude, OpenAI or Gemini keys, approve the rules a model proposes, and watch sandbox policies and jobs." }
 audience = "refhandbook"
 upstream = "@@upstream:handbook@@"
 menu = "에이전트"
@@ -147,10 +255,12 @@ link = [{ label = "에이전트 실행", href = "/agents/", tr = { en = "Runs" }
 
 [[app]]
 id = "refhandbook"
-title = "핸드북 (Claude MCP)"
+title = "핸드북"
 icon = "📘"
-description = "Claude에서 커스텀 커넥터로 추가하고 Connect를 누르면, 이 사이트 로그인 후 허용 화면이 나옵니다."
-tr.en = { title = "Handbook (Claude MCP)", description = "Add it in Claude as a custom connector and press Connect: after signing in to this site you are asked to allow it." }
+description = "Claude 에 붙이는 연구 카드와 원장"
+about = "Claude 에 커스텀 커넥터로 더하면, 이 사이트에 로그인한 뒤 허용 화면이 나옵니다. 연구 카드·원장·샌드박스를 Claude 가 씁니다."
+tags = ["AI", "연구"]
+tr.en = { title = "Handbook", description = "Research cards and ledgers, plugged into Claude", about = "Add it to Claude as a custom connector: after signing in to this site you are asked to allow it. Claude then works with the cards, the research ledgers and the sandbox." }
 code = "https://@@domain@@/mcp"
 audience = "refhandbook"
 upstream = "@@upstream:handbook@@"

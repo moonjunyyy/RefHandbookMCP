@@ -253,19 +253,20 @@ def _show(ws: Workspace, kind: str, name: str) -> str:
 
 # ── tools ────────────────────────────────────────────────────────────────
 
-def cap(action: Literal["kinds", "list", "show", "add", "update", "deprecate", "remove", "restore", "history",
-                        "review"] = "list",
+def cap(action: Literal["kinds", "list", "show", "add", "update", "deprecate", "remove", "restore", "rename",
+                        "history", "review"] = "list",
         kind: str = "", name: str = "", spec: dict[str, Any] | None = None, body: str = "", ref: str = "",
         note: str = "", why: str = "", replaced_by: str = "", version: int = 0, replace: bool = False,
-        ttl_days: float | None = None, retired: bool = False) -> str:
+        ttl_days: float | None = None, retired: bool = False, new_name: str = "") -> str:
     """Your capabilities, one family for every kind: script, policy, layer, alias, rule, card (`kinds`
     lists them). Each record is versioned (versions are never rewritten), has an owner, and a TTL.
     list (kind optional; retired=true shows retired ones) · show (the version in force, and one waiting
     for approval) · add / update (spec, and body or a blob ref for scripts and layers; update merges
     spec into the latest version unless replace=true) · deprecate (why, replaced_by: it keeps
     working, with a warning, then retires) · remove (retire now; history kept) · restore (version:
-    bring back a retired or older version, as a new version) · history · review (run its check now;
-    without a name, review everything due).
+    bring back a retired or older version, as a new version) · rename (new_name: the record under a new
+    name, as a copy: the old one is deprecated toward it, and a renamed policy's scripts and the aliases
+    move along) · history · review (run its check now; without a name, review everything due).
     You change your own records freely, and the user's not at all (add yours under another name). A
     version that widens a grant (a policy's commands, network, mounts, limits or layers; a layer built
     with the network) waits for the user's approval; everything else is in force at once. Keep
@@ -326,6 +327,12 @@ def cap(action: Literal["kinds", "list", "show", "add", "update", "deprecate", "
     if action == "restore":
         _, msg = caps.restore(kind, name, actor="model", version=version or None)
         return "\n".join(head + [msg])
+    if action == "rename":
+        if not new_name:
+            raise CapError("rename needs new_name")
+        msg, moved, kept = ws.rename(kind, name, new_name, actor="model", why=why)
+        return "\n".join(head + [msg] + ([f"moved along: {', '.join(moved)}"] if moved else [])
+                         + ([f"still on the old name: {', '.join(kept)}"] if kept else []))
     raise CapError(f"unknown action {action!r}")
 
 

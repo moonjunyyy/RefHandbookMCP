@@ -48,7 +48,7 @@ from functools import cache
 from pathlib import Path
 
 KRB5_CONF = os.environ.get("KRB5_CONFIG", "/etc/krb5.conf").split(":")[0]
-ROLES = {"portal": 8080, "sso": 8090, "apps": 8100, "handbook": 8765, "runner": 0}
+ROLES = {"portal": 8080, "sso": 8090, "apps": 8100, "vault": 8110, "calendar": 8120, "handbook": 8765, "runner": 0}
 # A role that runs as another role's user, in its directories (the runner works on the handbook's data).
 RUNS_AS = {"runner": "handbook"}
 # Where the site sign-in lives (portal/sso.py): its pages, its check for nginx, its stylesheet.

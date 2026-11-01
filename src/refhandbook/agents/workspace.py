@@ -315,13 +315,53 @@ class Workspace:
             self.caps.add("policy", name, spec=attrs, actor=actor)
         else:
             self.caps.update("policy", name, spec=attrs, actor=actor)
-        if attrs.get("mounts"):  # root stages what it picks (agents/mounts.py): now, not at the next minute
-            from . import mounts
-
-            p = Path(str(self.hb.path))
-            if p.parent.name == "users":
-                mounts.request(p.parent.parent)
+        if attrs.get("mounts"):
+            self.request_mounts()
         return self.policy(name) if self.g.get_node(f"policy:{name}") else self.caps.get("policy", name)
+
+    def request_mounts(self) -> None:
+        """Root stages what a policy picks (agents/mounts.py): now, not at the next minute."""
+        from . import mounts
+
+        p = Path(str(self.hb.path))
+        if p.parent.name == "users":
+            mounts.request(p.parent.parent)
+
+    def rename(self, kind: str, name: str, new: str, *, actor: str, why: str = "",
+               move: bool = True) -> tuple[str, list[str], list[str]]:
+        """A capability under a new name (Registry.rename), and what refers to it moved along when `move`:
+        a renamed policy's scripts run under the new name, an alias of the record points to the new one.
+        (message, moved, kept): kept names what still uses the old name: what the actor may not change,
+        what was not to be moved, and the policies using a renamed layer (a policy pins a layer's versions,
+        which the new name does not have: the user picks there)."""
+        _, msg = self.caps.rename(kind, name, new, actor=actor, why=why)
+        if not self.caps.get(kind, new)["attrs"].get("version"):  # waits for the user: the old name stays in use
+            move = False
+        users: list[tuple[str, str, str, str]] = []
+        if kind == "policy":
+            users += [("script", r["attrs"]["name"], "policy", new) for r in self.caps.list("script")
+                      if r["attrs"].get("version") and self.caps.version(r)["spec"].get("policy") == name]
+        users += [("alias", r["attrs"]["name"], "target", f"{kind}:{new}") for r in self.caps.list("alias")
+                  if r["attrs"].get("version") and self.caps.version(r)["spec"].get("target") == f"{kind}:{name}"]
+        moved: list[str] = []
+        kept: list[str] = []
+        for k, n, key, value in users:
+            if not move:
+                kept.append(f"{k} {n}")
+                continue
+            try:
+                self.caps.update(k, n, spec={key: value}, actor=actor, note=f"{kind} {name} renamed to {new}")
+                moved.append(f"{k} {n}")
+            except KernelError:  # the model moves only its own
+                kept.append(f"{k} {n}")
+        if kind == "layer":
+            kept += [f"policy {p}" for p in self.policies()
+                     if any(str(x).split("@", 1)[0] == name for x in self.policy(p)["attrs"].get("layers") or [])]
+        if kind == "policy":
+            rec = self.caps.get("policy", new)
+            if rec["attrs"].get("version") and self.caps.version(rec)["spec"].get("mounts"):
+                self.request_mounts()
+        return msg, moved, kept
 
     def policy(self, name: str) -> dict[str, Any]:
         n = self.g.get_node(f"policy:{_name(name, 'policy')}")

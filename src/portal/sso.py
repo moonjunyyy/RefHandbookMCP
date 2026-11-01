@@ -24,6 +24,8 @@ from starlette.concurrency import run_in_threadpool
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import audit, i18n, tokens, validators
+from . import membership
+from . import site as site_mod
 from .config import Settings
 from .facts import SIGNIN, facts
 from .kerberos import Kerberos, KerberosError, LoginResult
@@ -45,16 +47,8 @@ def safe_next(value: str | None) -> str:
 
 def nss_groups(uid: str) -> set[str]:
     """The user's groups as the system sees them (NSS: the directory's posixGroups), for what the main
-    page shows; nothing on failure (the apps check access themselves)."""
-    import grp
-    import os
-    import pwd
-
-    try:
-        pw = pwd.getpwnam(uid)
-        return {grp.getgrgid(g).gr_name for g in os.getgrouplist(uid, pw.pw_gid)}
-    except (KeyError, OSError):
-        return set()
+    page shows; nothing on failure (the apps check access themselves). portal/membership.py has it."""
+    return membership.groups_of(uid)
 
 
 def next_from_query(query: str) -> str:
@@ -248,12 +242,19 @@ def create_app(settings: Settings | None = None, kerberos=None, signing_key=None
 
         lang = i18n.current()  # the words of the site file in the person's language, where it has them
 
+        theme = request.cookies.get("theme", "")  # the person's setting, which the pages write (docs/frame.md §2)
+        theme = theme if theme in site_mod.THEMES else "auto"
+
         def card(a):  # noqa: ANN001, ANN202 — `href`: where the app opens (its first link, or its menu's)
             return {"id": a.id, "title": a.text("title", lang), "description": a.text("description", lang),
-                    "code": a.code, "icon": a.icon, "href": a.menu_href or (a.links[0].href if a.links else ""),
-                    "links": [{"label": ln.label_in(lang), "href": ln.href} for ln in a.links]}
+                    "about": a.text("about", lang), "tags": [t(x) for x in a.tags], "code": a.code, "icon": a.icon, "href": a.menu_href or (a.links[0].href if a.links else ""),
+                    "optional": a.optional,
+                    "links": [{"label": ln.label_in(lang), "href": ln.href} for ln in a.links],
+                    "widgets": [{"id": w.id, "title": w.text("title", lang), "href": w.href, "size": w.size}
+                                for w in a.widgets]}
         return JSONResponse({"uid": uid, "title": s.site_title, "signin": SIGNIN, "portal": facts().portal_root,
-                             "lang": lang, "cards": [card(a) for a in site.cards(groups)],
+                             "lang": lang, "theme": theme, "frame": site_mod.FRAME,
+                             "cards": [card(a) for a in site.cards(groups)],
                              "menu": [{"label": ln.label, "href": ln.href} for ln in site.menu(groups, lang)]},
                             headers={"Cache-Control": "no-store", "Vary": "Cookie, Accept-Language"})
 

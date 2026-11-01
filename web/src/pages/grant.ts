@@ -1,8 +1,8 @@
 // What a run is given besides its blocks (a preset, a run): the limits, the pruning levels, the sandbox
 // policy and effort; and the parts a block's key and model are picked with.
 
-import { Json } from '../lib/api';
-import { h } from '../lib/dom';
+import { h } from '/auth/static/site.js';
+import type { Json } from '/auth/static/site.js';
 import { n_, t } from '../lib/i18n';
 
 export interface Key { ref: string; provider: string; label: string; format: string; models: string[];

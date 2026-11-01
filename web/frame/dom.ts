@@ -1,6 +1,6 @@
 // A small element builder: h('div', {class: 'card'}, 'text', child, [more]). Children that are
 // null, undefined or false are skipped, so a part can be left out with `cond && h(...)`. Text is
-// always set as text (never as HTML).
+// always set as text (never as HTML). Served to every page in site.js (docs/frame.md §1).
 
 export type Child = Node | string | number | null | undefined | false | Child[];
 type Attrs = Record<string, unknown>;

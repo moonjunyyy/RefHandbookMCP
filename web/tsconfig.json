@@ -3,14 +3,27 @@
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "Bundler",
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noImplicitReturns": true,
     "skipLibCheck": true,
     "isolatedModules": true,
-    "types": []
+    "types": [],
+    "paths": {
+      "/auth/static/site.js": [
+        "./frame/index.ts"
+      ]
+    }
   },
-  "include": ["src"]
+  "include": [
+    "src",
+    "frame",
+    "widgets"
+  ]
 }

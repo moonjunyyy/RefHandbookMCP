@@ -88,20 +88,43 @@ class _LedgerRefs:
 def _row_ref(refs: "_LedgerRefs", rid: str) -> str:
     """A reference that legacy resolves among rows only (deps, members, claims)."""
     nid = _row_id(refs.L, rid)
-    if refs.g.get_node(nid) is None:
-        refs.g.ensure_missing(nid, actor=ACTOR, attrs={"rid": rid})
+    n = refs.g.get_node(nid)
+    if n is None:
+        refs.g.ensure_missing(nid, actor=ACTOR, attrs={"rid": rid, "xref": f"{refs.L}/{rid}"})
         refs.g.link(refs.L, CONTAINS, nid, actor=ACTOR)
+    elif n["type"] == MISSING and not refs.g.edges(src=refs.L, type_=CONTAINS, dst=nid):
+        refs.g.link(refs.L, CONTAINS, nid, actor=ACTOR)  # a placeholder another ledger's ref made first
     return nid
 
 
-def _edge_type(g: Graph, rel: str) -> str:
-    """The edge type of a dep relation. Legacy accepts any `word:` prefix; each gets its own type in
-    the dep namespace, so `on:A1` or `member:A1` stays a dep and never becomes structure."""
-    name = encode_type("dep", rel)
-    if g.get_type(name) is None:
-        g.define_type(name, "edge", actor=ACTOR, pkg=rs_pkg.PKG, classes=["dep", "basis"],
-                      description=f"dep relation {rel!r} found in imported data (unknown: a basis)")
-    return name
+def _xref_node(g: Graph, L2: str, rid: str) -> str:
+    """The node a cross-ledger reference `L2/rid` rests on: the row itself when L2 is in the graph,
+    else a placeholder that no ledger contains (so L2's projection takes it over, and dropping the
+    referring ledger does not take it away)."""
+    nid = _row_id(L2, rid)
+    if g.get_node(nid) is None:
+        g.ensure_missing(nid, actor=ACTOR, attrs={"rid": rid, "xref": f"{L2}/{rid}"})
+    return nid
+
+
+DEP_EDGE = encode_type("dep", legacy.REL)
+
+
+def _dep_target(g: Graph, refs: "_LedgerRefs", target: str) -> str:
+    return _xref_node(g, *target.split("/", 1)) if "/" in target else _row_ref(refs, target)
+
+
+def relink_incoming(g: Graph, db, L: str) -> None:
+    """Restore the dep edges other ledgers hold into L (a projection of L recreates L's nodes, and the
+    edges into the old ones went with them). `db` is the legacy store the rows are read from."""
+    for r in db.execute("SELECT ledger, id, dep FROM rl_rows WHERE ledger != ? AND sec NOT IN ('K', 'U') AND dep LIKE ?",
+                        (L, f"%{L}/%")):
+        src = _row_id(r["ledger"], r["id"])
+        if g.get_node(src) is None:
+            continue
+        for lg2, d in legacy.xrefs(r["dep"]):
+            if lg2 == L:
+                g.link(src, DEP_EDGE, _xref_node(g, L, d), actor=ACTOR)
 
 
 def ledger_to_graph(g: Graph, data: dict[str, Any]) -> str:
@@ -121,7 +144,11 @@ def ledger_to_graph(g: Graph, data: dict[str, Any]) -> str:
             if sec not in rs_pkg.SEC_TYPE:
                 raise KernelError(f"row {r['id']}: unknown section {sec!r}")
             nid = _row_id(L, r["id"])
-            attrs = {"rid": r["id"], "sec": sec, **{k: r[k] for k in ROW_KEYS}, "clock": r["clock_updated"]}
+            attrs = {"rid": r["id"], "sec": sec, "xref": f"{L}/{r['id']}", **{k: r[k] for k in ROW_KEYS},
+                     "clock": r["clock_updated"]}
+            old = g.get_node(nid)
+            if old is not None and old["type"] == MISSING:  # a placeholder a cross-ledger ref made
+                g.delete_node(nid, actor=ACTOR)  # (its incoming edges come back with relink_incoming)
             g.put_node(nid, rs_pkg.SEC_TYPE[sec], actor=ACTOR, state=legacy.key(r["status"]), content=r["content"],
                        attrs=attrs, origin=r["origin"], validate=False)
             g.link(L, CONTAINS, nid, actor=ACTOR)
@@ -160,12 +187,12 @@ def ledger_to_graph(g: Graph, data: dict[str, Any]) -> str:
         # structure: the meaning held in the cells
         for r in rows:
             nid = _row_id(L, r["id"])
-            if r["sec"] == "K":
-                for d in legacy.ID_RE.findall(r["dep"] or ""):
+            if r["sec"] in ("K", "U"):  # a plan or a directive: its dep says where it works, not what it rests on
+                for d in legacy.basis(r["dep"]):
                     g.link(nid, "on", _row_ref(refs, d), actor=ACTOR)
                 continue
-            for rel, d in legacy.edges(r["dep"]):
-                g.link(nid, _edge_type(g, rel), _row_ref(refs, d), actor=ACTOR)
+            for _, target in legacy.edges(r["dep"]):
+                g.link(nid, DEP_EDGE, _dep_target(g, refs, target), actor=ACTOR)
         for c in tables.get("rl_configs", []):
             for m in c["members"].split():
                 g.link(_cfg_id(L, c["name"]), "member", _row_ref(refs, m), actor=ACTOR)
@@ -348,4 +375,4 @@ def handbook_from_graph(g: Graph) -> dict[str, Any]:
 
 
 __all__ = ["MISSING", "drop_handbook", "drop_ledger", "ensure_session", "ledgers_in_graph", "handbook_from_graph", "handbook_to_graph", "install", "ledger_from_graph",
-           "ledger_to_graph"]
+           "ledger_to_graph", "relink_incoming"]

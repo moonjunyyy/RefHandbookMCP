@@ -8,10 +8,9 @@
 // simple case), so this one editor saves, runs and schedules them all; a past run opens here too
 // (?from=<run>), to start again as it was or changed. The backend checks a flow and says what is wrong.
 
-import { agents, Json } from '../lib/api';
-import { h, replace, svg, values } from '../lib/dom';
+import { act, agents, empty, flash, flashNext, form, go, h, link, main, pageHead, replace, section, svg, tag, values, when } from '/auth/static/site.js';
+import type { Json } from '/auth/static/site.js';
 import { n_, t } from '../lib/i18n';
-import { act, buttonLink, empty, flash, flashNext, form, go, link, main, pageHead, section, tag, when } from '../lib/ui';
 import { grantForm, Key, keyLabel, modelPicker, Options } from './grant';
 import { cronHelp, scheduling } from './schedule';
 import { agentTabs } from './tabs';
@@ -177,10 +176,9 @@ export async function presets(name?: string): Promise<void> {
   const [list, keys] = await Promise.all([agents.get('/presets') as Promise<Json[]>, agents.get('/keys') as Promise<Key[]>]);
   const mine = new Set(keys.map(k => k.ref));
   replace(main(),
-    pageHead(t('프리셋'), t('자주 하는 실행을 순서도로 저장해 두고, 바로 실행하거나 예약합니다. 블럭 하나짜리가 가장 단순한 프리셋이고, 블럭을 이어 단계를 나누거나 결과에 따라 갈래를 둘 수 있습니다.'),
-      agentTabs()),
+    pageHead(t('프리셋'), agentTabs()),
     section(t('프리셋 ({n})', { n: list.length }),
-      h('div', { class: 'actions' }, buttonLink('/agents/presets/new', t('새 프리셋'))),
+      h('div', { class: 'actions' }, link('/agents/presets/new', t('새 프리셋'))),
       list.length ? list.map(p => presetItem(p, mine)) : empty(t('아직 프리셋이 없습니다. 새 프리셋으로 블럭 하나부터 시작하세요.'))));
 }
 
@@ -202,7 +200,7 @@ export function presetItem(p: Json, mine: Set<string>): HTMLElement {
         : agents.post(`/presets/${encodeURIComponent(p.name)}/run`));
       if (r) { flashNext('ok', t('{title}: 실행을 시작했습니다.', { title: p.title })); go(`/agents/runs/${r.id}`); }
     }, input, h('button', { disabled: todo > 0 }, t('실행')),
-      buttonLink(`/agents/presets/${p.name}`, t('열기 · 예약'), true)));
+      link(`/agents/presets/${p.name}`, t('열기 · 예약'))));
 }
 
 // ── the editor ──────────────────────────────────────────────────────────
@@ -511,7 +509,7 @@ async function editor(name: string | null): Promise<void> {
     if (!name && !String(v.name).trim()) { flash('error', t('저장하려면 이름을 적으세요 (저장 없이 실행만 해도 됩니다).')); return; }
     const id = name ?? String(v.name);
     const body = { goal: v.goal, title: v.title, grant: gf.grant(), flow };
-    const p = await act(b, () => agents.put(`/presets/${encodeURIComponent(id)}`, body), then === 'stay' && name ? t('저장했습니다.') : undefined);
+    const p = await act(b, () => agents.put(`/presets/${encodeURIComponent(id)}`, body));
     if (!p) return;  // refused: everything stays as it was typed
     dirty = false;
     unsaved.textContent = '';
@@ -551,8 +549,8 @@ async function editor(name: string | null): Promise<void> {
   }
 
   replace(main(),
-    pageHead(preset ? preset.title : past ? t('지난 실행으로 새 실행') : t('새 프리셋'), [link('/agents/presets', t('프리셋 목록')),
-      ' · ', t('블럭마다 키·모델·명령을 정하고, 끝난 뒤 어디로 갈지를 다음 동작(화살표)으로 잇습니다.')], agentTabs()),
+    pageHead(preset ? preset.title : past ? t('지난 실행으로 새 실행') : t('새 프리셋'), agentTabs()), h('p', { class: 'muted' }, [link('/agents/presets', t('프리셋 목록')),
+      ' · ', t('블럭마다 키·모델·명령을 정하고, 끝난 뒤 어디로 갈지를 다음 동작(화살표)으로 잇습니다.')]),
     !keys.length && h('p', { class: 'flash error' }, t('블럭에 쓸 API 키가 없습니다. 먼저 등록하세요.'), ' ', link('/agents/keys', t('API 키 등록'))),
     section(t('순서도'), head),
     section(t('흐름'),

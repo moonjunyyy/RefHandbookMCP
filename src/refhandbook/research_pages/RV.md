@@ -25,6 +25,24 @@ ENTRY — object: a K routed `@RV`, from X2 or X3 when a diagnosis exposes a mis
      second that overlaps it;
    - or a card wording change, recorded as a `P` row (`proposal: <card> …`).
 
+   The body is a Datalog clause, `name(Head…) :- atom, atom.` (several clauses
+   with one head may follow each other); the rule's name is its head predicate.
+   Graph atoms: `node(Id, Type, State)`, `edge(Src, Type, Dst)`, `attr(Id, Key, V)`,
+   `origin(Id, O)`, `class(Id, Class)`, `tclass(Type, Class)`; `Self` is the scope
+   under evaluation (a `ledger` for `check`/`obligation`, a `session` for `close`).
+   The research package derives the vocabulary a proposal normally uses:
+   `rs_row(L, X, Rid, Sec)` (a row of ledger L), `rs_model(X)`, `rs_dep(X, Rel, Dn)`
+   and `rs_target(X, Dn, Name)` (what a row rests on, and the name it is reported
+   by), `rs_basis_row(L, X, Rid)` (a live non-K row), `rs_verdict(V, H, C, Hid, Cn)`,
+   `rs_v_ok`, `rs_v_true`, `rs_member(C, M)`, `rs_doc(L, Dn, Did, Role)`,
+   `rs_session_ledger(T, L)`, `rs_chat(T)`. Row types are `claim`, `object`,
+   `result`, `assumption`, `directive`, `reading`, `symbol`, `criterion`,
+   `unknown`, `approximation`, `parked`, `plan`; state classes include `live`,
+   `invalidating`, `finished`, `not_basis`, `rejudge` (stale, proposed, open),
+   `withdrawn`, `k_live`, `u_open`. Severity is `block`, `warn` or `info`; phase
+   `check`, `obligation`, `close`, `pre` or `derive`. The full grammar is the
+   docstring of `kernel/rules.py`.
+
    State the expected benefit and the plausible overconstraint (which correct
    work it would also stop). A one-off slip does not become a rule.
 4. Read the trial: a proposal runs at once on every ledger as a **warning**.

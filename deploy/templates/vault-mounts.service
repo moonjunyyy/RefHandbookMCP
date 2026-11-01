@@ -1,0 +1,18 @@
+# @@generated@@
+# The vaults people registered (portal/vault.py: /var/lib/@@unit:vault@@/vault.db), staged for the
+# vault service as idmapped binds under /run/@@name@@-vault-mounts: through them each person's notes
+# read and write as the service's user, and what it writes stays the person's
+# (src/refhandbook/agents/mounts.py, --picks vault). Root's, in the host's mount namespace on purpose.
+# @@name@@-vault-mounts.path runs it when a vault is registered, @@name@@-vault-mounts.timer every minute.
+[Unit]
+Description=@@name@@ vault mounts, idmapped for the vault's user
+After=local-fs.target nss-user-lookup.target remote-fs.target
+Before=@@unit:vault@@.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/@@unit:vault@@/vault.env
+ExecStart=@@code@@/.venv/bin/refhandbook mounts --picks vault --roots-env PORTAL_VAULT_ROOTS --data-dir /var/lib/@@unit:vault@@ --service-user @@user:vault@@ --stage /run/@@name@@-vault-mounts
+
+[Install]
+WantedBy=multi-user.target

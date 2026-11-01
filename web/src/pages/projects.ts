@@ -2,10 +2,9 @@
 // one), a project (its members, how one joins, what an owner manages), and an invitation link. The
 // operations are the portal API's (/account/api/v1/projects).
 
-import { account, frame, Json } from '../lib/api';
-import { h, replace, values } from '../lib/dom';
+import { account, act, empty, flash, flashNext, form, frame, go, h, link, main, pageHead, replace, section, tag, values, when } from '/auth/static/site.js';
+import type { Json } from '/auth/static/site.js';
 import { n_, t } from '../lib/i18n';
-import { act, buttonLink, empty, flash, flashNext, form, go, link, main, pageHead, section, tag, when } from '../lib/ui';
 
 const api = () => account();
 const P = '/projects';
@@ -48,7 +47,7 @@ export async function projects(): Promise<void> {
   const list = d.projects as Json[];
   const mine = list.filter(p => p.member), others = list.filter(p => !p.member);
   replace(main(),
-    pageHead(t('프로젝트'), t('함께 일하는 사람들의 그룹입니다. 구성원은 그 프로젝트의 저장소와 공유를 함께 씁니다.')),
+    pageHead(t('프로젝트')),
     section(t('내 프로젝트 ({n})', { n: mine.length }), mine.length ? table(mine) : empty(t('아직 들어 있는 프로젝트가 없습니다.'))),
     section(t('다른 프로젝트 ({n})', { n: others.length }), others.length ? table(others) : empty(t('들어갈 수 있는 다른 프로젝트가 없습니다.'))),
     d.may_create && section(t('새 프로젝트'), form({}, async (f, b) => {
@@ -80,13 +79,13 @@ export async function project(cn: string): Promise<void> {
     may.manage && !p.archived && [
       p.owners.includes(uid)
         ? h('button', { class: 'link', onclick: async (e: Event) => {
-          if (await act(e.target as HTMLButtonElement, () => api().del(`${path}/owners/${uid}`), t('{uid}의 소유권을 거뒀습니다.', { uid }))) reload();
+          if (await act(e.target as HTMLButtonElement, () => api().del(`${path}/owners/${uid}`))) reload();
         } }, t('소유자 해임'))
         : h('button', { class: 'link', onclick: async (e: Event) => {
-          if (await act(e.target as HTMLButtonElement, () => api().put(`${path}/owners/${uid}`, {}), t('{uid}을(를) 소유자로 두었습니다.', { uid }))) reload();
+          if (await act(e.target as HTMLButtonElement, () => api().put(`${path}/owners/${uid}`, {}))) reload();
         } }, t('소유자로')),
       h('button', { class: 'link danger-text', onclick: async (e: Event) => {
-        if (await act(e.target as HTMLButtonElement, () => api().del(`${path}/members/${uid}`), t('{uid}을(를) 뺐습니다.', { uid }))) reload();
+        if (await act(e.target as HTMLButtonElement, () => api().del(`${path}/members/${uid}`))) reload();
       } }, t('빼기'))])));
   const joining = [
     may.join && form({ class: 'inline' }, async (f, b) => {
@@ -95,15 +94,15 @@ export async function project(cn: string): Promise<void> {
     }, p.join_policy === 'request' && h('input', { name: 'note', maxlength: 200, placeholder: t('소유자에게 한마디 (선택)') }),
       h('button', null, p.join_policy === 'open' ? t('들어가기') : t('가입 신청'))),
     p.requested && h('button', { class: 'secondary', onclick: async (e: Event) => {
-      if (await act(e.target as HTMLButtonElement, () => api().post(`${path}/withdraw`), t('신청을 거뒀습니다.'))) reload();
+      if (await act(e.target as HTMLButtonElement, () => api().post(`${path}/withdraw`))) reload();
     } }, t('신청 거두기')),
     may.leave && h('button', { class: 'secondary danger-text', onclick: async (e: Event) => {
-      if (await act(e.target as HTMLButtonElement, () => api().post(`${path}/leave`), t('프로젝트에서 나왔습니다.'))) reload();
+      if (await act(e.target as HTMLButtonElement, () => api().post(`${path}/leave`))) reload();
     } }, t('나가기')),
     !p.member && !may.join && !p.requested && p.join_policy === 'invite' && h('p', { class: 'muted small' }, t('초대 링크로만 들어갈 수 있습니다.')),
   ].filter(Boolean);
   replace(main(),
-    pageHead(p.title, [h('code', null, p.cn), ' · gid ', String(p.gid), ' · ', state(p)]),
+    pageHead(p.title), h('p', { class: 'muted' }, [h('code', null, p.cn), ' · gid ', String(p.gid), ' · ', state(p)]),
     h('div', { class: 'grid' },
       section(t('프로젝트'), h('dl', null,
         h('dt', null, t('설명')), h('dd', null, p.description || '-'),
@@ -115,7 +114,7 @@ export async function project(cn: string): Promise<void> {
       section(t('구성원 ({n})', { n: p.members.length }), members,
         may.manage && !p.archived && form({ class: 'row' }, async (f, b) => {
           const uid = String(values(f).uid).trim();
-          if (await act(b, () => api().put(`${path}/members/${encodeURIComponent(uid)}`, {}), t('{uid}을(를) 넣었습니다.', { uid }))) reload();
+          if (await act(b, () => api().put(`${path}/members/${encodeURIComponent(uid)}`, {}))) reload();
         }, h('input', { name: 'uid', required: true, placeholder: t('사용자명'), pattern: '[a-z][a-z0-9_-]{1,31}', autocomplete: 'off' }),
           h('button', { class: 'secondary' }, t('구성원 넣기')))),
       may.manage && section(t('가입 신청 ({n})', { n: (p.requests ?? []).length }),
@@ -124,15 +123,15 @@ export async function project(cn: string): Promise<void> {
           r.note && h('p', null, r.note),
           h('div', { class: 'actions' },
             h('button', { onclick: async (e: Event) => {
-              if (await act(e.target as HTMLButtonElement, () => api().post(`${path}/requests/${r.id}/approve`), t('{uid}을(를) 넣었습니다.', { uid: r.uid }))) reload();
+              if (await act(e.target as HTMLButtonElement, () => api().post(`${path}/requests/${r.id}/approve`))) reload();
             } }, t('승인')),
             h('button', { class: 'secondary', onclick: async (e: Event) => {
-              if (await act(e.target as HTMLButtonElement, () => api().post(`${path}/requests/${r.id}/reject`), t('{uid}의 신청을 거절했습니다.', { uid: r.uid }))) reload();
+              if (await act(e.target as HTMLButtonElement, () => api().post(`${path}/requests/${r.id}/reject`))) reload();
             } }, t('거절'))))) : empty(t('기다리는 신청이 없습니다.'))),
       may.manage && section(t('초대 링크'),
         !p.archived && form({ class: 'inline' }, async (f, b) => {
           const r = await act(b, () => api().post(`${path}/invites`, values(f)));
-          if (r) replace(main(), pageHead(p.title, null), section(t('링크를 만들었습니다'),
+          if (r) replace(main(), pageHead(p.title), section(t('링크를 만들었습니다'),
             h('p', null, t('이 링크는 지금 한 번만 보입니다. 받은 사람이 로그인한 채 열면 바로 구성원이 됩니다.')),
             h('p', { class: 'secret' }, h('code', null, r.link)),
             h('div', { class: 'actions' },
@@ -143,12 +142,12 @@ export async function project(cn: string): Promise<void> {
           h('thead', null, h('tr', null, [t('메모'), t('만든 사람'), t('기한'), ''].map(x => h('th', null, x)))),
           h('tbody', null, (p.invites as Json[]).map(i => h('tr', null, h('td', { class: 'wrap' }, i.note || '-'), h('td', null, i.created_by),
             h('td', null, when(i.expires)), h('td', null, h('button', { class: 'secondary', onclick: async (e: Event) => {
-              if (await act(e.target as HTMLButtonElement, () => api().post(`${path}/invites/${i.id}/revoke`), t('링크를 거뒀습니다.'))) reload();
+              if (await act(e.target as HTMLButtonElement, () => api().post(`${path}/invites/${i.id}/revoke`))) reload();
             } }, t('거두기')))))))) : empty(t('살아 있는 링크가 없습니다.'))),
       may.manage && section(t('설정'),
         !p.archived && form({}, async (f, b) => {
           const v = values(f);
-          if (await act(b, () => api().patch(path, v), t('저장했습니다.'))) reload();
+          if (await act(b, () => api().patch(path, v))) reload();
         },
           h('label', null, t('제목'), h('input', { name: 'title', value: p.title, maxlength: 64, required: true })),
           h('label', null, t('설명'), h('textarea', { name: 'description', rows: 2, maxlength: 500 }, p.description)),
@@ -158,10 +157,10 @@ export async function project(cn: string): Promise<void> {
           h('div', { class: 'actions' }, h('button', null, t('저장')))),
         h('div', { class: 'actions' },
           may.archive && h('button', { class: 'danger', onclick: async (e: Event) => {
-            if (await act(e.target as HTMLButtonElement, () => api().post(`${path}/archive`), t('보관했습니다.'))) reload();
+            if (await act(e.target as HTMLButtonElement, () => api().post(`${path}/archive`))) reload();
           } }, t('프로젝트 보관')),
           may.restore && h('button', { onclick: async (e: Event) => {
-            if (await act(e.target as HTMLButtonElement, () => api().post(`${path}/restore`), t('되살렸습니다.'))) reload();
+            if (await act(e.target as HTMLButtonElement, () => api().post(`${path}/restore`))) reload();
           } }, t('되살리기'))),
         h('p', { class: 'muted small' }, t('보관하면 그룹과 구성원은 그대로 남고(파일은 그대로 읽힙니다), 바꾸거나 들어올 수는 없습니다.')),
         may.delete && h('details', { class: 'panel' }, h('summary', null, h('span', { class: 'danger-text' }, t('프로젝트 삭제…'))),
@@ -182,10 +181,10 @@ export async function project(cn: string): Promise<void> {
 // ── an invitation link ──────────────────────────────────────────────────
 
 export async function join(token: string): Promise<void> {
-  replace(main(), pageHead(t('프로젝트 초대'), t('이 링크를 만든 프로젝트에 지금 로그인한 계정으로 들어갑니다.')),
+  replace(main(), pageHead(t('프로젝트 초대')),
     section(t('들어가기'), h('p', null, t('계정: '), h('code', null, frame.uid ?? '-')),
       h('div', { class: 'actions' }, h('button', { onclick: async (e: Event) => {
         const r = await act(e.target as HTMLButtonElement, () => api().post(`${P}/join`, { token }));
         if (r) { flashNext('ok', t('{title}에 들어왔습니다.', { title: r.title })); go(`${P}/${r.cn}`); }
-      } }, t('이 프로젝트에 들어가기')), buttonLink(P, t('프로젝트 목록'), true))));
+      } }, t('이 프로젝트에 들어가기')), link(P, t('프로젝트 목록')))));
 }

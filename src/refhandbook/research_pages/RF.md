@@ -44,7 +44,8 @@ Every recovered item carries the place it came from.
    2. Before citing any specific (a statement, a constant, a condition), open
       the page with `web_fetch`.
    3. Use at most one short quote per source, and paraphrase the rest.
-   4. When sources disagree, record both, joined by a `con:` edge.
+   4. When sources disagree, record both, each naming the other in its
+      evidence as the disagreement.
 4. **Record** each recovered item as a row:
    - internal agreements and definitions are restored as `U`, `R`, `S`, or `A`
      rows with origin `user`;

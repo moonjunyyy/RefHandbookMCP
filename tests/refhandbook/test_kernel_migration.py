@@ -30,15 +30,15 @@ ROWS = [
     row("Z1", "an isolated unknown", "isolated"),
     row("E1", "a model object", "proposed", origin="model", evidence="computed"),
     row("E2", "an accreting object", "established", evidence="computed · correction: a · correction: b",
-        dep="int:A1", clock=3),
+        dep="A1", clock=3),
     row("E3", "a search with no calls", "established", evidence="tried x · not found: "),
     row("E4", "rests on odd things", "established", evidence="followed", dep="Z1 T1 E99"),
     row("E5", "rests on a model premise", "established", evidence="followed", dep="A2"),
     row("E6", "a model row on a superseded premise", "established", origin="model", evidence="computed", dep="A4"),
     row("E7", "a user row on a superseded premise", "established", evidence="computed", dep="A4"),
     row("H1", "an old open claim", "open"),
-    row("H2", "supported only", "true", evidence="computed", dep="sup:E2"),
-    row("H3", "rests on T1 and contradicts H4", "true", evidence="computed", dep="T1 con:H4"),
+    row("H2", "rests on an object", "true", evidence="computed", dep="E2"),
+    row("H3", "rests on T1 and on H4", "true", evidence="computed", dep="T1 ref:H4"),
     row("H4", "the other side", "true", evidence="computed", dep="A1"),
     row("H5", "status disagrees with its verdict", "open", evidence="tried: x", dep="A1"),
     row("E8", "a source with no locator", "established", evidence="sourced: a talk"),
@@ -105,7 +105,7 @@ def test_references_to_nothing_become_missing_nodes_and_survive(everything):
     g = fresh_graph()
     L = migrate.ledger_to_graph(g, everything.export("everything"))
     assert g.node("everything:r:E99")["type"] == "missing"
-    assert [e["dst"] for e in g.edges(src="everything:r:E4", type_="dep_req")] == \
+    assert [e["dst"] for e in g.edges(src="everything:r:E4", type_="dep_ref")] == \
         ["everything:r:E99", "everything:r:T1", "everything:r:Z1"]
     assert g.node("everything:c:nocfg")["type"] == "missing"
 
@@ -147,17 +147,17 @@ def test_handbook_round_trip_with_research_cards_and_a_dangling_goto():
 
 # ── data shapes only an import can produce (review findings 9–12) ─────────
 
-def test_any_word_before_a_colon_stays_a_dep_relation():
-    # legacy edges() reads any `word:` as a relation; none of them may turn into structure
+def test_any_word_before_a_colon_reads_as_the_one_relation():
+    # edges() reads any `word:` (an old relation word, or anything) as ref; none of them may turn into structure
     r = build("odd_rels", [row("A1", "p", "on"), row("E1", "x", "established", evidence="followed",
-                                                    dep="on:A9 member:A9 pending_hit:A1 2x:A1 dép:A1 A9 A9")])
+                                                    dep="on:A9 member:A9 pending_hit:A1 2x:A1 dép:A1 sup:A1 A9 A9")])
     errors, _ = r.check("odd_rels")
     assert errors.count("E1: cites missing A9") == 1  # one finding however many edges name it
     g = fresh_graph()
     L = migrate.ledger_to_graph(g, r.export("odd_rels"))
     assert not g.edges(type_="pending_hit") and not g.edges(type_="on") and not g.edges(type_="member")
-    assert {e["type"] for e in g.edges(src="odd_rels:r:E1")} == \
-        {"dep_on", "dep_member", "dep_pending_hit", "dep_2x", "depx_" + "dép".encode().hex(), "dep_req"}
+    assert {e["type"] for e in g.edges(src="odd_rels:r:E1")} == {"dep_ref"}
+    assert {e["dst"] for e in g.edges(src="odd_rels:r:E1")} == {"odd_rels:r:A1", "odd_rels:r:A9"}
     assert migrate.ledger_from_graph(g, L)["tables"]["rl_pending"] == []
 
 
@@ -176,18 +176,17 @@ def test_kinds_have_separate_namespaces_and_an_imported_main_replaces_the_line()
 
 SOURCED = "E1: 'sourced' without a locator (chat:<uuid>, file:<path>, or a URL)"
 RECALL = "E1: recall is not evidence — retrieve it (RF) or mark [unverified]"
-INT = "E1: 'int' edge to A1 without an explicit map in evidence"
 
 
 @pytest.mark.parametrize("evidence, errors, warnings", [
-    ("ſourced: a talk", [], [INT]),  # the evidence key is the first run of ASCII letters: ſ ends it at once
-    ("sourcedſ x", [SOURCED], [INT]),  # … and here after "sourced"
-    ("  Sourced", [SOURCED], [INT]),
-    ("İrecall of it", [RECALL], [INT]),  # İ lowers to i + a combining dot, which is not a word character
+    ("ſourced: a talk", [], []),  # the evidence key is the first run of ASCII letters: ſ ends it at once
+    ("sourcedſ x", [SOURCED], []),  # … and here after "sourced"
+    ("  Sourced", [SOURCED], []),
+    ("İrecall of it", [RECALL], []),  # İ lowers to i + a combining dot, which is not a word character
     ("MAP-free int", [], []),
 ])
 def test_evidence_words_are_read_as_ascii_keys_and_lowered_text(evidence, errors, warnings):
-    r = build("uni", [row("A1", "p", "on"), row("E1", "x", "established", evidence=evidence, dep="int:A1")])
+    r = build("uni", [row("A1", "p", "on"), row("E1", "x", "established", evidence=evidence, dep="A1")])
     assert r.check("uni") == (errors, warnings)
 
 

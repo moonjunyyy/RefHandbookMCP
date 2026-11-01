@@ -15,6 +15,6 @@ premises; each is its own card.
 - REF-USE — what an item may be used as, by origin, status, section and evidence
 - REF-EVIDENCE — the evidence tags and what earns each
 - REF-CLASSIFY — classifying an item's origin is itself a claim
-- REF-RELATIONS — choosing the exact `dep` relation (basis or link, `sup`, `ref`, `iso`/`int`, `spec`)
+- REF-RELATIONS — what a `dep` edge licenses, and where the finer relation between rows is written
 - REF-APPROX — approximation versus added information; external results stay external
 - REF-EXPLORE — exploration: configurations, taint, exploration verdicts, adoption

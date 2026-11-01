@@ -1,16 +1,16 @@
-// The site's pages, over the services' APIs (docs/site.md "APIs and pages"). One app for every page
-// path: nginx serves this for /, the portal's pages and the agents' pages; the sign-in, Claude's
-// consent and the approvals are server pages of their own.
+// The site's pages, over the services' APIs (docs/site.md "APIs and pages"), on the frame the sign-in
+// serves (/auth/static/site.js, docs/frame.md). One app for every page path: nginx serves this for /,
+// the portal's pages and the agents' pages; the sign-in, Claude's consent and the approvals are server
+// pages of their own.
 
-import { frame, site } from './lib/api';
-import { h, replace } from './lib/dom';
-import { setLang, t } from './lib/i18n';
-import { loadPrefs, prefs } from './lib/prefs';
-import { flash, header, main, message, pageHead, section, showPending } from './lib/ui';
+import { frame, h, header, load, main, message, pageHead, replace, section, showPending } from '/auth/static/site.js';
+import { t } from './lib/i18n';
 import * as account from './pages/account';
 import * as agents from './pages/agents';
 import { presets } from './pages/flows';
-import { apps } from './pages/apps';
+import { app, apps } from './pages/apps';
+import { calendar } from './pages/calendar';
+import { vault } from './pages/vault';
 import { home } from './pages/home';
 import * as projects from './pages/projects';
 import { settings } from './pages/settings';
@@ -22,6 +22,10 @@ function routes(): [RegExp, Page][] {
   return [
     [/^\/$/, home],
     [/^\/apps\/?$/, apps],
+    [/^\/app\/([a-z0-9-]+)\/?$/, app],
+    [/^\/calendar\/?$/, calendar],
+    [/^\/vault\/?$/, vault],
+    [/^\/vault\/([a-z0-9]+)\/?(.*)$/, vault],
     [/^\/settings\/?$/, settings],
     [/^\/projects\/?$/, projects.projects],
     [/^\/projects\/join\/([^/]+)\/?$/, projects.join],
@@ -54,22 +58,17 @@ async function render(): Promise<void> {
       await page(...m.slice(1).filter((x): x is string => x !== undefined).map(decodeURIComponent));
       showPending();
     } catch (e) {
-      replace(main(), pageHead(t('문제가 생겼습니다'), null), section('', h('p', null, message(e))));
+      replace(main(), pageHead(t('문제가 생겼습니다')), section('', h('p', null, message(e))));
     }
+    header();  // the apps the person has on may have changed on this page
     return;
   }
-  replace(main(), pageHead(t('없는 페이지'), null), section('', h('p', null, t('이 주소에는 페이지가 없습니다.')),
+  replace(main(), pageHead(t('없는 페이지')), section('', h('p', null, t('이 주소에는 페이지가 없습니다.')),
     h('a', { href: '/' }, t('홈으로'))));
 }
 
 async function start(): Promise<void> {
-  try {
-    Object.assign(frame, await site.get('/me'));
-  } catch (e) {
-    flash('error', message(e));
-  }
-  await loadPrefs();
-  setLang(prefs.lang);
+  await load();
   header();
   window.addEventListener('popstate', () => void render());
   await render();

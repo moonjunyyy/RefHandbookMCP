@@ -1,10 +1,9 @@
 // A preset's schedules (the presets page and the flow page alike): add one by cron, with the next
 // times shown as it is typed; each one turned off or on, or removed.
 
-import { agents, Json } from '../lib/api';
-import { h } from '../lib/dom';
+import { act, agents, flashNext, form, h, link, showPending, tag, when } from '/auth/static/site.js';
+import type { Json } from '/auth/static/site.js';
 import { t } from '../lib/i18n';
-import { act, flashNext, form, link, showPending, tag, when } from '../lib/ui';
 
 export const cronHelp = () => [t('예약은 cron 다섯 칸(분 시 일 월 요일, 서버 시간)입니다.'), ' ',
   h('code', null, '0 9 * * mon-fri'), ': ', t('평일 9시'), ', ', h('code', null, '@daily'), ': ', t('매일'), '. ',

@@ -271,9 +271,12 @@ pages, as long as the API keeps its version.
 
 | path | who answers |
 |---|---|
-| `/`, `/apps`, `/settings`, `/account/…`, `/agents/…` | the pages app (`[[app]] id = "site"`, `pages = [...]`): nginx answers each with its `index.html` |
+| `/`, `/apps`, `/app/<id>`, `/settings`, `/account/…`, `/agents/…`, `/projects/…`, `/calendar`, `/vault/…` | the pages app (`[[app]] id = "site"`, `pages = [...]`): nginx answers each with its `index.html` |
 | `/apps/site/api/store/prefs` | each person's settings, in the pages app's own store (`portal/apps.py`) |
+| `/apps/site/widgets/<app>.js` | the widget modules of the apps the pages app draws (the calendar, the notes, the projects), built with it |
 | `/auth/api/v1/me`, `/account/api/v1/…`, `/agents/api/v1/…` | the sign-in, the portal (`portal/account_api.py`), the handbook (`refhandbook/agents/api.py`) |
+| `/calendar/api/v1/…`, `/calendar/feed/<token>.ics` | the calendar (`portal/calendar.py`, docs/calendar.md); the feed is public, the token is its key |
+| `/vault/api/v1/…` | the notes (`portal/vault.py`, docs/vault.md) |
 | `/auth/login`, `/auth/expired`, `/login` (Claude's consent), `/approvals/…` | server pages with no script: who someone is, and what a model may do, are decided there |
 | `/account/request`, `/account/join/…` | the portal's public pages (no account yet) |
 
@@ -293,7 +296,7 @@ installer renders nginx from what is published), so an update never leaves a pat
 
 Updates do not refuse anyone:
 
-- Each service that listens (portal, sso, apps, handbook) takes its port from a socket unit,
+- Each service that listens (portal, sso, apps, vault, calendar, handbook) takes its port from a socket unit,
   `<name>-<role>.socket`, which systemd keeps open while the service restarts; connections that
   arrive meanwhile wait in its queue and are answered by the new process. The installer restarts the
   services one at a time. (Moving onto the sockets the first time stops each service once: it holds
@@ -304,20 +307,80 @@ Updates do not refuse anyone:
 - nginx is reloaded, not restarted. The runner resumes its agents after a restart (their leases
   expire and the next runner takes them).
 
-## Each person's site: apps, start page, language
+## The frame: what every page and app shares
 
-Every app of the site file with a card (`[[app]]`, `card = true`, the default) is offered to whoever
-may see it (`groups`): on the main page, and in the app list (`/apps`), which shows apps added to
-the file later as well (new to a person until they have seen the list). An app may have an `icon`
-and its words in other languages (`tr.en = { title, description, menu }`, a link's `tr = { en = … }`);
-the frame (`/auth/api/v1/me`) gives them in the person's language, with each card's `href` (where it
-opens).
+The sign-in serves one frame to every page of the site and every app it hosts (docs/frame.md):
+
+| `/auth/static/…` | what |
+|---|---|
+| `theme.css` | the tokens only (colours, families, shadows, radii), for the light theme, the dark one, and the OS's choice when the person made none |
+| `parts.css` | the parts (header, cards, forms, buttons, tags, the main page's grid, the catalog, the menu, the flow designer…), in tokens only: no colour is named here |
+| `style.css` | the two above, under the name every page links |
+| `theme.js` | three lines that put the person's theme on `<html data-theme>` before the first paint, from the site cookie |
+| `site.js` | the frame code (ES module): `load()`, the person's settings, the parts, the widget host; `site.d.ts` beside it for TypeScript |
+
+A page takes it with two lines in its head (`theme.js`, then `style.css`) and one import
+(`import { load, header, … } from '/auth/static/site.js'`). An app overrides a token by declaring it
+again in its own stylesheet; nothing in the site file says anything about themes. The tokens, the
+classes and the exports are the contract: `site.js` exports `version` and the frame answers `frame`
+in `/auth/api/v1/me`; a change that breaks them ships beside this one as `/auth/static/v2/`.
+`web/frame/` is the source; `npm run build` (in `web/`) emits `site.js` and its types into
+`src/portal/static/`, which are committed, so a fresh install serves them without a build.
+
+## Each person's site: apps, widgets, theme, language, start page
+
+Every app of the site file (`[[app]]`) is **off** until a person turns it on. The catalog (`/apps`)
+is a store: a card for each app they may see (`groups`) — its `icon`, its `title` (a link to the
+app's page), its one line (`description`), its `tags` — with a switch; a search and a row of chips
+(전체 · 내 앱 · each tag) narrow the cards, and the order is the site file's. The app's page
+(`/app/<id>`) says more: `about` (what it does, one to three sentences), the widgets it offers the
+main page, its links, its address (`code`), and the same switch — on, and 열기 is its first action.
+An app that is on is in the person's header, on their main page and among their start pages.
+`optional = false` names an app that cannot be turned off (the account): it lives in the person's
+own menu, under their name, with the catalog, the settings and the way out. The words have a shape
+(`tests/portal/test_site.py`): a title of at most 24 characters with no parenthesis, a line of at
+most 48 with no trailing period, an about of at most 240, tags from the site's vocabulary
+(`portal/site.py` `TAGS`: 연구 · 글쓰기 · AI · 도구 · 일정 · 자료), and every optional app tagged.
+An app's words come in other languages too (`tr.en = { title, description, about, menu }`, a link's
+`tr = { en = … }`); the frame (`/auth/api/v1/me`) gives them in the person's language, the tags
+included, with each card's `href` (where it opens).
+
+The main page is a grid of **widgets**: the pieces the apps that are on offer. An app declares them:
+
+```toml
+[[app.widget]]
+id = "boards"            # unique within the app
+title = "최근 작업판"
+module = "widget.js"     # a static app: a path under its own files; a service: an absolute path
+size = "1x1"             # 1x1 | 2x1 | 2x2 cells
+tr.en = { title = "Recent boards" }
+```
+
+The module is an ES module the frame imports from the app's own path; its default export draws into
+the cell: `export default (host, ctx) => …`, with `ctx = { frame, prefs, t, lang, theme, go, api,
+card, widget }`. An app the pages app draws (the calendar, the notes, the projects) has no files of
+its own, so its module is the pages app's: `module = "/apps/site/widgets/<app>.js"`, built from
+`web/widgets/<app>.ts` beside the pages (`web/vite.widgets.config.ts`; `npm run build` makes both),
+one module per app that reads `ctx.widget.id` for which of its widgets to draw. It calls its own app's API (`/apps/<id>/api/…`) with the site cookie, as the app's
+pages do, and styles itself with the tokens and the parts. Every app also has a *launcher* widget
+(its mark, name and links), the one shown when it declares no module and the one a failing module
+falls back to. The main page's `편집` lets the person drag cells into order (Alt+←/→ from the
+keyboard), take them off, and add any widget of an app that is on; with no app on, the main page is
+the catalog.
 
 What a person chooses is kept with their account, not their browser: the pages app has `storage`,
-so `/apps/site/api/store/prefs` holds it (`web/src/lib/prefs.ts`): the language, the page to open
-after signing in, and the main page's apps (their order, which are hidden, which have been seen). The
-settings page (`/settings`) changes them. Signing in to no page in particular lands on `/?start`,
-which opens the start page; a link to a page signs in to that page.
+so `/apps/site/api/store/prefs` holds it (`web/frame/frame.ts`): the language, the theme
+(`auto | light | dark`), the page to open after signing in, the apps that are on (in their order), the
+main page's widgets, and which apps have been seen. The settings page (`/settings`) changes the first
+three; the catalog and the main page change the rest. The language and the theme are also site cookies
+(`lang`, `theme`), which the server pages and `theme.js` read. An account from before this layout
+(`order`, `hidden`) wakes up with the apps it showed turned on. Signing in to no page in particular
+lands on `/?start`, which opens the start page; a link to a page signs in to that page.
+
+The pages themselves are held to the frame's rules (docs/frame.md §5): a page head has no
+explanation, an explanation is a `help()` mark, a move is a link, a state is a switch, an action's
+result shows in place. `tests/portal/test_frame.py` checks the colours, the theme, the widgets and
+those rules (a ratchet on the pages not yet redrawn).
 
 ### Languages
 

@@ -33,13 +33,19 @@ def _ts_code(text: str) -> str:
     return "\n".join(re.sub(r"(^|\s)//.*$", "", ln) for ln in text.splitlines())
 
 
+def _ours(p: Path) -> bool:
+    """Not a macOS AppleDouble file (._name), which a synced share writes beside each file it touches."""
+    return not p.name.startswith("._")
+
+
 def _web_sources() -> list[Path]:
-    return [p for p in sorted(WEB.rglob("*.ts")) if "i18n" not in p.relative_to(WEB).parts[:1]]
+    pages = [p for p in sorted(WEB.rglob("*.ts")) if "i18n" not in p.relative_to(WEB).parts[:1] and _ours(p)]
+    return pages + [p for p in sorted((WEB.parent / "widgets").glob("*.ts")) if _ours(p)]  # the widgets speak the pages' words
 
 
 def _web_catalog() -> dict[str, str]:
     out = {}
-    for p in (WEB / "i18n" / "en").glob("*.ts"):
+    for p in filter(_ours, (WEB / "i18n" / "en").glob("*.ts")):
         for m in ENTRY.finditer(p.read_text()):
             out[m.group(1)] = p.name
     return out
@@ -65,9 +71,9 @@ def test_no_korean_is_left_outside_t_in_the_pages():
 # ── the server pages and messages (Python, templates) ────────────────────
 
 # the kernel's rule packages are rules (their Korean words are what rules match in a model's writing), not pages
-SERVER = [*sorted((ROOT / "src" / "portal").glob("*.py")),
-          *[p for p in sorted((ROOT / "src" / "refhandbook").rglob("*.py")) if "packages" not in p.parts]]
-TEMPLATES = sorted((ROOT / "src" / "portal" / "templates").glob("*.html"))
+SERVER = [*filter(_ours, sorted((ROOT / "src" / "portal").glob("*.py"))),
+          *[p for p in sorted((ROOT / "src" / "refhandbook").rglob("*.py")) if "packages" not in p.parts and _ours(p)]]
+TEMPLATES = list(filter(_ours, sorted((ROOT / "src" / "portal" / "templates").glob("*.html"))))
 JINJA_T = re.compile(r"""\b(?:t|N_)\(\s*(['"])((?:(?!\1).)*)\1""")
 
 

@@ -27,6 +27,12 @@ from pathlib import Path
 from .i18n import N_, t
 
 NAME = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
+SIZES = ("1x1", "2x1", "2x2")  # a widget's cells on the main page's grid (columns x rows)
+THEMES = ("auto", "light", "dark")  # the values of a person's theme (docs/frame.md §1)
+FRAME = 1  # the version of the frame the sign-in serves (/auth/static/site.js, theme.css, parts.css)
+# The catalog's tags (docs/apps-vault-calendar.md §1.1): a fixed vocabulary an app picks from, so the catalog
+# can filter by them and every language has their words.
+TAGS = (N_("연구"), N_("글쓰기"), N_("AI"), N_("도구"), N_("일정"), N_("자료"))
 MATCHES = ("prefix", "exact", "regex", "priority")  # priority = `^~` (a prefix that wins over regexes)
 AUTH = ("site", "public")
 # limit name → rate; the zone is <site name>_<limit>. api: the pages' own calls (they poll a run, say)
@@ -52,6 +58,22 @@ class Link:
 
 
 @dataclass(frozen=True)
+class Widget:
+    """A piece an app contributes to the main page (docs/frame.md §4): its ES module draws into a cell
+    of the grid for whoever has the app on. `module` is a path under the app's own files (a static
+    app) or an absolute path (a service's); `href` is where the frame imports it from."""
+    id: str
+    title: str
+    module: str
+    size: str = "1x1"
+    href: str = ""  # filled by load(): the module's absolute path
+    tr: dict[str, dict[str, str]] = field(default_factory=dict, compare=False, hash=False)
+
+    def text(self, name: str, lang: str) -> str:
+        return (self.tr.get(lang) or {}).get(name) or getattr(self, name)
+
+
+@dataclass(frozen=True)
 class Route:
     path: str
     match: str = "prefix"
@@ -72,7 +94,9 @@ class Route:
 class App:
     id: str
     title: str
-    description: str = ""
+    description: str = ""  # the tagline: one line (what the app gives), on its card and in the catalog
+    about: str = ""  # two or three sentences (what it does, what stays), on its page in the catalog
+    tags: tuple[str, ...] = ()  # from TAGS
     audience: str = ""
     upstream: str = ""
     groups: tuple[str, ...] = ()
@@ -82,7 +106,7 @@ class App:
     code: str = ""  # a line shown in a <code> on its card on the main page (an address to connect to)
     card: bool = True
     icon: str = ""  # a short mark for the app (an emoji or a letter or two) on its card and in the app list
-    # the app's words in other languages: {lang: {title, description, menu}} (Korean is the file's own)
+    # the app's words in other languages: {lang: {title, description, about, menu}} (Korean is the file's own)
     tr: dict[str, dict[str, str]] = field(default_factory=dict, compare=False, hash=False)
     # An app hosted by the site itself (portal/apps.py): `static` serves its built files at /apps/<id>/
     # (true: from <apps_root>/<id>, or a directory), `storage` gives each user a JSON store at
@@ -95,10 +119,14 @@ class App:
     pages: tuple[str, ...] = ()
     public: bool = False
     build: str = ""  # its built files in the code tree (web/dist): the installer publishes them when there
+    # Every app is off until a person turns it on (docs/frame.md §2). `optional = false`: it cannot be
+    # turned off (the account), and the frame keeps it in the person's own menu rather than the apps'.
+    optional: bool = True
+    widgets: tuple[Widget, ...] = ()  # what it offers the main page ([[app.widget]], docs/frame.md §4)
     routes: tuple[Route, ...] = ()
 
     def text(self, name: str, lang: str) -> str:
-        """`title`, `description` or `menu`, in `lang` if the file says it there."""
+        """`title`, `description`, `about` or `menu`, in `lang` if the file says it there."""
         return (self.tr.get(lang) or {}).get(name) or getattr(self, name)
 
 
@@ -144,6 +172,27 @@ def _route(app_id: str, d: dict) -> Route:
     return r
 
 
+def _widget(app_id: str, d: dict) -> Widget:
+    known = set(Widget.__dataclass_fields__) - {"href"}
+    bad = set(d) - known
+    if bad:
+        raise SiteError(f"app {app_id}: unknown widget fields {sorted(bad)}")
+    for lang, words in (d.get("tr") or {}).items():
+        if not isinstance(words, dict) or set(words) - {"title"}:
+            raise SiteError(f"app {app_id}: widget tr.{lang} names title")
+    try:
+        w = Widget(**d)
+    except TypeError as e:
+        raise SiteError(f"app {app_id}: a widget needs id, title and module") from e
+    if not NAME.match(w.id):
+        raise SiteError(f"app {app_id}: widget id {w.id!r}: lowercase letters, digits and -")
+    if w.size not in SIZES:
+        raise SiteError(f"app {app_id}: widget {w.id}: size is one of {SIZES}")
+    if not w.module or any(c in w.module for c in "{};\n "):
+        raise SiteError(f"app {app_id}: widget {w.id}: module is a path")
+    return w
+
+
 def _filled(value, f):  # noqa: ANN001, ANN202 — every string of the file through the facts' placeholders
     if isinstance(value, str):
         return f.substitute(value)
@@ -168,20 +217,38 @@ def load(path: str | Path, f=None) -> Site:  # noqa: ANN001 — f: portal.facts.
         d = dict(d)
         routes = tuple(_route(d.get("id", "?"), r) for r in d.pop("route", []))
         links = tuple(Link(**{**ln, "groups": tuple(ln.get("groups", ()))}) for ln in d.pop("link", []))
+        widgets = tuple(_widget(d.get("id", "?"), w) for w in d.pop("widget", []))
         for lang, words in (d.get("tr") or {}).items():
-            if not isinstance(words, dict) or set(words) - {"title", "description", "menu"}:
-                raise SiteError(f"app {d.get('id')}: tr.{lang} names title, description or menu")
+            if not isinstance(words, dict) or set(words) - {"title", "description", "about", "menu"}:
+                raise SiteError(f"app {d.get('id')}: tr.{lang} names title, description, about or menu")
         d["groups"] = tuple(d.get("groups", ()))
         d["pages"] = tuple(d.get("pages", ()))
-        known = set(App.__dataclass_fields__) - {"routes", "links"}
+        d["tags"] = tuple(d.get("tags", ()))
+        if set(d["tags"]) - set(TAGS):
+            raise SiteError(f"app {d.get('id')}: tags are among {TAGS}, not {sorted(set(d['tags']) - set(TAGS))}")
+        known = set(App.__dataclass_fields__) - {"routes", "links", "widgets"}
         bad = set(d) - known
         if bad:
             raise SiteError(f"app {d.get('id')}: unknown fields {sorted(bad)}")
-        a = App(**d, routes=routes, links=links)
+        a = App(**d, routes=routes, links=links, widgets=widgets)
         if not NAME.match(a.id):
             raise SiteError(f"app id {a.id!r}: lowercase letters, digits and -")
         if a.static or a.storage:
             a = _hosted(a, f)
+        if a.widgets:
+            from dataclasses import replace
+
+            if len({w.id for w in a.widgets}) < len(a.widgets):
+                raise SiteError(f"app {a.id}: a widget id is declared twice")
+            resolved = []
+            for w in a.widgets:  # a static app's module lives under its own files; a service names its path
+                if w.module.startswith("/"):
+                    resolved.append(replace(w, href=w.module))
+                elif a.static:
+                    resolved.append(replace(w, href=f"/apps/{a.id}/{w.module}"))
+                else:
+                    raise SiteError(f"app {a.id}: widget {w.id}: module {w.module!r} must be an absolute path (the app is not static)")
+            a = replace(a, widgets=tuple(resolved))
         if a.audience and not NAME.match(a.audience):
             raise SiteError(f"app {a.id}: audience {a.audience!r}: lowercase letters, digits and -")
         if a.id in seen_ids:

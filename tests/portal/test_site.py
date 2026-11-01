@@ -15,10 +15,11 @@ def load():
 
 def test_the_shipped_file_declares_the_site():
     s = load()
-    assert s.audiences == ("account", "refhandbook", "site", "wordgen")
-    assert {a.id for a in s.apps} >= {"account", "agents", "refhandbook", "site"}
+    assert s.audiences == ("account", "calendar", "eq-sandbox", "refhandbook", "site", "vault", "wordgen")
+    assert {a.id for a in s.apps} >= {"account", "agents", "refhandbook", "site", "projects", "calendar", "vault"}
     pages = next(a for a in s.apps if a.id == "site")
-    assert pages.pages == ("/", "/apps", "/settings", "/projects", "/projects/", "/account/", "/agents/")
+    assert pages.pages == ("/", "/apps", "/app/", "/settings", "/projects", "/projects/", "/account/", "/agents/",
+                           "/calendar", "/vault", "/vault/")
     assert pages.public and not pages.card
     # its files are public; each person's settings are in its store, behind the sign-in, for it alone
     assert pages.audience == "site" and pages.storage
@@ -26,6 +27,39 @@ def test_the_shipped_file_declares_the_site():
     assert routes[("exact", "/apps")].page and routes[("exact", "/settings")].page  # /apps/<id>/ stay the apps'
     assert routes[("prefix", "/apps/site/api/")].auth == "site" and routes[("prefix", "/apps/site/")].auth == "public"
     assert all(a.icon for a in s.apps if a.card)
+
+
+def test_the_catalog_speaks_of_each_app_as_a_product():
+    """docs/apps-vault-calendar.md §1: a product name (no status in brackets, no middle-dot pairing), a
+    tagline of one line, an introduction of a sentence or three, tags from the vocabulary — in both languages."""
+    s = load()
+    for a in s.apps:
+        if not a.card:
+            continue
+        for lang in ("ko", "en"):
+            title, tagline, about = a.text("title", lang), a.text("description", lang), a.text("about", lang)
+            assert "(" not in title and "·" not in title and len(title) <= 24, (a.id, lang, title)
+            assert 0 < len(tagline) <= 48 and "\n" not in tagline and not tagline.endswith("."), (a.id, lang, tagline)
+            assert 1 <= about.count(".") <= 3 and len(about) <= 240, (a.id, lang, about)
+        assert set(a.tags) <= set(site.TAGS) and (a.tags or not a.optional), a.id  # every app in the catalog has a tag
+    assert [t for t in site.TAGS] == ["연구", "글쓰기", "AI", "도구", "일정", "자료"]
+
+
+def test_a_service_app_declares_its_widgets_pages_and_routes():
+    s = load()
+    cal = next(a for a in s.apps if a.id == "calendar")
+    assert cal.audience == "calendar" and cal.upstream.endswith(":8120") and cal.menu_href == "/calendar"
+    assert [(w.id, w.href, w.size) for w in cal.widgets] == [("today", "/apps/site/widgets/calendar.js", "2x1"),
+                                                            ("upcoming", "/apps/site/widgets/calendar.js", "1x1")]
+    routes = {r.path: r for r in cal.routes}
+    assert not routes["/calendar/api/"].signin and routes["/calendar/feed/"].auth == "public"
+    vault = next(a for a in s.apps if a.id == "vault")
+    assert vault.audience == "vault" and vault.upstream.endswith(":8110")
+    assert [w.id for w in vault.widgets] == ["recent", "home"] and vault.widgets[1].size == "2x2"
+    assert {r.path for r in vault.routes} == {"/vault/api/"} and vault.routes[0].body == "5m"
+    projects = next(a for a in s.apps if a.id == "projects")
+    assert not projects.audience and not projects.routes and projects.widgets[0].href == "/apps/site/widgets/projects.js"
+    assert next(a for a in s.apps if a.id == "account").links[0].href == "/account/"  # the projects link became an app
 
 
 def _blocks(out):
@@ -80,6 +114,8 @@ def test_the_invitation_sign_up_is_public_and_throttled():
     ('[[app]]\nid = "x"\ntitle = "X"\nupstream = "http://a"\n[[app.route]]\npath = "/a;}"\n', "no braces"),
     ('[[app]]\nid = "x"\ntitle = "X"\nupstream = "@@upstream:nope@@"\n', "no role"),
     ('[[app]]\nid = "x"\ntitle = "@@nothing@@"\n', "unknown placeholder"),
+    ('[[app]]\nid = "x"\ntitle = "X"\ntags = ["연구", "nope"]\n', "tags are among"),
+    ('[[app]]\nid = "x"\ntitle = "X"\ntr.en = { tags = ["x"] }\n', "names title, description, about or menu"),
 ])
 def test_a_bad_entry_is_refused_before_anything_is_written(tmp_path, bad, message):
     f = tmp_path / "site.toml"

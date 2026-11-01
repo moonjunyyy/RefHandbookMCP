@@ -34,7 +34,7 @@ from .graph import Graph
 log = logging.getLogger("refhandbook.kernel")
 _ATTACH = threading.Lock()
 SCHEMA_VERSION = 1
-PROJECTION = "sessions-1"  # the projection's shape; changing it re-projects every ledger on open
+PROJECTION = "ref-1"  # the projection's shape; changing it re-projects every ledger on open
 # log lines that say the rules and the work rubbed (rs_o_review counts them since the last review):
 # a refusal of the work, a hit disposed as unaffected, a directive carried, a plan object dropped
 # (GLOB: case-sensitive, anchored at the start of the line research.py writes)
@@ -109,6 +109,7 @@ class Mirror:
             if not r.db.execute("SELECT 1 FROM rl_ledgers WHERE id = ?", (L,)).fetchone():
                 if self.g.get_node(L) is not None:
                     migrate.drop_ledger(self.g, L)
+                    migrate.relink_incoming(self.g, r.db, L)  # what rested on it now rests on missing rows
                 for k in (f"sync:{L}", f"logseq:{L}", f"quarantine:{L}"):
                     self.set_meta(k, None)
                 return
@@ -125,6 +126,7 @@ class Mirror:
             if self.g.get_node(L) is not None:
                 migrate.drop_ledger(self.g, L, keep_log=True)
             migrate.ledger_to_graph(self.g, data)
+            migrate.relink_incoming(self.g, r.db, L)
             if first:
                 diffs = verify.roundtrip(r, self.g, L)
                 if diffs:

@@ -100,6 +100,9 @@ def main(argv: list[str] | None = None) -> int:
     mo.add_argument("--service-user", required=True, help="the handbook's system user")
     mo.add_argument("--stage", required=True, help="where the staged mounts go (root's, e.g. /run/<name>-mounts)")
     mo.add_argument("--check", action="store_true", help="print the plan; change nothing")
+    mo.add_argument("--picks", choices=("handbook", "vault"), default="handbook",
+                    help="whose picks: the handbook's policies (default), or the vault service's registrations")
+    mo.add_argument("--roots-env", default="RHB_SANDBOX_MOUNTS", help="the variable naming the offered roots (PORTAL_VAULT_ROOTS for the vault)")
     sub.add_parser("reject", help="the user's channel: reject a proposed rule (the model cannot revive it)"
                    ).add_argument("name")
     args = parser.parse_args(argv)
@@ -128,7 +131,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "mounts":
         from .agents import mounts
 
-        return mounts.main(args.data_dir, args.service_user, args.stage, args.check)
+        return mounts.main(args.data_dir, args.service_user, args.stage, args.check, args.picks, args.roots_env)
     if args.command == "layers":
         return _layers(args)
     hb = Handbook(args.db)

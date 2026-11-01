@@ -226,6 +226,20 @@ those states belong to, who may make which transition, and every obligation, gat
 check. The research ledger is one package of such rows (`kernel/packages/research.py`); the
 handbook cards are another.
 
+## One relation between rows, within and across ledgers
+
+A dep cell holds the rows a row rests on: `ref:ID` (or `ID`) in the same ledger, `ref:<ledger>/ID`
+in another ledger of the store. The projection makes one edge type of them, `dep_ref` (class
+`basis`): the basis checks and PENDING propagation follow every edge, and the older relation words
+(`req`, `sup`, `eq`, …) in stored cells are read as `ref`. A cross-ledger edge points at the other
+ledger's row node (`<ledger>:r:<id>`), or at a placeholder no ledger contains when that row is not
+in the graph; because a projection recreates a ledger's nodes, `migrate.relink_incoming` restores
+the edges other ledgers hold into it after every projection (and after a delete, so citers of a
+gone ledger rest on missing rows). Rules report a target by `rs_target(X, Dn, Name)`: its id in the
+citing ledger, `<ledger>/<id>` beyond it (the node attr `xref`). A change that invalidates a row
+opens PENDING in every ledger whose rows cite it (`rl_pending.src = <ledger>/<id>`); no session of
+that ledger raised the hit, so its next chat session answers for it.
+
 ## Scopes, not turns
 
 A scope is a node of a scope type. It opens if the type's `pre` rules find no block, and closes if:

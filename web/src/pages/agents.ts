@@ -1,10 +1,9 @@
 // The agents' pages over /agents/api/v1: runs (start one from a preset, follow one), API keys, the
 // workspace's files (the presets, each a flow, are flows.ts's). Approving a run the model asked for is the approval page's.
 
-import { agents, Json } from '../lib/api';
-import { Child, h, replace, values } from '../lib/dom';
+import { act, agents, empty, flashNext, form, go, h, link, main, num, pageHead, replace, section, tag, title, values, when } from '/auth/static/site.js';
+import type { Child, Json } from '/auth/static/site.js';
 import { n_, t } from '../lib/i18n';
-import { act, buttonLink, empty, flashNext, form, go, link, main, num, pageHead, section, tag, title, when } from '../lib/ui';
 import { flowProgress, flowView, presetItem } from './flows';
 import { Key, providerName, roleName } from './grant';
 import { agentTabs } from './tabs';
@@ -24,14 +23,13 @@ export async function runs(): Promise<void> {
   const waiting = list.filter(r => r.phase === 'requested').length;
   const mine = new Set(keys.map(k => k.ref));
   replace(main(),
-    pageHead(t('에이전트'), t('프리셋을 골라 실행하거나 새로 만들어 실행합니다. 지난 실행은 그 설정 그대로 다시 열 수 있습니다. Claude가 요청한 실행은 승인 화면에서 승인해야 시작됩니다.'),
-      agentTabs()),
+    pageHead(t('에이전트'), agentTabs()),
     !keys.length && h('p', { class: 'flash error' }, t('실행하려면 먼저 API 키를 등록하세요.'), ' ', link('/agents/keys', t('API 키 등록'))),
     waiting > 0 && h('p', { class: 'flash' }, t('승인을 기다리는 요청이 {n}건 있습니다.', { n: waiting }), ' ', h('a', { href: '/approvals' }, t('승인 화면으로'))),
     section(t('새 실행'),
       h('div', { class: 'actions' },
-        buttonLink('/agents/presets/new', t('새로 만들어 실행')),
-        buttonLink('/agents/presets', t('프리셋 관리'), true)),
+        link('/agents/presets/new', t('새로 만들어 실행')),
+        link('/agents/presets', t('프리셋 관리'))),
       presets.length ? presets.map(p => presetItem(p, mine))
         : empty(t('저장한 프리셋이 없습니다. 새로 만들어 실행하고, 이름을 적어 두면 여기서 바로 다시 씁니다.'))),
     section(t('실행 ({n})', { n: list.length }), list.length ? h('div', { class: 'table-wrap' }, h('table', null,
@@ -73,8 +71,8 @@ export async function run(id: string): Promise<void> {
   const r = await agents.get(`/runs/${encodeURIComponent(id)}`);
   const g = r.grant;
   replace(main(),
-    pageHead(r.title || r.id, h('span', null, h('code', null, r.id), ' ', phase(r.phase),
-      ' · ', t('요청 {who}', { who: r.requested_by === 'model' ? 'Claude' : t('나') })), agentTabs()),
+    pageHead(r.title || r.id, agentTabs()), h('p', { class: 'muted' }, h('span', null, h('code', null, r.id), ' ', phase(r.phase),
+      ' · ', t('요청 {who}', { who: r.requested_by === 'model' ? 'Claude' : t('나') }))),
     r.approve_url && h('p', { class: 'flash' }, t('Claude가 요청한 실행입니다. 승인 화면에서 키·모델·한도를 정해 승인하면 시작합니다.'), ' ',
       h('a', { href: r.approve_url }, t('승인 화면으로'))),
     r.error && h('p', { class: 'flash error' }, r.error),
@@ -92,12 +90,12 @@ export async function run(id: string): Promise<void> {
         { input: num(r.usage.input), output: num(r.usage.output), cache: num(r.usage.cache_read) })),
       tree(r.tree) ?? empty(r.phase === 'requested' ? t('승인되면 시작합니다.') : t('아직 시작하지 않았습니다.')),
       r.state === 'open' && h('div', { class: 'actions' }, h('button', { class: 'secondary', onclick: async (e: Event) => {
-        if (await act(e.target as HTMLButtonElement, () => agents.post(`/runs/${r.id}/cancel`), t('취소를 요청했습니다.'))) void run(id);
+        if (await act(e.target as HTMLButtonElement, () => agents.post(`/runs/${r.id}/cancel`))) void run(id);
       } }, t('실행 취소')))),
     section(t('다시 쓰기'),
       h('p', { class: 'muted small' }, t('이 실행의 순서도·입력·한도를 그대로 씁니다. 처음 순서도가 없던 실행은 블럭 하나(팀)로 엽니다.')),
       h('div', { class: 'actions' },
-        buttonLink(`/agents/presets/new?from=${encodeURIComponent(r.id)}`, t('열어서 고치고 실행')),
+        link(`/agents/presets/new?from=${encodeURIComponent(r.id)}`, t('열어서 고치고 실행')),
         h('button', { class: 'secondary', disabled: !r.grant, onclick: async (e: Event) => {
           const rc = r.recipe;
           const again = await act(e.target as HTMLButtonElement,
@@ -138,7 +136,7 @@ export async function keys(): Promise<void> {
   const provider = h('select', { name: 'provider', onchange: () => custom.classList.toggle('hidden', provider.value !== 'custom') },
     (opts.providers as string[]).map(p => h('option', { value: p }, p === 'custom' ? t('Custom (표준 형식 서버)') : providerName(p))));
   replace(main(),
-    pageHead(t('API 키'), t('에이전트가 쓰는 본인의 키입니다. 키는 등록 즉시 암호화되어 에이전트 실행에만 쓰이고, 모델에게는 보이지 않습니다.'), agentTabs()),
+    pageHead(t('API 키'), agentTabs()),
     section(t('등록된 키 ({n})', { n: list.length }), list.length ? list.map(k => h('div', { class: 'item' },
       h('div', { class: 'item-head' }, h('b', null, k.ref), tag(providerName(k.provider)), h('code', null, k.fingerprint),
         tag(k.status, k.status === 'ok' ? 'ok' : k.status === 'unchecked' ? 'warn' : 'bad'),
@@ -150,11 +148,11 @@ export async function keys(): Promise<void> {
       h('div', { class: 'actions' }, h('button', { class: 'secondary', onclick: async (e: Event) => {
         const users = k.used_by.length ? '\n' + t('이 키를 쓰는 프리셋({names})은 블럭의 키를 다시 고를 때까지 실행되지 않습니다.', { names: k.used_by.join(', ') }) : '';
         if (!confirm(t('{key} 키를 지울까요?', { key: k.ref }) + users)) return;
-        if (await act(e.target as HTMLButtonElement, () => agents.del(`/keys/${k.provider}/${k.label}`), t('지웠습니다.'))) void keys();
+        if (await act(e.target as HTMLButtonElement, () => agents.del(`/keys/${k.provider}/${k.label}`))) void keys();
       } }, t('삭제'))))) : empty(t('등록한 키가 없습니다.'))),
     section(t('키 등록'), h('p', { class: 'muted small' }, t('등록할 때 제공자의 모델 목록을 한 번 불러와 키를 확인합니다. 그 목록이 이 키의 모델 선택지가 됩니다.')),
       form({ autocomplete: 'off' }, async (f, b) => {
-        const k = await act(b, () => agents.post('/keys', values(f)), (r: Json) => t('{key} 등록 · 모델 {n}개', { key: r.ref, n: r.models.length }));
+        const k = await act(b, () => agents.post('/keys', values(f)));
         if (k) void keys();
       },
         h('div', { class: 'cols' }, h('label', null, t('제공자'), provider),
@@ -176,8 +174,8 @@ export async function files(): Promise<void> {
     [' / ', link(`/agents/files?path=${encodeURIComponent(parts.slice(0, i + 1).join('/'))}`, p)])];
   title(t('파일'));
   replace(main(),
-    pageHead(t('파일'), [h('code', null, '/work'), ': ', t('샌드박스에서 스크립트와 에이전트가 쓰는 작업 공간입니다(읽기 전용).'), ' ',
-      t('에이전트 실행은 각자 이 폴더에서 일합니다:'), ' ', h('code', null, '/work/runs/<run>')], agentTabs()),
+    pageHead(t('파일'), agentTabs()), h('p', { class: 'muted' }, [h('code', null, '/work'), ': ', t('샌드박스에서 스크립트와 에이전트가 쓰는 작업 공간입니다(읽기 전용).'), ' ',
+      t('에이전트 실행은 각자 이 폴더에서 일합니다:'), ' ', h('code', null, '/work/runs/<run>')]),
     section(crumbs, d.kind === 'dir'
       ? (d.entries.length ? h('div', { class: 'table-wrap' }, h('table', null, h('tbody', null, d.entries.map((e: Json) => h('tr', null,
           h('td', { class: 'wrap' }, link(`/agents/files?path=${encodeURIComponent((path ? path + '/' : '') + e.name)}`,

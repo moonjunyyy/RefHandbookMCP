@@ -150,8 +150,8 @@ def research_end(ledger: str, session: str, idle: str = "") -> str:
 def research_add(ledger: str, session: str, sec: str, content: str, origin: str, status: str,
                  evidence: str = "", dep: str = "", grp: str = "") -> str:
     """Add a row. sec: U C R S A Z T E H X P (plan objects K come from research_push).
-    origin: user | entailed(<step>) | model. status: see card rs-ref-sections. dep (card rs-ref-dep): '[rel:]ID' tokens
-    (rel: req der sup eq iso spec int con). grp: alternative group for an assumption."""
+    origin: user | entailed(<step>) | model. status: see card rs-ref-sections. dep (card rs-ref-dep): the rows it rests on — 'ID' or 'ref:ID' (this ledger), 'ref:<ledger>/ID' (another ledger);
+    every edge is a basis. grp: alternative group for an assumption."""
     return R().add(ledger, session, sec, content, origin, status, evidence, dep, grp)
 
 

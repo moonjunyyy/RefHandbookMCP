@@ -564,3 +564,29 @@ def test_rebuilding_a_layer_rebuilds_what_stands_on_it_and_keeps_what_is_pinned(
     names = {x.name for x in LayerStore(data / "layers").list()}
     assert {"base.v2", "top.v2", "top.v1", "base.v1"} <= names  # top@1 is pinned, and base@1 under it
     assert Workspace(Handbook(data / "users" / "moon.db")).policy("dev")["attrs"]["layers"] == ["sys:top@2"]
+
+
+def test_a_record_is_renamed_as_a_copy_and_a_pointer(ws):
+    cap_api.cap("add", kind="policy", name="small", spec={"timeout": 5})
+    cap_api.cap("add", kind="script", name="peek", spec={"policy": "small"}, body="cat /etc/hostname\n")
+    out = cap_api.cap("rename", kind="policy", name="small", new_name="tiny", why="clearer")
+    assert "tiny v1 added" in out and "moved along: script peek" in out
+    old = ws.caps.get("policy", "small")
+    assert old["state"] == "deprecated" and old["attrs"]["replaced_by"] == "tiny"
+    assert ws.caps.version(ws.caps.get("script", "peek"))["spec"]["policy"] == "tiny"
+    assert len(ws.caps.history("policy", "small")) == 1  # the old record's history is left as it was
+    assert "tiny" in ws.policies()
+    with pytest.raises(KernelError, match="same"):
+        cap_api.cap("rename", kind="script", name="peek", new_name="peek")
+    with pytest.raises(KernelError, match="needs new_name"):
+        cap_api.cap("rename", kind="script", name="peek")
+    ws.set_policy("users", actor="user", commands=["sh"])
+    with pytest.raises(Forbidden):  # the model renames only its own
+        cap_api.cap("rename", kind="policy", name="users", new_name="mine")
+    # a name that waits for the user's approval: the old one stays in use, nothing moves to the new one
+    cap_api.cap("add", kind="policy", name="netp", spec={"network": True})
+    ws.caps.approve("policy", "netp", 1, actor="user")
+    cap_api.cap("add", kind="script", name="fetch", spec={"policy": "netp"}, body="cat /etc/hostname\n")
+    out = cap_api.cap("rename", kind="policy", name="netp", new_name="netq")
+    assert "stays as it is" in out and ws.caps.get("policy", "netp")["state"] == "active"
+    assert ws.caps.version(ws.caps.get("script", "fetch"))["spec"]["policy"] == "netp"

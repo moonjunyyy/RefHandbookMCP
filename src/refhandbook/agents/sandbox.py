@@ -644,6 +644,46 @@ def _command_view(root: str, commands: dict[str, str], keep: tuple[str, ...] = (
     mount_setattr(bindir, MOUNT_ATTR_RDONLY | MOUNT_ATTR_NOSUID | MOUNT_ATTR_NODEV)
 
 
+def _bind_file_ro(src: str, target: str) -> None:
+    mount(src, target, None, MS_BIND)
+    mount_setattr(target, MOUNT_ATTR_RDONLY | MOUNT_ATTR_NOSUID | MOUNT_ATTR_NODEV | MOUNT_ATTR_NOEXEC,
+                  recursive=False)
+
+
+def _network_files(root: str, host: bool) -> None:
+    """With the network grant, the files a program needs to use it: the host's resolver, and, for an
+    imported rootfs without certificates, the host's CA bundle — each bound read-only over what the
+    root shows, so nothing is written into /etc (and nothing lands in a layer a build is writing).
+
+    Without this the sandbox keeps the empty resolv.conf of `prepare_hostetc` (right for a sandbox
+    without the network) and every lookup fails with 'Name or service not known' although TCP gets
+    through. A rootfs base whose resolv.conf is a symlink (into /run, as systemd's is) gets the bind
+    where the link points inside the root, so the link is followed rather than replaced."""
+    src = os.path.realpath("/etc/resolv.conf")
+    if os.path.isfile(src):
+        target = f"{root}/etc/resolv.conf"
+        for _ in range(8):  # follow a link inside the root, never out of it
+            if not os.path.islink(target):
+                break
+            link = os.readlink(target)
+            target = os.path.normpath(f"{root}/{link.lstrip('/')}" if link.startswith("/")
+                                      else os.path.join(os.path.dirname(target), link))
+            if not (target + "/").startswith(root.rstrip("/") + "/"):
+                target = ""
+                break
+        if target and not os.path.islink(target) and not os.path.exists(target) \
+                and target.startswith(f"{root}/run/"):
+            _mkdir(os.path.dirname(target))  # the link's target lives on the sandbox's own /run tmpfs
+            _touch(target)
+        if target and os.path.isfile(target) and not os.path.islink(target):
+            _bind_file_ro(src, target)
+    if not host:
+        certs = f"{root}/etc/ssl/certs"
+        if os.path.isdir("/etc/ssl/certs") and os.path.isdir(certs) and not os.listdir(certs):
+            mount("/etc/ssl/certs", certs, None, MS_BIND | MS_REC)
+            mount_setattr(certs, MOUNT_ATTR_RDONLY | MOUNT_ATTR_NOSUID | MOUNT_ATTR_NODEV | MOUNT_ATTR_NOEXEC)
+
+
 def build_root(spec: Spec, commands: dict[str, str] | None = None) -> None:
     """The new root. Everything writable is mounted noexec: nothing the command writes can run as
     code (not by execve, and not by mmap through the loader), only through an allowed interpreter."""
@@ -715,6 +755,9 @@ def build_root(spec: Spec, commands: dict[str, str] | None = None) -> None:
             if [st.st_dev, st.st_ino] != list(want):
                 raise SandboxError(f"bind source for {dst} changed after it was checked; refused")
         mount_setattr(target, MOUNT_ATTR_NOSUID | MOUNT_ATTR_NODEV | (MOUNT_ATTR_NOEXEC if rw else MOUNT_ATTR_RDONLY))
+
+    if spec.network:
+        _network_files(root, host)
 
     # /dev: a tmpfs with the harmless host nodes bound in
     mount("tmpfs", f"{root}/dev", "tmpfs", MS_NOSUID, "mode=0755,size=1m")

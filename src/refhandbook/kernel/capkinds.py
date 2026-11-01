@@ -23,6 +23,7 @@ RULE_FIELDS = ("phase", "body", "message", "severity", "applies_to", "replaces",
 
 class RuleKind(Kind):
     name = "rule"
+    renamable = False
     description = "a kernel rule (check, obligation, close, pre or derive), in the rule language of card rs-rv"
     ttl = 60 * DAY
 

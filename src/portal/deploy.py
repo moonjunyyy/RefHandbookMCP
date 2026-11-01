@@ -58,7 +58,7 @@ LEFTOVER_USERS = ("refhandbook",)
 UNREAD = {"handbook": ("env", "ldap-bindpw")}
 # Per-role env files (deploy/templates/<role>.env): made once, never overwritten; a secret where the
 # role needs one (the services refuse one shorter than 32).
-ENV_FILES = {"portal": "PORTAL_SESSION_SECRET", "sso": "PORTAL_SSO_SECRET", "handbook": None}
+ENV_FILES = {"portal": "PORTAL_SESSION_SECRET", "sso": "PORTAL_SSO_SECRET", "handbook": None, "vault": None}
 # Units of services the site no longer runs ({unit} = a derived name): stopped and removed.
 RETIRED = ("dav-homes.service", "dav-homes.timer", "{name}-dav-homes.service", "{name}-dav-homes.timer")
 SKIP = {".git", ".venv", "__pycache__", ".pytest_cache", "ldap_portal.egg-info", "node_modules", "dist"}  # (apps publish their builds with --app)
@@ -67,7 +67,9 @@ Run = Callable[[list[str]], int]
 
 
 # units besides the roles': root's, with no user or port of their own (<name>-<unit>)
-HELPERS = ("mounts.service", "mounts.timer", "mounts.path")
+# the root reconcilers that stage users' directories for a service: the handbook's sandbox mounts and
+# the vault's registered directories (refhandbook/agents/mounts.py)
+HELPERS = ("mounts.service", "mounts.timer", "mounts.path", "vault-mounts.service", "vault-mounts.timer", "vault-mounts.path")
 LISTENING = [r for r, port in ROLES.items() if port]  # the roles that serve HTTP (the runner does not)
 
 # [site] keys the router's side takes (site.local.toml: they are this host's); unset, a placeholder
@@ -443,11 +445,12 @@ def install(site_file: Path, root: Path = Path("/"), sh: Run = _run, src: Path =
         return 1
     units = [f"{f.unit(role)}.service" for role in ROLES]
     sh(["systemctl", "daemon-reload"])
-    # the mounts first: the handbook's units see the staged directories from their start
-    sh(["systemctl", "enable", "--now", f"{f.name}-mounts.timer"])
-    sh(["systemctl", "enable", "--now", f"{f.name}-mounts.path"])
-    sh(["systemctl", "enable", f"{f.name}-mounts.service"])
-    sh(["systemctl", "restart", f"{f.name}-mounts.service"])
+    # the mounts first: the handbook's and the vault's units see the staged directories from their start
+    for helper in ("mounts", "vault-mounts"):
+        sh(["systemctl", "enable", "--now", f"{f.name}-{helper}.timer"])
+        sh(["systemctl", "enable", "--now", f"{f.name}-{helper}.path"])
+        sh(["systemctl", "enable", f"{f.name}-{helper}.service"])
+        sh(["systemctl", "restart", f"{f.name}-{helper}.service"])
     # Each listening service takes its port from a socket unit that stays open across restarts, so an
     # update refuses no connection: they wait in the socket's queue for the new process. Moving onto
     # the sockets the first time stops the service once (it holds the port the socket needs).

@@ -1,0 +1,42 @@
+# @@generated@@
+# The vaults (portal/vault.py): people's markdown directories, read and written in the browser. Its
+# own user, with no keytab and no secret: it trusts the SSO's tokens, checked with the public key.
+# It cannot see anyone's files itself: @@name@@-vault-mounts.service (root) stages each registered
+# directory under /run/@@name@@-vault-mounts, idmapped so the files read and write as this user's
+# and stay their owner's.
+[Unit]
+# its port is @@unit:vault@@.socket's (systemd hands the socket over as fd 3), so a restart refuses no one
+Requires=@@unit:vault@@.socket
+After=@@unit:vault@@.socket @@name@@-vault-mounts.service
+Description=@@name@@ vaults
+After=network-online.target nss-user-lookup.target
+Wants=network-online.target
+
+[Service]
+User=@@unit:vault@@
+Group=@@unit:vault@@
+ConfigurationDirectory=@@unit:vault@@
+ConfigurationDirectoryMode=0755
+StateDirectory=@@unit:vault@@
+StateDirectoryMode=0700
+Environment=PORTAL_SITE=@@site_file@@
+Environment=PORTAL_VAULT_STAGE=/run/@@name@@-vault-mounts
+EnvironmentFile=-/etc/@@unit:vault@@/vault.env
+WorkingDirectory=@@code@@
+ExecStart=@@code@@/.venv/bin/uvicorn portal.vault:create_app --factory \
+          --fd 3 --workers 1 --proxy-headers --forwarded-allow-ips 127.0.0.1
+Restart=on-failure
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+# written through, though /run is otherwise read-only to this unit: the staged vaults are the person's files
+ReadWritePaths=-/run/@@name@@-vault-mounts
+PrivateTmp=yes
+PrivateDevices=yes
+UMask=0077
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallFilter=@system-service
+
+[Install]
+WantedBy=multi-user.target

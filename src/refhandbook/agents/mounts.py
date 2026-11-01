@@ -81,8 +81,8 @@ def parse(text: str) -> list[Offer]:
     return out
 
 
-def offers() -> list[Offer]:
-    return parse(os.environ.get("RHB_SANDBOX_MOUNTS") or DEFAULT)
+def offers(var: str = "RHB_SANDBOX_MOUNTS") -> list[Offer]:
+    return parse(os.environ.get(var) or DEFAULT)
 
 
 def stage_root() -> Path | None:
@@ -218,15 +218,46 @@ def picked(db: Path) -> list[tuple[str, bool]]:
     return out
 
 
+Picks = list[tuple[str, list[tuple[str, bool]]]]  # (user, [(source, rw)]) — what each user asked to have staged
+
+
+def handbook_picks(data_dir: Path, sources: Callable[[Path], list[tuple[str, bool]]] = picked) -> Picks:
+    """What the handbook's users picked in their policies: one store per user under <data>/users/."""
+    return [(db.stem, sources(db)) for db in sorted(p for p in (data_dir / "users").glob("*.db") if not p.name.startswith("._"))]
+
+
+def vault_picks(data_dir: Path) -> Picks:
+    """What people registered as vaults (portal/vault.py: <data>/vault.db), each read-write."""
+    db = data_dir / "vault.db"
+    try:
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=10)
+    except sqlite3.Error:
+        return []
+    try:
+        rows = con.execute("SELECT uid, path FROM vaults ORDER BY uid, path").fetchall()
+    except sqlite3.Error:
+        return []
+    finally:
+        con.close()
+    by: dict[str, list[tuple[str, bool]]] = {}
+    for uid, path in rows:
+        by.setdefault(uid, []).append((path, True))
+    return sorted(by.items())
+
+
+PICKS: dict[str, Callable[[Path], Picks]] = {"handbook": handbook_picks, "vault": vault_picks}
+
+
 def plan(data_dir: Path, stage: Path, service_uid: int, offered: list[Offer], *, min_uid: int | None = None,
          group: str | None = None, getpw: Callable[[str], pwd.struct_passwd] = pwd.getpwnam,
          in_group: Callable[[pwd.struct_passwd, str], bool] = _in_group,
-         sources: Callable[[Path], list[tuple[str, bool]]] = picked) -> Plan:
-    """What should be staged now: every directory a user's policies pick that is theirs to pick."""
+         sources: Callable[[Path], list[tuple[str, bool]]] = picked,
+         picks: Callable[[Path], Picks] | None = None) -> Plan:
+    """What should be staged now: every directory a user picked (a policy's mounts, a registered vault)
+    that is theirs to pick."""
     min_uid = uid_min() if min_uid is None else min_uid
     out = Plan()
-    for db in sorted(p for p in (data_dir / "users").glob("*.db") if not p.name.startswith("._")):
-        user = db.stem
+    for user, wanted in (picks(data_dir) if picks else handbook_picks(data_dir, sources)):
         if not UID_RE.match(user):
             out.skipped.append(f"{user}: not an account name")
             continue
@@ -242,7 +273,7 @@ def plan(data_dir: Path, stage: Path, service_uid: int, offered: list[Offer], *,
             out.skipped.append(f"{user}: not in {group}")
             continue
         status: dict[str, str] = {}
-        for source, rw in sources(db):
+        for source, rw in wanted:
             try:
                 host, offer = source_path(source, offered, user, pw.pw_uid)
             except MountError as e:
@@ -360,15 +391,19 @@ def apply(p: Plan, stage: Path, service_uid: int, service_gid: int,
     return done
 
 
-def main(data_dir: str, service_user: str, stage: str, check: bool = False) -> int:
-    """`refhandbook mounts`: stage what the users picked (root), or with --check print the plan."""
+def main(data_dir: str, service_user: str, stage: str, check: bool = False, picks: str = "handbook",
+         roots_var: str = "RHB_SANDBOX_MOUNTS") -> int:
+    """`refhandbook mounts`: stage what the users picked (root), or with --check print the plan. `picks`
+    says whose picks: the handbook's policies, or the vault service's registrations (--picks vault, the
+    offered roots then in PORTAL_VAULT_ROOTS)."""
     pw = pwd.getpwnam(service_user)
     try:
-        offered = offers()
+        offered = offers(roots_var)
     except MountError as e:
         print(f"error: {e}")
         return 2
-    p = plan(Path(data_dir), Path(stage), pw.pw_uid, offered, group=os.environ.get("RHB_REQUIRE_GROUP") or None)
+    p = plan(Path(data_dir), Path(stage), pw.pw_uid, offered, group=os.environ.get("RHB_REQUIRE_GROUP") or None,
+             picks=PICKS[picks])
     for line in p.skipped:
         print(f"skipped {line}")
     for user, st in p.status.items():

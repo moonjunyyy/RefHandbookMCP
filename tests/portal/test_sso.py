@@ -201,7 +201,7 @@ def test_the_main_page_knows_who_is_signed_in(tmp_path, key):
     app = create_app(s, FakeKerberos(), key)
     page = TestClient(app).get("/").text
     assert 'href="/auth/login">로그인' in page and 'href="/account/request"' in page and "로그아웃" not in page
-    for title in ("계정", "에이전트 · 샌드박스", "핸드북 (Claude MCP)"):  # a card per app of the site file
+    for title in ("계정", "에이전트", "핸드북", "캘린더", "노트"):  # a card per app of the site file
         assert f"<h2>{title}</h2>" in page
     assert "https://www.m00nny.kr/mcp</code>" in page  # the derived domain
     assert '<a class="brand" href="/">M00NNY.KR</a>' in page and "<h1>M00NNY.KR</h1>" in page  # one name

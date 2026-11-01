@@ -83,8 +83,11 @@ lists the calls). Tests: `tests/portal/test_projects.py`.
    authentication is not the portal's and stays as it is. `RHB_SANDBOX_MOUNTS` gains
    `<projects_root>/{group}=project`: `{group}` expands to each project of the user, and a mount is
    theirs when the directory is theirs or their group's.
-2. **The vault** `<name>-vault`: a web view and editor over a markdown directory of a group's storage
-   (the same files Obsidian opens over SMB), with an index (search, links), git history, and the
-   handbook's `files` reaching it through the policy mounts.
-3. **The calendar** `<name>-calendar`: a calendar per group, iCalendar events, an ICS feed for
-   phones, agents' schedules shown beside.
+2. **The vault** `<name>-vault` — built for a person's own storage (docs/vault.md: a web view and
+   editor over a markdown directory, the same files Obsidian opens over SMB, with an index for
+   search and links, staged idmapped for the service). A project's vault (a directory of the
+   project's storage, for its members) waits for the provisioner's storage root; git history and
+   the handbook's `files` reaching a vault through the policy mounts are not there yet.
+3. **The calendar** `<name>-calendar` — built (docs/calendar.md: a calendar for a person and one for
+   each of their projects, iCalendar events with repeats, an ICS feed for phones, the members'
+   free/busy). Agents' schedules shown beside the events are not there yet.

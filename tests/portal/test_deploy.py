@@ -145,7 +145,7 @@ def test_install_makes_secrets_once_and_moves_an_old_layout(fresh, tmp_path, cap
     assert not retired.exists() and ["systemctl", "disable", "--now", "m00nny-dav-homes.timer"] in sh.calls
     restarts = [c[2] for c in sh.calls if c[:2] == ["systemctl", "restart"] and c[2].endswith(".service")
                 and "mounts" not in c[2]]
-    assert restarts == [f"m00nny-{r}.service" for r in ("portal", "sso", "apps", "handbook", "runner")]  # one by one
+    assert restarts == [f"m00nny-{r}.service" for r in ("portal", "sso", "apps", "vault", "calendar", "handbook", "runner")]  # one by one
     assert not any(c[:2] == ["systemctl", "stop"] for c in sh.calls)  # the sockets are up: nothing stops
     # one virtualenv for both packages, from the lock
     assert any(c[:1] == ["env"] and "sync" in c and "--frozen" in c and "--project" in c for c in sh.calls)
@@ -329,7 +329,24 @@ def test_the_pages_take_over_their_paths_once_published_and_not_before(fresh, tm
     after = deploy.rendered(f, SITE, root=tmp_path)
     assert "location = / {" not in after[f"/etc/nginx/sites-available/{f.domain}.conf"][0]
     apps = after[f"/etc/nginx/snippets/{f.name}-apps.conf"][0]
-    assert "location = / {" in apps and apps.count("rewrite ^ /apps/site/index.html last;") == 7  # the site file's pages
+    n = len(next(a for a in site.load(SITE, f).apps if a.id == "site").pages)
+    assert "location = / {" in apps and apps.count("rewrite ^ /apps/site/index.html last;") == n == 11  # the site file's pages
+
+
+def test_the_calendar_and_the_vault_have_their_units():
+    f = facts(str(SITE))
+    files = deploy.rendered(f, SITE)
+    cal = files["/etc/systemd/system/m00nny-calendar.service"][0]
+    assert "uvicorn portal.calendar:create_app" in cal and "User=m00nny-calendar" in cal
+    assert f"ListenStream=127.0.0.1:{f.ports['calendar']}" in files["/etc/systemd/system/m00nny-calendar.socket"][0]
+    vault = files["/etc/systemd/system/m00nny-vault.service"][0]
+    assert "uvicorn portal.vault:create_app" in vault and "PORTAL_VAULT_STAGE=/run/m00nny-vault-mounts" in vault
+    assert "ReadWritePaths=-/run/m00nny-vault-mounts" in vault and "EnvironmentFile=-/etc/m00nny-vault/vault.env" in vault
+    mounts = files["/etc/systemd/system/m00nny-vault-mounts.service"][0]
+    assert ("refhandbook mounts --picks vault --roots-env PORTAL_VAULT_ROOTS --data-dir /var/lib/m00nny-vault "
+            "--service-user m00nny-vault --stage /run/m00nny-vault-mounts") in mounts
+    assert "PathChanged=/var/lib/m00nny-vault/mount-requests" in files["/etc/systemd/system/m00nny-vault-mounts.path"][0]
+    assert "OnUnitActiveSec=1min" in files["/etc/systemd/system/m00nny-vault-mounts.timer"][0]
 
 
 def test_the_code_is_copied_readable_whatever_the_working_tree_had(tmp_path):

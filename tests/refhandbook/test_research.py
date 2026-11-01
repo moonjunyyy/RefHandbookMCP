@@ -491,7 +491,7 @@ def test_tool_calls_written_in_cards_match_the_tools():
     from refhandbook import research_api
 
     sigs = {n: set(inspect.signature(f).parameters) for n, f in research_api.TOOLS.items()}
-    files = list((Path(research.__file__).parent / "research_pages").glob("*.md"))
+    files = [f for f in (Path(research.__file__).parent / "research_pages").glob("*.md") if not f.name.startswith("._")]
     for f in files:
         text = f.read_text()
         for name in re.findall(r"`(research_\w+)", text):
@@ -596,7 +596,7 @@ def test_no_card_teaches_an_old_name():
     table = hb.get_entry("rs-ref-old-names")["body"]
     for o in old:
         assert f"`{o}`" in table, o
-    for page in (Path(research.__file__).parent / "research_pages").glob("*.md"):
+    for page in (Path(research.__file__).parent / "research_pages").glob("[!._]*.md"):
         if page.name not in ("REF-SANDBOX.md", "REF-OLD-NAMES.md"):
             text = page.read_text()
             assert not [o for o in DEPRECATED_TOOLS if o in text and o != "research_review_rules"], page

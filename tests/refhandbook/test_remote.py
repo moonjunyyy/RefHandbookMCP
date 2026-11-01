@@ -579,3 +579,65 @@ def test_the_approval_page_opens_without_the_default_policy(client):
     page = c.get("/approvals", headers={"X-Auth-Token": site_token(key)})
     assert page.status_code == 200 and "새 정책" in page.text and "<b>dev</b>" in page.text
     assert w.base_policy() == Workspace.default_policy_spec()
+
+
+def test_a_mount_path_with_spaces_is_quoted_on_the_policy_form(client):
+    """A mount line splits as a shell would: a path with spaces is quoted or escaped, and the form writes
+    a saved mount back the same way, so saving the form again keeps it."""
+    from refhandbook.agents import pages
+    from refhandbook.store import HandbookError
+
+    vault = {"source": "/data/me/Obsidian/Research Vault", "target": "/Vault", "rw": True}
+    assert pages._mounts('"/data/me/Obsidian/Research Vault" /Vault rw\n\n/data/me/ws /ws') == [
+        vault, {"source": "/data/me/ws", "target": "/ws", "rw": False}]
+    assert pages._mounts("/data/me/Obsidian/Research\\ Vault /Vault rw") == [vault]
+    assert pages._mounts(pages._mount_line(vault)) == [vault]
+    assert pages._mount_line({"source": "/data/me/ws", "target": "/ws", "rw": False}) == "/data/me/ws /ws"
+    for bad in ('"/data/me/open /Vault', "/data/me/Research Vault /Vault rw", "/a /b ro"):
+        with pytest.raises(HandbookError):
+            pages._mounts(bad)
+
+
+def test_a_record_is_renamed_deprecated_removed_restored_and_edited_on_the_page(client):
+    from refhandbook.agents.workspace import Workspace
+
+    c, key = client, client.key
+    tok = {"X-Auth-Token": site_token(key), "Origin": BASE}
+    w = Workspace(server._user_store("moon"))
+    w.set_policy("dev", actor="user", commands=["sh", "cat"])
+    w.put_script("probe", "cat /etc/hostname", actor="model", policy="dev", description="line one\nline two")
+    page = c.get("/approvals", headers=tok).text
+    assert "id='rec-script-probe'" in page and "class='rec-desc'" in page and "id='policy-dev'" in page
+    assert "action='/approvals/cap/manage'" in page
+
+    def manage(**form):
+        return c.post("/approvals/cap/manage", data={"csrf": _csrf(page), **form}, headers=tok, follow_redirects=False)
+
+    # a rename is a copy and a pointer: the old policy points to the new one, its script moves along
+    r = manage(kind="policy", name="dev", action="rename", new="work", move="on")
+    assert r.status_code == 303 and "ok=" in r.headers["location"] and r.headers["location"].endswith("#records")
+    assert "work" in w.policies() and w.caps.get("policy", "work")["author"] == "user"
+    old = w.caps.get("policy", "dev")
+    assert old["state"] == "deprecated" and old["attrs"]["replaced_by"] == "work"
+    probe = w.caps.get("script", "probe")
+    assert w.caps.version(probe)["spec"]["policy"] == "work" and probe["author"] == "model"
+    assert manage(kind="policy", name="work", action="rename", new="work").status_code == 400  # the same name
+
+    r = manage(kind="script", name="probe", action="deprecate", why="superseded")
+    assert "ok=" in r.headers["location"] and w.caps.get("script", "probe")["state"] == "deprecated"
+    r = manage(kind="script", name="probe", action="remove")
+    assert "ok=" in r.headers["location"] and w.caps.get("script", "probe")["state"] == "retired"
+    assert "은퇴한 기록 (" in c.get("/approvals", headers=tok).text
+    r = manage(kind="script", name="probe", action="restore")
+    assert "ok=" in r.headers["location"] and w.caps.get("script", "probe")["state"] == "active"
+
+    # a new version, as typed in the page (a browser sends a textarea's lines as CRLF)
+    spec = json.dumps({"interpreter": "sh", "policy": "work", "description": "by hand"})
+    r = manage(kind="script", name="probe", action="edit", spec=spec, body="cat /etc/os-release\r\n", note="typed")
+    assert "ok=" in r.headers["location"]
+    v = w.caps.version(w.caps.get("script", "probe"))
+    assert v["body"] == "cat /etc/os-release\n" and v["author"] == "user" and v["note"] == "typed"
+    r = manage(kind="script", name="probe", action="edit", spec="{not json")
+    assert r.status_code == 400 and "JSON" in r.text
+    assert manage(kind="policy", name="work", action="edit", spec="{}").status_code == 400  # a policy: its form
+    assert manage(kind="script", name="probe", action="nonsense").status_code == 400
