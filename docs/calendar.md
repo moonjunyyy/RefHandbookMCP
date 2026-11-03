@@ -5,7 +5,20 @@ theirs has one, and the site shows them together — one month grid, the person'
 projects' on it, each calendar a chip above the grid. Phones take it as an iCalendar subscription.
 The service is `<name>-calendar` (its own user, its own state; `facts.ROLES` gives it port 8120),
 behind the site sign-in, and the pages app draws it (`/calendar`, `web/src/pages/calendar.ts`) and
-its two widgets (`web/widgets/calendar.ts`: today, the next seven days).
+its widgets (`web/widgets/calendar.ts`: today — with the to-dos due by today under the events —, the
+next seven days, and the to-do list itself: a line written with Enter, checked off in place, its due
+day and the rest on its menu). The page has a month and a
+week (`?v=week&d=…`; seven columns from Monday over an all-day row and 24 hours, overlapping events
+side by side, a line at the present time); an empty slot pressed is a new event at that time, and an
+event is moved by dragging it onto another day or hour (`PATCH /events/<id>` with the new `start` and
+`end`, the length kept) — a repeating one is not dragged, its series is changed in the dialog. Every
+object has its menu where it is (right-click, ⋯, Shift+F10): an event — open, duplicate, move or copy
+to another calendar, delete; a day — a new event (timed or all-day), the week or the month it is in; a
+calendar's chip — hide, only this one, rename and recolour, its own subscription address, delete (the
+name typed; the main one stays); the chips' ⋯ — a new calendar (the person's or a project's), show
+all, the phone subscription. Sharing is by project: an event moved or copied onto a project's calendar
+is seen by its members; a subscription address carries a calendar to a phone. The day panel also
+lists the to-dos due that day, and a line written there is due that day.
 
 ## What a person sees
 
@@ -48,9 +61,31 @@ and spans at most 400 days (`MAX_OCCURRENCES`, `MAX_SPAN_DAYS`): bounds, not fea
 | `GET /freebusy?group=<cn>&from&to` | `{group, busy: {uid: [[start, end], ...]}}` |
 | `GET` · `POST /feeds` `{cals, name}` · `DELETE /feeds/<token>` | subscription addresses; `cals = []` is everything the person may see |
 | `GET /calendar/feed/<token>.ics` | the feed itself — a public route: the token is the key, read-only, revoked by deleting it |
+| `GET /tasks` | the person's to-do list: open ones first in their order (`rank`), then the done ones, latest first |
+| `POST /tasks` `{text, due?}` | → 201; `due` a date or absent; at most 200 |
+| `PATCH /tasks/<id>` `{text?, done?, due?, rank?}` · `DELETE /tasks/<id>` | a change; taking one out |
+| `POST /tasks/clear-done` | takes out the done ones → `{removed}` |
+| `GET` · `POST /devices` `{name}` · `DELETE /devices/<id>` | device passwords for CalDAV: `POST` answers the password once (`password`, `username`, `url`); the list never does |
 
 A write must say `Content-Type: application/json` (as the apps' store: a cross-site form cannot).
 Errors are `{error}` with the status (`400` a bad value, `404` not theirs, `415` not JSON).
+
+## CalDAV (`/calendar/dav/`)
+
+A phone's or a desktop's calendar app reads and writes the calendars over CalDAV (RFC 4791, the subset
+`portal/caldav.py` implements): HTTP Basic with the username and a *device password* made on the
+calendar page (칩 줄 ⋯ → 기기 연결), one per device, shown once and kept as a hash. Discovery:
+`/.well-known/caldav` → `/calendar/dav/`; `PROPFIND /calendar/dav/` names the principal
+`/calendar/dav/<uid>/`, which is also the calendar home (depth 1: the calendars the person may see —
+their own and their projects'); a calendar `/calendar/dav/<uid>/<cid>/` carries `getctag` and a
+`sync-token` (its `version`, grown by every change under it); an event is `<id>.ics` with `getetag`
+`"<seq>"`, `GET` · `PUT` (`If-None-Match: *` makes, `If-Match` changes; a stale tag is 412) · `DELETE`.
+`REPORT`: `calendar-query` (a time range, repeats expanded), `calendar-multiget`, `sync-collection`
+(the changes since a token, deletions as 404 members from the tombstones). The resource name a client
+chooses becomes the event's id and its `UID` is kept (`ical_uid`); what the model does not hold is
+refused with a reason — a repeat outside the RRULE subset, a change to one instance of a repeat
+(`RECURRENCE-ID`), a calendar made over DAV (`MKCALENDAR`: calendars are made on the page). Times with a
+`TZID` become UTC, floating times are read as UTC, `VALUE=DATE` is an all-day event.
 
 ## The feed
 

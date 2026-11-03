@@ -56,7 +56,12 @@ const EN = {
   "도움말": "Help",
   "확인": "OK",
   "취소": "Cancel",
-  "열기": "Open"
+  "열기": "Open",
+  "메뉴": "Menu",
+  "더 보기": "More",
+  "닫기": "Close",
+  "이 페이지의 키": "Keys on this page",
+  "이 목록": "this list"
 };
 const LANGS = [["ko", "한국어"], ["en", "English"]];
 const CATALOGS = { en: EN };
@@ -90,8 +95,12 @@ const frame = {
   theme: "auto",
   frame: 0,
   cards: [],
-  menu: []
+  menu: [],
+  sizes: []
 };
+function sizeOf(id) {
+  return frame.sizes.find((s) => s.id === id) ?? frame.sizes[0] ?? { id: "1x1", cols: 1, rows: 1 };
+}
 const prefs = { ...DEFAULTS };
 const STORE = "/apps/site/api/store/prefs";
 const LOCAL = "prefs";
@@ -104,8 +113,8 @@ function applyTheme(theme) {
   frame.theme = v;
 }
 function fromStored(raw, cards) {
-  const p = { ...DEFAULTS, ...raw };
-  if (!Array.isArray(p.apps)) p.apps = [];
+  const p = { ...DEFAULTS, ...raw, apps: [...DEFAULTS.apps] };
+  if ("apps" in raw) p.apps = Array.isArray(raw.apps) ? raw.apps : [];
   if (!Array.isArray(p.home)) p.home = [];
   if (!("apps" in raw) && (Array.isArray(raw.order) || Array.isArray(raw.hidden))) {
     const hidden = new Set(raw.hidden ?? []);
@@ -134,8 +143,10 @@ async function load() {
     if (r.ok) Object.assign(frame, await r.json());
   } catch {
   }
-  frame.cards = (frame.cards ?? []).map((c) => ({ description: "", about: "", tags: [], code: "", icon: "", href: "", optional: true, links: [], widgets: [], ...c }));
+  frame.cards = (frame.cards ?? []).map((c) => ({ description: "", about: "", tags: [], code: "", icon: "", href: "", optional: true, default: false, links: [], widgets: [], ...c }));
   frame.menu ??= [];
+  frame.sizes = Array.isArray(frame.sizes) && frame.sizes.length ? frame.sizes : [{ id: "1x1", cols: 1, rows: 1 }];
+  DEFAULTS.apps = frame.cards.filter((c) => c.default && c.optional).map((c) => c.id);
   let raw = {};
   try {
     raw = JSON.parse(localStorage.getItem(LOCAL) ?? "{}");
@@ -223,7 +234,8 @@ async function call(method, url, body) {
     location.assign(`${frame.signin}/login?next=${encodeURIComponent(location.pathname + location.search)}`);
   }
   const e = data?.error;
-  throw new ApiError(r.status, e?.code ?? "http", e?.message ?? t("요청이 실패했습니다 ({status})", { status: r.status }));
+  const why = typeof e === "string" ? e : e?.message;
+  throw new ApiError(r.status, e?.code ?? "http", why || t("요청이 실패했습니다 ({status})", { status: r.status }));
 }
 function api(prefix) {
   return {
@@ -316,6 +328,9 @@ function empty(text) {
 }
 function help(text) {
   return h("details", { class: "help" }, h("summary", { title: t("도움말") }, "i"), h("p", null, text));
+}
+function meta(...children) {
+  return h("p", { class: "meta" }, ...children);
 }
 function tag(text, kind = "") {
   return h("span", { class: `tag ${kind}`.trim() }, text);
@@ -421,7 +436,11 @@ function form(attrs, fn, ...children) {
 }
 function dialog(heading, body, opts = {}) {
   return new Promise((resolve) => {
-    const okBtn = h("button", { type: "submit", class: opts.danger ? "danger" : null, disabled: !!opts.confirmWith }, opts.ok ?? t("확인"));
+    const okBtn = h(
+      "button",
+      { type: "submit", class: opts.danger ? "danger" : opts.justClose ? "secondary" : null, disabled: !!opts.confirmWith },
+      opts.ok ?? (opts.justClose ? t("닫기") : t("확인"))
+    );
     const typed = opts.confirmWith && h("input", {
       type: "text",
       autocomplete: "off",
@@ -444,7 +463,7 @@ function dialog(heading, body, opts = {}) {
         h(
           "div",
           { class: "actions" },
-          h("button", { type: "button", class: "secondary", onclick: () => d.close("") }, opts.cancel ?? t("취소")),
+          !opts.justClose && h("button", { type: "button", class: "secondary", onclick: () => d.close("") }, opts.cancel ?? t("취소")),
           okBtn
         )
       )
@@ -453,9 +472,170 @@ function dialog(heading, body, opts = {}) {
       resolve(d.returnValue === "ok");
       d.remove();
     });
+    d.addEventListener("keydown", (ev) => {
+      if (ev.key !== "Enter" || ev.isComposing) return;
+      const el = ev.target;
+      if (el.tagName === "TEXTAREA" || el.tagName === "BUTTON" || el.tagName === "A" || el.closest(".menu")) return;
+      if (el.closest("form") !== d.firstElementChild) return;
+      ev.preventDefault();
+      if (!okBtn.disabled) okBtn.click();
+    });
     document.body.appendChild(d);
     d.showModal();
+    if (!d.querySelector("input, select, textarea") && !okBtn.disabled) okBtn.focus();
   });
+}
+let pageKeys = [];
+let keysInstalled = false;
+function typing(el) {
+  const e = el;
+  return !!e && (["INPUT", "TEXTAREA", "SELECT"].includes(e.tagName) || e.isContentEditable);
+}
+function keys(list) {
+  pageKeys = list;
+  if (keysInstalled) return;
+  keysInstalled = true;
+  document.addEventListener("keydown", (ev) => {
+    if (ev.defaultPrevented || ev.isComposing || document.querySelector("dialog[open]") || openMenu) return;
+    const combo = `${ev.altKey ? "Alt+" : ""}${ev.ctrlKey || ev.metaKey ? "Ctrl+" : ""}${ev.key}`;
+    if (ev.key === "?" && !typing(ev.target)) {
+      ev.preventDefault();
+      void keysDialog();
+      return;
+    }
+    const hit = pageKeys.find((k) => k.key === combo && (!k.when || k.when()));
+    if (!hit) return;
+    if (typing(ev.target) && !(ev.key === "Escape" || ev.altKey || ev.ctrlKey || ev.metaKey)) return;
+    ev.preventDefault();
+    void act(null, async () => hit.run());
+  });
+}
+const KEY_WORDS = { ArrowLeft: "←", ArrowRight: "→", ArrowUp: "↑", ArrowDown: "↓", Escape: "Esc", " ": "Space" };
+function keysDialog() {
+  const word = (k) => k.split("+").map((p) => KEY_WORDS[p] ?? p).join(" + ");
+  const rows = pageKeys.filter((k) => !k.when || k.when()).map((k) => h("li", null, h("kbd", null, word(k.key)), h("span", null, k.label)));
+  return dialog(t("이 페이지의 키"), h("ul", { class: "keys" }, rows, h("li", null, h("kbd", null, "?"), h("span", null, t("이 목록")))), { justClose: true });
+}
+let openMenu = null;
+function closeMenu() {
+  openMenu?.remove();
+  openMenu = null;
+}
+function menu(at, sections, opts = {}) {
+  closeMenu();
+  const back = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  const el = h(
+    "div",
+    { class: "menu", role: "menu", "aria-label": opts.label ?? t("메뉴") },
+    sections.filter((s) => s.items.length).map((s, i) => [
+      i > 0 && h("hr"),
+      s.title && h("div", { class: "menu-title" }, s.title),
+      s.items.map((it) => h(
+        "button",
+        {
+          type: "button",
+          role: "menuitem",
+          class: `menu-item${it.danger ? " danger" : ""}`,
+          disabled: it.disabled || null,
+          onclick: () => {
+            done();
+            void act(null, async () => it.run());
+          }
+        },
+        h("strong", null, it.label),
+        it.detail && h("span", { class: "detail" }, it.detail),
+        it.kbd && h("kbd", null, it.kbd)
+      ))
+    ])
+  );
+  const done = () => {
+    if (openMenu === el) {
+      el.remove();
+      openMenu = null;
+      back?.focus();
+    }
+  };
+  const items = () => Array.from(el.querySelectorAll(".menu-item:not(:disabled)"));
+  el.addEventListener("keydown", (ev) => {
+    const list = items();
+    const i = list.indexOf(document.activeElement);
+    if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+      ev.preventDefault();
+      list[(i + (ev.key === "ArrowDown" ? 1 : list.length - 1)) % list.length]?.focus();
+    } else if (ev.key === "Home") {
+      ev.preventDefault();
+      list[0]?.focus();
+    } else if (ev.key === "End") {
+      ev.preventDefault();
+      list[list.length - 1]?.focus();
+    } else if (ev.key === "Escape" || ev.key === "Tab") {
+      ev.preventDefault();
+      done();
+    }
+  });
+  document.body.appendChild(el);
+  openMenu = el;
+  const r = at instanceof HTMLElement ? at.getBoundingClientRect() : null;
+  const pt = at instanceof HTMLElement ? { x: 0, y: 0 } : at;
+  let x = r ? r.left : pt.x, y = r ? r.bottom + 4 : pt.y;
+  const w = el.offsetWidth, hgt = el.offsetHeight;
+  if (x + w > innerWidth - 8) x = Math.max(8, (r ? r.right : pt.x) - w);
+  if (y + hgt > innerHeight - 8) y = Math.max(8, (r ? r.top - 4 : pt.y) - hgt);
+  el.style.left = `${x}px`;
+  el.style.top = `${y}px`;
+  const outside = (ev) => {
+    if (!el.contains(ev.target)) {
+      done();
+      off();
+    }
+  };
+  const off = () => {
+    document.removeEventListener("pointerdown", outside, true);
+    window.removeEventListener("resize", done);
+    window.removeEventListener("scroll", done, true);
+  };
+  setTimeout(() => {
+    if (openMenu === el) {
+      document.addEventListener("pointerdown", outside, true);
+      window.addEventListener("resize", done);
+      window.addEventListener("scroll", done, true);
+    }
+  });
+  items()[0]?.focus();
+  return el;
+}
+function onMenu(el, build, opts = {}) {
+  el.addEventListener("contextmenu", (ev) => {
+    const sections = build();
+    if (!sections) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    menu({ x: ev.clientX, y: ev.clientY }, sections, opts);
+  });
+  el.addEventListener("keydown", (ev) => {
+    if (ev.shiftKey && ev.key === "F10" || ev.key === "ContextMenu") {
+      const sections = build();
+      if (!sections) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      menu(el, sections, opts);
+    }
+  });
+  return el;
+}
+function menuButton(build, label = t("더 보기")) {
+  const b = h("button", {
+    type: "button",
+    class: "more",
+    "aria-label": label,
+    title: label,
+    "aria-haspopup": "menu",
+    onclick: (ev) => {
+      ev.stopPropagation();
+      menu(b, build(), { label });
+    }
+  }, "⋯");
+  return b;
 }
 function go(path) {
   history.pushState(null, "", path);
@@ -493,7 +673,11 @@ function launcher(c) {
 }
 const LAUNCHER = "launcher";
 function widgetsOf(c) {
-  return [{ id: LAUNCHER, title: c.title, href: "", size: "1x1" }, ...c.widgets];
+  return [{ id: LAUNCHER, title: c.title, description: c.description, href: "", size: sizeOf(void 0).id }, ...c.widgets];
+}
+function spanStyle(sizeId) {
+  const s = sizeOf(sizeId);
+  return `grid-column: span ${s.cols}; grid-row: span ${s.rows};`;
 }
 async function mount(cell, c, w) {
   const body = h("div", { class: "widget-body" });
@@ -540,6 +724,7 @@ export {
   applyTheme,
   button,
   choice,
+  closeMenu,
   dialog,
   empty,
   flash,
@@ -550,17 +735,23 @@ export {
   h,
   header,
   help,
+  keys,
+  keysDialog,
   lang,
   launcher,
   link,
   load,
   locale,
   main,
+  menu,
+  menuButton,
   message,
+  meta,
   mount,
   n_,
   num,
   onApps,
+  onMenu,
   openWord,
   ownCard,
   pageHead,
@@ -574,6 +765,8 @@ export {
   setLang,
   showPending,
   site,
+  sizeOf,
+  spanStyle,
   svg,
   t,
   tag,

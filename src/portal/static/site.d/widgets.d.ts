@@ -21,6 +21,9 @@ export declare function launcher(c: Card): HTMLElement;
 export declare const LAUNCHER = "launcher";
 /** The widgets an app offers: the launcher first, then the ones it declared. */
 export declare function widgetsOf(c: Card): Widget[];
+/** A cell's place on the grid for a size: the spans, as inline style (no class per size — the sizes are the
+ * site's declaration, docs/frame.md §4). */
+export declare function spanStyle(sizeId: string | undefined): string;
 /** Draw a widget into its cell: the module when there is one, the launcher otherwise or on failure. */
 export declare function mount(cell: HTMLElement, c: Card, w: Widget): Promise<void>;
 /** A list inside a widget: the common shape (a title, items with a link each). */

@@ -38,8 +38,9 @@ async function call(method: string, url: string, body?: unknown): Promise<Json> 
   if (r.status === 401) {
     location.assign(`${frame.signin}/login?next=${encodeURIComponent(location.pathname + location.search)}`);
   }
-  const e = data?.error;
-  throw new ApiError(r.status, e?.code ?? 'http', e?.message ?? t('요청이 실패했습니다 ({status})', { status: r.status }));
+  const e = data?.error;  // the services say {error: "why"} (portal/*.py); the handbook says {error: {code, message}}
+  const why = typeof e === 'string' ? e : e?.message;
+  throw new ApiError(r.status, e?.code ?? 'http', why || t('요청이 실패했습니다 ({status})', { status: r.status }));
 }
 
 /** One service's API at its prefix: api('/agents/api/v1').get('/runs'). */
@@ -136,8 +137,13 @@ export function empty(text: string): HTMLElement {
 }
 
 /** One line of help, shown when asked for: the only place an explanation lives (§5 R3). */
-export function help(text: string): HTMLElement {
+export function help(text: Child): HTMLElement {
   return h('details', { class: 'help' }, h('summary', { title: t('도움말') }, 'i'), h('p', null, text));
+}
+
+/** What a thing says of itself under its name (its id, its state, its numbers): data, not an explanation. */
+export function meta(...children: Child[]): HTMLElement {
+  return h('p', { class: 'meta' }, ...children);
 }
 
 export function tag(text: string, kind = ''): HTMLElement {
@@ -240,21 +246,159 @@ export function form(attrs: Record<string, unknown>, fn: (f: HTMLFormElement, b:
 }
 
 /** A question (or a form) in a dialog: true when confirmed. `danger`: the confirming button is the red one;
- * `confirmWith`: a word the person must type (the name of what is being destroyed). */
-export function dialog(heading: string, body: Child, opts: { ok?: string; cancel?: string; danger?: boolean; confirmWith?: string } = {}): Promise<boolean> {
+ * `confirmWith`: a word the person must type (the name of what is being destroyed); `justClose`: the sheet
+ * applies as the person goes (switches), so its one button closes it. */
+export function dialog(heading: string, body: Child, opts: { ok?: string; cancel?: string; danger?: boolean; confirmWith?: string; justClose?: boolean } = {}): Promise<boolean> {
   return new Promise(resolve => {
-    const okBtn = h('button', { type: 'submit', class: opts.danger ? 'danger' : null, disabled: !!opts.confirmWith }, opts.ok ?? t('확인'));
+    const okBtn = h('button', { type: 'submit', class: opts.danger ? 'danger' : opts.justClose ? 'secondary' : null, disabled: !!opts.confirmWith },
+                    opts.ok ?? (opts.justClose ? t('닫기') : t('확인')));
     const typed = opts.confirmWith && h('input', { type: 'text', autocomplete: 'off', 'aria-label': opts.confirmWith,
                                                  oninput: (ev: Event) => { okBtn.disabled = (ev.target as HTMLInputElement).value.trim() !== opts.confirmWith; } });
     const d = h('dialog', null,
       form({ method: 'dialog' }, async () => { d.close('ok'); },
         h('h2', null, heading), body, typed && h('label', null, typed),
         h('div', { class: 'actions' },
-          h('button', { type: 'button', class: 'secondary', onclick: () => d.close('') }, opts.cancel ?? t('취소')), okBtn)));
+          !opts.justClose && h('button', { type: 'button', class: 'secondary', onclick: () => d.close('') }, opts.cancel ?? t('취소')), okBtn)));
     d.addEventListener('close', () => { resolve(d.returnValue === 'ok'); d.remove(); });
+    // Enter confirms wherever the focus is — a select, a checkbox, a switch, the dialog itself — not only in a text
+    // input (the form's implicit submission); a textarea keeps Enter, a button keeps its own; Esc is the dialog's own
+    d.addEventListener('keydown', ev => {
+      if (ev.key !== 'Enter' || ev.isComposing) return;
+      const el = ev.target as HTMLElement;
+      if (el.tagName === 'TEXTAREA' || el.tagName === 'BUTTON' || el.tagName === 'A' || el.closest('.menu')) return;
+      if (el.closest('form') !== d.firstElementChild) return;  // a form of its own inside the sheet (a line to add): its Enter is its own
+      ev.preventDefault();
+      if (!okBtn.disabled) okBtn.click();
+    });
     document.body.appendChild(d);
     d.showModal();
+    // a question with no field: the confirming button has the focus, so Enter confirms (and Esc cancels)
+    if (!d.querySelector('input, select, textarea') && !okBtn.disabled) okBtn.focus();
   });
+}
+
+// ── the page's keys (docs/frame.md §5 R14): declared once, run from one place, shown with ? ──────────
+
+export interface Key { key: string; label: string; run: () => void | Promise<unknown>; when?: () => boolean }
+let pageKeys: Key[] = [];
+let keysInstalled = false;
+
+/** Where typing happens: a letter there is text, not a shortcut. */
+function typing(el: EventTarget | null): boolean {
+  const e = el as HTMLElement | null;
+  return !!e && (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.tagName) || e.isContentEditable);
+}
+
+/** The page's shortcuts: `key` as KeyboardEvent.key ('t', '/', 'ArrowLeft', 'Escape'; 'Shift+?'-style modifiers
+ * as 'Alt+ArrowLeft'); a letter is not taken while typing, Escape and the arrows with Alt are. Called by a page when
+ * it draws; the next page replaces the set. ? (Shift+/) shows the list. */
+export function keys(list: Key[]): void {
+  pageKeys = list;
+  if (keysInstalled) return;
+  keysInstalled = true;
+  document.addEventListener('keydown', ev => {
+    if (ev.defaultPrevented || ev.isComposing || document.querySelector('dialog[open]') || openMenu) return;
+    const combo = `${ev.altKey ? 'Alt+' : ''}${ev.ctrlKey || ev.metaKey ? 'Ctrl+' : ''}${ev.key}`;
+    if (ev.key === '?' && !typing(ev.target)) { ev.preventDefault(); void keysDialog(); return; }
+    const hit = pageKeys.find(k => k.key === combo && (!k.when || k.when()));
+    if (!hit) return;
+    if (typing(ev.target) && !(ev.key === 'Escape' || ev.altKey || ev.ctrlKey || ev.metaKey)) return;
+    ev.preventDefault();
+    void act(null, async () => hit.run());
+  });
+}
+
+const KEY_WORDS: Record<string, string> = { ArrowLeft: '←', ArrowRight: '→', ArrowUp: '↑', ArrowDown: '↓', Escape: 'Esc', ' ': 'Space' };
+
+/** The list of the page's keys, as declared — nothing is written here that the page did not declare. */
+export function keysDialog(): Promise<boolean> {
+  const word = (k: string) => k.split('+').map(p => KEY_WORDS[p] ?? p).join(' + ');
+  const rows = pageKeys.filter(k => !k.when || k.when()).map(k => h('li', null, h('kbd', null, word(k.key)), h('span', null, k.label)));
+  return dialog(t('이 페이지의 키'), h('ul', { class: 'keys' }, rows, h('li', null, h('kbd', null, '?'), h('span', null, t('이 목록')))), { justClose: true });
+}
+
+// ── the menu: an object's actions, at its place (docs/frame.md §5 R10) ────
+
+export interface MenuItem { label: Child; detail?: Child; run: () => void | Promise<unknown>; danger?: boolean; disabled?: boolean; kbd?: string }
+export interface MenuSection { title?: string; items: MenuItem[] }
+export type MenuAt = { x: number; y: number } | HTMLElement;
+
+let openMenu: HTMLElement | null = null;
+
+export function closeMenu(): void {
+  openMenu?.remove();
+  openMenu = null;
+}
+
+/** The actions of a thing, where it is: a list under the pointer (a right-click), or under its ⋯ button.
+ * One line per item — a bold keyword and a dim detail; ↑↓ move, Enter runs, Esc and a click outside close;
+ * the focus goes back to where it came from. A menu with one item is still a menu: the place is the point. */
+export function menu(at: MenuAt, sections: MenuSection[], opts: { label?: string } = {}): HTMLElement {
+  closeMenu();
+  const back = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  const el = h('div', { class: 'menu', role: 'menu', 'aria-label': opts.label ?? t('메뉴') },
+    sections.filter(s => s.items.length).map((s, i) => [
+      i > 0 && h('hr'),
+      s.title && h('div', { class: 'menu-title' }, s.title),
+      s.items.map(it => h('button', { type: 'button', role: 'menuitem', class: `menu-item${it.danger ? ' danger' : ''}`, disabled: it.disabled || null,
+                                      onclick: () => { done(); void act(null, async () => it.run()); } },
+        h('strong', null, it.label), it.detail && h('span', { class: 'detail' }, it.detail), it.kbd && h('kbd', null, it.kbd))),
+    ]));
+  const done = () => { if (openMenu === el) { el.remove(); openMenu = null; back?.focus(); } };
+  const items = () => Array.from(el.querySelectorAll<HTMLButtonElement>('.menu-item:not(:disabled)'));
+  el.addEventListener('keydown', ev => {
+    const list = items();
+    const i = list.indexOf(document.activeElement as HTMLButtonElement);
+    if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') { ev.preventDefault(); list[(i + (ev.key === 'ArrowDown' ? 1 : list.length - 1)) % list.length]?.focus(); }
+    else if (ev.key === 'Home') { ev.preventDefault(); list[0]?.focus(); }
+    else if (ev.key === 'End') { ev.preventDefault(); list[list.length - 1]?.focus(); }
+    else if (ev.key === 'Escape' || ev.key === 'Tab') { ev.preventDefault(); done(); }
+  });
+  document.body.appendChild(el);
+  openMenu = el;
+  // where: under the pointer, or under the element it belongs to; never off the screen
+  const r = at instanceof HTMLElement ? at.getBoundingClientRect() : null;
+  const pt = at instanceof HTMLElement ? { x: 0, y: 0 } : at;
+  let x = r ? r.left : pt.x, y = r ? r.bottom + 4 : pt.y;
+  const w = el.offsetWidth, hgt = el.offsetHeight;
+  if (x + w > innerWidth - 8) x = Math.max(8, (r ? r.right : pt.x) - w);
+  if (y + hgt > innerHeight - 8) y = Math.max(8, (r ? r.top - 4 : pt.y) - hgt);
+  el.style.left = `${x}px`;
+  el.style.top = `${y}px`;
+  const outside = (ev: Event) => { if (!el.contains(ev.target as Node)) { done(); off(); } };
+  const off = () => { document.removeEventListener('pointerdown', outside, true); window.removeEventListener('resize', done); window.removeEventListener('scroll', done, true); };
+  setTimeout(() => { if (openMenu === el) { document.addEventListener('pointerdown', outside, true); window.addEventListener('resize', done); window.addEventListener('scroll', done, true); } });
+  items()[0]?.focus();
+  return el;
+}
+
+/** A thing that has a menu: the right-click, and Shift+F10 (or the menu key) while it has the focus, open the
+ * same one. `build` says what the menu holds now; null for nothing. */
+export function onMenu(el: HTMLElement, build: () => MenuSection[] | null, opts: { label?: string } = {}): HTMLElement {
+  el.addEventListener('contextmenu', ev => {
+    const sections = build();
+    if (!sections) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    menu({ x: ev.clientX, y: ev.clientY }, sections, opts);
+  });
+  el.addEventListener('keydown', ev => {
+    if ((ev.shiftKey && ev.key === 'F10') || ev.key === 'ContextMenu') {
+      const sections = build();
+      if (!sections) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      menu(el, sections, opts);
+    }
+  });
+  return el;
+}
+
+/** The ⋯ button of a row or a head: the same menu, under it. */
+export function menuButton(build: () => MenuSection[], label: string = t('더 보기')): HTMLButtonElement {
+  const b = h('button', { type: 'button', class: 'more', 'aria-label': label, title: label, 'aria-haspopup': 'menu',
+                          onclick: (ev: MouseEvent) => { ev.stopPropagation(); menu(b, build(), { label }); } }, '⋯');
+  return b;
 }
 
 // ── moving about ──────────────────────────────────────────────────────────

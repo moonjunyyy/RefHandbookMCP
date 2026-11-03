@@ -47,6 +47,33 @@ def test_the_tokens_are_the_only_place_a_colour_is_named():
     assert not offenders, "colours outside theme.css:\n" + "\n".join(offenders)
 
 
+SPACE = re.compile(r"(?:^|[;{])\s*(?:padding|margin|gap|row-gap|column-gap)(?:-[a-z]+)?\s*:\s*([^;}]+)", re.M)
+PX = re.compile(r"\d+(?:\.\d+)?px")
+RATCHET_PX = 32  # px literals left in parts.css spacing declarations (hairlines of 1-3px, the page's width): only down from here
+
+
+def test_space_is_a_token_scale():
+    """R14 (docs/frame.md §5): paddings, margins and gaps are the scale theme.css declares (--s1..--s5, --pad, --gap),
+    not numbers; what is left is a ratchet."""
+    theme = (STATIC / "theme.css").read_text()
+    assert all(f"--{k}:" in theme for k in ("s1", "s2", "s3", "s4", "s5", "pad", "gap", "icon", "icon-big", "cell"))
+    parts = (STATIC / "parts.css").read_text()
+    n = sum(len(PX.findall(m.group(1))) for m in SPACE.finditer(parts))
+    assert n <= RATCHET_PX, f"px literals in spacing declarations grew: {n} > {RATCHET_PX}"
+    assert parts.count("var(--s") > 200  # the scale is what the parts use
+
+
+def test_nothing_the_site_file_declares_is_repeated_in_the_code():
+    """R13/§4: which apps a new account starts with, and which sizes a cell may have, are the site file's and
+    portal/site.py's declarations; the frame and the pages carry no copy of them."""
+    s = site.load(SITE, facts(str(SITE)))
+    ids = [a.id for a in s.apps if a.optional]
+    frame_code = "\n".join(p.read_text() for p in (WEB / "frame").rglob("*.ts") if _ours(p))
+    assert not [i for i in ids if f"'{i}'" in frame_code], "an app id is named in the frame code"
+    pages = "\n".join(p.read_text() for p in (WEB / "src" / "pages").glob("*.ts") if _ours(p)) + frame_code
+    assert not [k for k in site.SIZES if f"'{k}'" in pages.replace("'1x1', cols: 1, rows: 1", "")], "a size id is named in the code"
+
+
 def test_the_stylesheet_is_the_two_parts():
     """style.css (the name every page links) is the tokens and the parts, nothing of its own."""
     text = (STATIC / "style.css").read_text()
@@ -107,11 +134,31 @@ def test_the_shipped_file_keeps_the_account_on_and_offers_a_widget():
 def test_the_frame_lists_each_apps_widgets(app):
     me = TestClient(app).get("/auth/api/v1/me").json()
     eq = next(x for x in me["cards"] if x["id"] == "eq-sandbox")
-    assert eq["optional"] is True and eq["widgets"] == [{"id": "boards", "title": "최근 작업판", "href": "/apps/eq-sandbox/widget.js", "size": "1x1"}]
+    assert eq["optional"] is True and eq["widgets"] == [{"id": "boards", "title": "최근 작업판", "description": "최근에 연 작업판으로 바로",
+                                                          "href": "/apps/eq-sandbox/widget.js", "size": "1x1"}]
     assert next(x for x in me["cards"] if x["id"] == "account")["optional"] is False
-    assert eq["tags"] == ["연구", "도구"] and eq["about"].startswith("방정식의 항을")
+    assert eq["tags"] == ["연구", "도구"] and eq["about"].startswith("식의 부분을")
     en = TestClient(app).get("/auth/api/v1/me", headers={"Accept-Language": "en"}).json()
     assert next(x for x in en["cards"] if x["id"] == "eq-sandbox")["tags"] == ["Research", "Tools"]
+
+
+def test_the_frame_declares_the_sizes_and_the_default_apps(app):
+    """R13 and §4: the frame reads which apps a new account starts with, and which sizes a cell may have,
+    from the site file through /me — no list in the code."""
+    me = TestClient(app).get("/auth/api/v1/me").json()
+    assert [c["id"] for c in me["cards"] if c["default"]] == ["projects", "calendar", "vault"]
+    assert all(c["optional"] for c in me["cards"] if c["default"])
+    assert me["sizes"] == [{"id": k, "cols": c, "rows": r} for k, (c, r) in site.SIZES.items()]
+    assert all(w["size"] in site.SIZES for c in me["cards"] for w in c["widgets"])
+
+
+def test_every_widget_says_what_it_is():
+    """R12 (docs/frame.md §5): the person choosing a widget reads what it shows, in both languages."""
+    s = site.load(SITE, facts(str(SITE)))
+    for a in s.apps:
+        for w in a.widgets:
+            assert w.description and len(w.description) <= 80, (a.id, w.id)
+            assert w.text("description", "en") != w.description, (a.id, w.id)  # it has its English
 
 
 WIDGET = '[[app]]\nid = "x"\ntitle = "X"\nstatic = true\n[[app.widget]]\n'
@@ -120,10 +167,12 @@ WIDGET = '[[app]]\nid = "x"\ntitle = "X"\nstatic = true\n[[app.widget]]\n'
 @pytest.mark.parametrize("bad, message", [
     (WIDGET + 'id = "w"\ntitle = "W"\nmodule = "w.js"\n[[app.widget]]\nid = "w"\ntitle = "W2"\nmodule = "w2.js"\n', "declared twice"),
     (WIDGET + 'id = "w"\ntitle = "W"\nmodule = "w.js"\nsize = "3x3"\n', "size is one of"),
+    ('[[app]]\nid = "x"\ntitle = "X"\nstatic = true\noptional = false\ndefault = true\n', "default is for an optional app"),
     (WIDGET + 'id = "w"\ntitle = "W"\n', "needs id, title and module"),
     (WIDGET + 'id = "w"\ntitle = "W"\nmodule = "w.js"\ncolour = "red"\n', "unknown widget fields"),
+    (WIDGET + 'id = "w"\ntitle = "W"\nmodule = "w.js"\ndescription = "' + "x" * 81 + '"\n', "one line"),
+    (WIDGET + 'id = "w"\ntitle = "W"\nmodule = "w.js"\ntr.en = { size = "2x2" }\n', "names title or description"),
     (WIDGET + 'id = "Bad Id"\ntitle = "W"\nmodule = "w.js"\n', "widget id"),
-    (WIDGET + 'id = "w"\ntitle = "W"\nmodule = "w.js"\ntr.en = { description = "x" }\n', "names title"),
     ('[[app]]\nid = "x"\ntitle = "X"\nupstream = "http://a"\n[[app.widget]]\nid = "w"\ntitle = "W"\nmodule = "w.js"\n',
      "absolute path"),
 ])
@@ -146,7 +195,7 @@ def test_a_services_widget_names_its_own_path(tmp_path):
 PAGES = WEB / "src" / "pages"
 # explanatory paragraphs the pages still carry (docs/frame.md §5): the rewritten pages have none, and the
 # others may only lose them. Raise a number here only with a reason in the same commit.
-RATCHET = {"account.ts": 4, "agents.ts": 10, "flows.ts": 10, "projects.ts": 5, "schedule.ts": 0, "grant.ts": 0,
+RATCHET = {"account.ts": 0, "agents.ts": 0, "flows.ts": 0, "projects.ts": 0, "schedule.ts": 0, "grant.ts": 0,
            "home.ts": 0, "apps.ts": 0, "settings.ts": 0, "tabs.ts": 0, "calendar.ts": 0, "vault.ts": 0}
 EXPLANATION = re.compile(r"h\('p',\s*\{\s*class:\s*'(?:muted small|muted)'")
 
@@ -170,3 +219,11 @@ def test_no_link_is_dressed_as_a_button_on_the_rewritten_pages():
     for name in ("home.ts", "apps.ts", "settings.ts", "calendar.ts", "vault.ts"):
         text = (PAGES / name).read_text()
         assert "class: 'button" not in text and "buttonLink(" not in text, f"{name}: a link dressed as a button"
+
+
+def test_the_main_page_is_never_the_store():
+    """The main page shows widgets or the app menu; turning apps on and off is the store's (/apps). With nothing on,
+    the page is one action that goes there (docs/frame.md §4.2)."""
+    text = (PAGES / "home.ts").read_text()
+    assert "from './apps'" not in text and "catalog(" not in text
+    assert "primaryLink('/apps'" in text

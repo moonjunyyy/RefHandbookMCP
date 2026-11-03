@@ -6,28 +6,36 @@
 
 import { setLang } from './i18n';
 
-export interface Widget { id: string; title: string; href: string; size: '1x1' | '2x1' | '2x2' }
+/** A widget's cells on the grid: one of the sizes the site declares (`frame.sizes`, from portal/site.py SIZES). */
+export interface Size { id: string; cols: number; rows: number }
+export interface Widget { id: string; title: string; description: string; href: string; size: string }
 export interface Card { id: string; title: string; description: string; about: string; tags: string[]; code: string; icon: string;
-                        href: string; optional: boolean; links: { label: string; href: string }[]; widgets: Widget[] }
+                        href: string; optional: boolean; default: boolean; links: { label: string; href: string }[]; widgets: Widget[] }
 export interface Frame { uid: string | null; title: string; signin: string; portal: string; lang: string;
-                         theme: string; frame: number; cards: Card[]; menu: { label: string; href: string }[] }
+                         theme: string; frame: number; cards: Card[]; menu: { label: string; href: string }[]; sizes: Size[] }
 
 export const THEMES = ['auto', 'light', 'dark'] as const;
 export type Theme = (typeof THEMES)[number];
 
-export interface Placement { app: string; widget: string }
+export interface Placement { app: string; widget: string; size?: string }  // size: the person's own, else the widget's declared one
 export interface Prefs {
   lang: string;        // 'auto' (the browser's), or a language the site has
   theme: Theme;        // 'auto' (the OS's), 'light' or 'dark'
   start: string;       // '/' (the main page) or an address of the site to open after signing in
-  apps: string[];      // the apps the person turned on, in their order; nothing is on until they do
+  apps: string[];      // the apps the person turned on, in their order; a new account starts with the apps the site file marks default
   home: Placement[];   // the main page's widgets, in their order; [] = each app's first widget, as turned on
   seen: string[];      // app ids the person has been shown: any other is new to them
 }
 
+/** The settings an account starts with. `apps`: the apps the site file marks `default = true` (docs/frame.md §2
+ * R13) — filled from the frame once it is loaded; a kept `apps`, an empty one too, is the person's own choice. */
 export const DEFAULTS: Prefs = { lang: 'auto', theme: 'auto', start: '/', apps: [], home: [], seen: [] };
 export const frame: Frame = { uid: null, title: '', signin: '/auth', portal: '/account', lang: 'ko', theme: 'auto', frame: 0,
-                              cards: [], menu: [] };
+                              cards: [], menu: [], sizes: [] };
+/** The size a placement has: its own, else its widget's; unknown ids fall back to the first declared size. */
+export function sizeOf(id: string | undefined): Size {
+  return frame.sizes.find(s => s.id === id) ?? frame.sizes[0] ?? { id: '1x1', cols: 1, rows: 1 };
+}
 export const prefs: Prefs = { ...DEFAULTS };
 
 const STORE = '/apps/site/api/store/prefs';
@@ -44,10 +52,11 @@ export function applyTheme(theme: string): void {
 }
 
 /** What is kept from an older account: `hidden`/`order` (every app shown unless hidden) become `apps`
- * (nothing on unless turned on) — the apps that were shown, in their order. The stored data is not rewritten. */
+ * (nothing on unless turned on) — the apps that were shown, in their order. The stored data is not rewritten.
+ * An account with nothing kept starts with the site's default apps; a kept `apps` is kept even when it is empty. */
 function fromStored(raw: Record<string, unknown>, cards: Card[]): Prefs {
-  const p: Prefs = { ...DEFAULTS, ...raw } as Prefs;
-  if (!Array.isArray(p.apps)) p.apps = [];
+  const p: Prefs = { ...DEFAULTS, ...raw, apps: [...DEFAULTS.apps] } as Prefs;
+  if ('apps' in raw) p.apps = Array.isArray(raw.apps) ? (raw.apps as string[]) : [];
   if (!Array.isArray(p.home)) p.home = [];
   if (!('apps' in raw) && (Array.isArray(raw.order) || Array.isArray(raw.hidden))) {
     const hidden = new Set((raw.hidden as string[]) ?? []);
@@ -74,8 +83,10 @@ export async function load(): Promise<Frame> {
     if (r.ok) Object.assign(frame, await r.json());
   } catch { /* the frame stays as it is: a page still draws */ }
   // an answer from an older sign-in (or a test's) may lack the newer fields: every card is whole here
-  frame.cards = (frame.cards ?? []).map(c => ({ description: '', about: '', tags: [], code: '', icon: '', href: '', optional: true, links: [], widgets: [], ...(c as Partial<Card>) } as Card));
+  frame.cards = (frame.cards ?? []).map(c => ({ description: '', about: '', tags: [], code: '', icon: '', href: '', optional: true, default: false, links: [], widgets: [], ...(c as Partial<Card>) } as Card));
   frame.menu ??= [];
+  frame.sizes = Array.isArray(frame.sizes) && frame.sizes.length ? frame.sizes : [{ id: '1x1', cols: 1, rows: 1 }];
+  DEFAULTS.apps = frame.cards.filter(c => c.default && c.optional).map(c => c.id);  // R13: the site file says which
   let raw: Record<string, unknown> = {};
   try { raw = JSON.parse(localStorage.getItem(LOCAL) ?? '{}'); } catch { /* none kept here */ }
   if (frame.uid) {

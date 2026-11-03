@@ -18,24 +18,28 @@ const W = (app) => `/apps/site/widgets/${app}.js`;
 const CARDS = [
   { id: 'account', title: '계정', description: '내 프로필과 비밀번호', about: '프로필과 비밀번호를 고칩니다.', tags: [], code: '', icon: '👤', href: '/account/', optional: false,
     links: [{ label: '내 계정', href: '/account/' }, { label: '사용자 관리', href: '/account/admin/users' }], widgets: [] },
-  { id: 'projects', title: '프로젝트', description: '함께 쓰는 그룹', about: '프로젝트는 사람들이 직접 만드는 그룹입니다.', tags: ['자료'], code: '', icon: '🧩', href: '/projects', optional: true,
-    links: [{ label: '프로젝트', href: '/projects' }], widgets: [{ id: 'mine', title: '내 프로젝트', href: W('projects'), size: '1x1' }] },
-  { id: 'calendar', title: '캘린더', description: '내 일정과 프로젝트 일정을 한 달력에', about: '내 캘린더와 프로젝트의 캘린더를 한 달력에 겹쳐 봅니다. 구독 주소를 폰에 넣을 수 있습니다.', tags: ['일정'], code: '', icon: '📅', href: '/calendar', optional: true,
-    links: [{ label: '캘린더', href: '/calendar' }], widgets: [{ id: 'today', title: '오늘', href: W('calendar'), size: '2x1' }, { id: 'upcoming', title: '다가오는 일', href: W('calendar'), size: '1x1' }] },
-  { id: 'vault', title: '노트', description: 'Obsidian 볼트를 브라우저에서', about: '내 저장소의 마크다운 볼트를 읽고 고칩니다. 검색, 백링크, 최근 노트.', tags: ['글쓰기', '연구'], code: '', icon: '📝', href: '/vault', optional: true,
-    links: [{ label: '노트', href: '/vault' }], widgets: [{ id: 'recent', title: '최근 노트', href: W('vault'), size: '1x1' }, { id: 'home', title: 'Home', href: W('vault'), size: '2x2' }] },
+  { id: 'projects', title: '프로젝트', description: '함께 쓰는 그룹', about: '프로젝트는 사람들이 직접 만드는 그룹입니다.', tags: ['자료'], code: '', icon: '🧩', href: '/projects', optional: true, default: true,
+    links: [{ label: '프로젝트', href: '/projects' }], widgets: [{ id: 'mine', title: '내 프로젝트', description: '내가 든 프로젝트와 그 캘린더로 바로', href: W('projects'), size: '1x1' }] },
+  { id: 'calendar', title: '캘린더', description: '내 일정과 프로젝트 일정을 한 달력에', about: '내 캘린더와 프로젝트의 캘린더를 한 달력에 겹쳐 봅니다. 구독 주소를 폰에 넣을 수 있습니다.', tags: ['일정'], code: '', icon: '📅', href: '/calendar', optional: true, default: true,
+    links: [{ label: '캘린더', href: '/calendar' }], widgets: [{ id: 'today', title: '오늘', description: '오늘의 일정과 마감인 할 일 — 넓은 칸', href: W('calendar'), size: '2x1' }, { id: 'upcoming', title: '다가오는 일', description: '앞으로 7일의 일정', href: W('calendar'), size: '1x1' },
+             { id: 'tasks', title: '할 일', description: '체크리스트 — 홈에서 바로 적고, 끝나면 체크', href: W('calendar'), size: '1x1' }] },
+  { id: 'vault', title: '노트', description: 'Obsidian 볼트를 브라우저에서', about: '내 저장소의 마크다운 볼트를 읽고 고칩니다. 검색, 백링크, 최근 노트.', tags: ['글쓰기', '연구'], code: '', icon: '📝', href: '/vault', optional: true, default: true,
+    links: [{ label: '노트', href: '/vault' }], widgets: [{ id: 'recent', title: '최근 노트', description: '마지막으로 고친 노트 다섯', href: W('vault'), size: '1x1' }, { id: 'home', title: 'Home', description: '볼트의 Home 노트를 그대로 — 큰 칸', href: W('vault'), size: '2x2' }] },
   { id: 'eq-sandbox', title: '수식 플립플롭', description: '수식을 블록처럼 뒤집고 옮기는 작업판', about: '방정식의 항을 끌어 옮기고 뒤집어 정리합니다.', tags: ['연구', '도구'], code: '', icon: '🧮', href: '/apps/eq-sandbox/', optional: true,
-    links: [{ label: '열기', href: '/apps/eq-sandbox/' }], widgets: [{ id: 'boards', title: '최근 작업판', href: '/apps/eq-sandbox/widget.js', size: '1x1' }] },
+    links: [{ label: '열기', href: '/apps/eq-sandbox/' }], widgets: [{ id: 'boards', title: '최근 작업판', description: '최근에 연 작업판으로 바로', href: '/apps/eq-sandbox/widget.js', size: '1x1' }] },
   { id: 'wordgen', title: '글타래', description: '소설을 위한 키워드와 집필 메모', about: '무작위 키워드로 이야기를 틔웁니다.', tags: ['글쓰기'], code: '', icon: '✍️', href: '/apps/wordgen/', optional: true,
     links: [{ label: '열기', href: '/apps/wordgen/' }], widgets: [] },
   { id: 'agents', title: '에이전트', description: '내 API 키로 돌리는 에이전트 팀과 샌드박스', about: '에이전트 팀을 실행합니다.', tags: ['AI', '도구'], code: '', icon: '🤖', href: '/agents/', optional: true,
     links: [{ label: '에이전트 실행', href: '/agents/' }, { label: '프리셋', href: '/agents/presets' }], widgets: [] },
 ];
 const PAGES = ['/', '/apps', '/settings', '/account', '/account/', '/agents', '/agents/', '/calendar', '/vault', '/projects'];
+// the sizes a cell may have (portal/site.py SIZES, as /me carries them)
+const SIZES = [{ id: '1x1', cols: 1, rows: 1 }, { id: '2x1', cols: 2, rows: 1 }, { id: '1x2', cols: 1, rows: 2 }, { id: '2x2', cols: 2, rows: 2 }];
+let slowLinks = 0;  // ms the /links answer is held back (the page must not wait for it)
 let uid = 'tester';
 
 // ── the calendar, in memory ───────────────────────────────────────────────
-let calendars, events, feeds, seq;
+let calendars, events, feeds, seq, tasks, devices;
 const DAY = 86400_000;
 const parse = (s, allday) => (allday || /^\d{4}-\d{2}-\d{2}$/.test(s) ? new Date(`${s}T00:00:00Z`) : new Date(s));
 const fmt = (d, allday) => (allday ? d.toISOString().slice(0, 10) : d.toISOString().replace(/\.\d{3}Z$/, 'Z'));
@@ -80,12 +84,13 @@ function reset() {
   uid = 'tester';
   calendars = [{ id: 'u-1', owner: 'tester', kind: 'user', name: '내 캘린더', color: '', main: true, created: 1 },
                { id: 'g-1', owner: 'lab', kind: 'group', name: 'lab', color: '#33aa55', main: true, created: 2 }];
-  events = []; feeds = []; seq = 0;
-  vaults = [{ id: 'v1', name: 'Research', path: '/data/tester/Research', status: 'ok', created: 1 }];
+  events = []; feeds = []; seq = 0; tasks = []; devices = []; slowLinks = 0;
+  vaults = [{ id: 'v1', name: 'Research', path: '/data/tester/Research', status: 'ok', reason: '', created: 1 }];
   files = new Map([
     ['Home.md', { text: '# Home\n\nStart at [[Ideas/Operators]] and [[Lie algebras|the algebras]]. An operator $T$ acts. #math\n\n$$\\int_0^1 x\\,dx = \\tfrac12$$\n', mtime: 3 }],
     ['Ideas/Operators.md', { text: '# Operators\n\nSee [[Home]] and [[Missing note]]. #draft\n', mtime: 2 }],
     ['Lie algebras.md', { text: 'The algebras: $[x, y]$, a bracket. Back to [[Ideas/Operators#Chain]].\n', mtime: 1 }],
+    ['Wide.md', { text: '# Wide\n\nA table wider than the page, and a long code line.\n\n| ' + [...Array(14)].map((_, i) => `column ${i + 1} with a long heading`).join(' | ') + ' |\n|' + ' --- |'.repeat(14) + '\n| ' + [...Array(14)].map((_, i) => `cell ${i + 1} of the only row`).join(' | ') + ' |\n\n```\n' + 'x'.repeat(400) + '\n```\n', mtime: 0 }],
   ]);
 }
 reset();
@@ -106,7 +111,7 @@ async function handle(route) {
   const q = url.searchParams;
   if (p === '/auth/api/v1/me') {
     const theme = ['light', 'dark'].includes(cookie(req, 'theme')) ? cookie(req, 'theme') : 'auto';
-    return json(route, 200, { uid, title: '모의 사이트', signin: '/auth', portal: '/account', lang: 'ko', theme, frame: 1, cards: CARDS, menu: [] });
+    return json(route, 200, { uid, title: '모의 사이트', signin: '/auth', portal: '/account', lang: 'ko', theme, frame: 1, cards: CARDS, menu: [], sizes: SIZES });
   }
   if (p.startsWith('/auth/static/')) return file(route, STATIC, p.slice('/auth/static/'.length));
   let m;
@@ -122,7 +127,45 @@ async function handle(route) {
   if (p.startsWith('/calendar/api/v1/')) {
     if (!uid) return json(route, 401, { error: 'sign in first' });
     const rest = p.slice('/calendar/api/v1/'.length);
-    if (rest === 'calendars') return json(route, 200, { calendars, projects: ['lab'] });
+    if (rest === 'calendars' && req.method() === 'GET') return json(route, 200, { calendars, projects: ['lab'] });
+    if (rest === 'calendars' && req.method() === 'POST') {
+      const d = body(req);
+      if (!d.name) return json(route, 400, { error: 'name 을(를) 적으세요.' });
+      const c = { id: `${d.group ? 'g' : 'u'}-${++seq}`, owner: d.group || uid, kind: d.group ? 'group' : 'user', name: d.name, color: d.color || '', main: false, created: 3 };
+      calendars.push(c); return json(route, 201, c);
+    }
+    if ((m = /^calendars\/([\w-]+)$/.exec(rest))) {
+      const c = calendars.find((x) => x.id === m[1]);
+      if (!c) return json(route, 404, { error: '그런 캘린더가 없습니다.' });
+      if (req.method() === 'PATCH') { const d = body(req); if ('name' in d) c.name = d.name; if ('color' in d) c.color = d.color; return json(route, 200, c); }
+      if (req.method() === 'DELETE') { if (c.main) return json(route, 409, { error: '기본 캘린더는 지울 수 없습니다.' }); calendars = calendars.filter((x) => x !== c); events = events.filter((e) => e.cal !== c.id); return route.fulfill({ status: 204, body: '' }); }
+    }
+    if (rest === 'devices' && req.method() === 'GET') return json(route, 200, { devices: devices.map(({ password, ...d }) => d), url: `${ORIGIN}/calendar/dav/`, username: uid });
+    if (rest === 'devices' && req.method() === 'POST') {
+      const name = (body(req).name || '').trim();
+      if (!name) return json(route, 400, { error: 'name 을(를) 적으세요.' });
+      const d = { id: `d${++seq}`, name, created: seq, last_used: 0, password: `pw-${seq}-xxxxxxxxxxxxxxxxxxxx` };
+      devices.push(d); return json(route, 201, { ...d, username: uid, url: `${ORIGIN}/calendar/dav/` });
+    }
+    if ((m = /^devices\/(\w+)$/.exec(rest)) && req.method() === 'DELETE') { const n = devices.length; devices = devices.filter((d) => d.id !== m[1]); return n === devices.length ? json(route, 404, { error: '그런 기기가 없습니다.' }) : route.fulfill({ status: 204, body: '' }); }
+    if (rest === 'tasks' && req.method() === 'GET') {
+      const out = tasks.slice().sort((a, b) => (a.done - b.done) || (a.done ? b.updated - a.updated : a.rank - b.rank));
+      return json(route, 200, { tasks: out });
+    }
+    if (rest === 'tasks' && req.method() === 'POST') {
+      const d = body(req), text = (d.text || '').trim();
+      if (!text) return json(route, 400, { error: 'text 을(를) 적으세요.' });
+      if (d.due && !/^\d{4}-\d{2}-\d{2}$/.test(d.due)) return json(route, 400, { error: 'due 는 날짜(2026-11-02)입니다.' });
+      const x = { id: `t${++seq}`, text, done: false, due: d.due || '', rank: tasks.length + 1, created: seq, updated: seq };
+      tasks.push(x); return json(route, 201, x);
+    }
+    if (rest === 'tasks/clear-done' && req.method() === 'POST') { const n = tasks.filter((x) => x.done).length; tasks = tasks.filter((x) => !x.done); return json(route, 200, { removed: n }); }
+    if ((m = /^tasks\/(\w+)$/.exec(rest))) {
+      const x = tasks.find((y) => y.id === m[1]);
+      if (!x) return json(route, 404, { error: '그런 할 일이 없습니다.' });
+      if (req.method() === 'PATCH') { const d = body(req); for (const k of ['text', 'done', 'due', 'rank']) if (k in d) x[k] = d[k]; x.updated = ++seq; return json(route, 200, x); }
+      if (req.method() === 'DELETE') { tasks = tasks.filter((y) => y !== x); return route.fulfill({ status: 204, body: '' }); }
+    }
     if (rest === 'events' && req.method() === 'GET') {
       const lo = parse(q.get('from')), hi = parse(q.get('to'));
       const want = (q.get('cal') || '').split(',').filter(Boolean);
@@ -154,7 +197,33 @@ async function handle(route) {
     if (!uid) return json(route, 401, { error: 'sign in first' });
     const rest = p.slice('/vault/api/v1/'.length);
     if (rest === 'vaults' && req.method() === 'GET') return json(route, 200, { vaults, roots: ['/data/tester'] });
-    if (rest === 'vaults' && req.method() === 'POST') { const v = { id: `v${vaults.length + 1}`, name: body(req).name || 'x', path: body(req).path, status: 'ok', created: 2 }; vaults.push(v); return json(route, 201, v); }
+    if (rest === 'vaults' && req.method() === 'POST') {
+      const d = body(req), where = '/data/tester';
+      if (d.path && d.path.split('/').includes('..')) return json(route, 400, { error: "경로에 '..' 은 쓰지 않습니다." });
+      if (!d.path || !(d.path === where || d.path.startsWith(`${where}/`))) return json(route, 400, { error: `${d.path} 은(는) 볼트로 등록할 수 있는 곳이 아닙니다. 등록할 수 있는 곳: ${where} 안의 폴더` });
+      const missing = /Nowhere/.test(d.path);
+      const v = { id: `v${vaults.length + 1}`, name: d.name || d.path.split('/').pop(), path: d.path, status: missing ? 'error' : 'ok',
+                  reason: missing ? '그 폴더가 없습니다. 폴더를 만들거나, 경로를 고쳐 다시 등록하세요.' : '', created: 2 };
+      vaults.push(v); return json(route, 201, v);
+    }
+    if ((m = /^vaults\/(\w+)$/.exec(rest))) {
+      const v = vaults.find((x) => x.id === m[1]);
+      if (!v) return json(route, 404, { error: '그런 볼트가 없습니다.' });
+      if (req.method() === 'PATCH') { const name = (body(req).name || '').trim(); if (!name) return json(route, 400, { error: '이름을 적으세요.' }); v.name = name; return json(route, 200, v); }
+      if (req.method() === 'DELETE') { vaults = vaults.filter((x) => x !== v); return route.fulfill({ status: 204, body: '' }); }
+    }
+    if ((m = /^vaults\/(\w+)\/retry$/.exec(rest)) && req.method() === 'POST') {
+      const v = vaults.find((x) => x.id === m[1]);
+      if (!v) return json(route, 404, { error: '그런 볼트가 없습니다.' });
+      v.status = 'ok'; v.reason = '';  // the folder was made meanwhile
+      return json(route, 200, v);
+    }
+    if ((m = /^vaults\/(\w+)\/move$/.exec(rest)) && req.method() === 'POST') {
+      const d = body(req);
+      if (!files.has(d.from)) return json(route, 404, { error: `그런 노트가 없습니다: ${d.from}` });
+      if (files.has(d.to)) return json(route, 409, { error: `이미 있는 이름입니다: ${d.to}` });
+      files.set(d.to, files.get(d.from)); files.delete(d.from); return json(route, 200, { from: d.from, to: d.to });
+    }
     if ((m = /^vaults\/(\w+)\/(\w+)$/.exec(rest))) {
       if (!vaults.find((v) => v.id === m[1])) return json(route, 404, { error: '그런 볼트가 없습니다.' });
       const what = m[2], rel = q.get('path') || '';
@@ -169,6 +238,7 @@ async function handle(route) {
       }
       if (what === 'file' && req.method() === 'DELETE') { if (!files.delete(rel)) return json(route, 404, { error: 'no such note' }); return json(route, 200, { path: rel, trash: `.trash/${rel}` }); }
       if (what === 'search') { const s = (q.get('q') || '').toLowerCase(); const hits = s ? [...files].filter(([, f]) => f.text.toLowerCase().includes(s)).map(([path_, f]) => ({ path: path_, title: path_.split('/').pop().replace(/\.md$/, ''), snippet: f.text.slice(0, 60) })) : []; return json(route, 200, { q: s, hits }); }
+      if (what === 'links' && slowLinks) { await new Promise((r) => setTimeout(r, slowLinks)); }
       if (what === 'links') { const own = links((files.get(rel) || { text: '' }).text).map((x) => ({ path: resolve(x), text: x })); const back = [...files].filter(([src, f]) => src !== rel && links(f.text).some((x) => resolve(x) === rel)).map(([src]) => src).sort(); return json(route, 200, { path: rel, links: own, backlinks: back }); }
       if (what === 'recent') return json(route, 200, { notes: [...files].filter(([k]) => k.endsWith('.md')).sort((a, b) => b[1].mtime - a[1].mtime).slice(0, +(q.get('n') || 10)).map(([k, f]) => ({ path: k, title: k.split('/').pop().replace(/\.md$/, ''), mtime: f.mtime, size: f.text.length })) });
       if (what === 'raw') return route.fulfill({ status: 404, body: 'not found' });
@@ -190,6 +260,11 @@ module.exports = {
   put: (app, key, value) => { store[app].set(key, JSON.stringify(value)); },
   get: (app, key) => { const v = store[app].get(key); return v === undefined ? undefined : JSON.parse(v); },
   events: () => events.slice(),
+  tasks: () => tasks.slice(),
+  vaults: () => vaults.slice(),
+  calendars: () => calendars.slice(),
   files: () => files,
   setFile: (rel, text) => { files.set(rel, { text, mtime: Date.now() / 1000 }); },
+  devices: () => devices.slice(),
+  slowLinks: (ms) => { slowLinks = ms; },
 };

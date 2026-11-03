@@ -1,11 +1,25 @@
 // Markdown as a vault writes it (docs/apps-vault-calendar.md §4.3): CommonMark through markdown-it, plus
 // what Obsidian adds — [[wikilinks]] (with |alias and #heading), ![[embeds]] of images, #tags — and
 // mathematics through KaTeX ($…$ inline, $$…$$ displayed). Loaded only by the pages that render notes
-// (a dynamic import), so the other pages do not carry it. No raw HTML from a note is let through.
+// (a dynamic import), so the other pages do not carry it; KaTeX itself is a chunk of its own, fetched the
+// first time a note with mathematics is rendered (§8.2) — a note without `$` never loads it. No raw HTML
+// from a note is let through.
 
 import MarkdownIt from 'markdown-it';
-import katex from 'katex';
-import 'katex/dist/katex.min.css';
+
+type Katex = { renderToString: (tex: string, opts: { displayMode: boolean; throwOnError: boolean; output: 'html' }) => string };
+let katex: Katex | null = null;
+
+/** Whether a note has mathematics to render — the only case KaTeX is worth loading. */
+export const hasMath = (text: string): boolean => /\$/.test(text);
+
+/** KaTeX, loaded once on first need (its stylesheet with it); `render` draws formulas as plain text until then. */
+export async function loadMath(): Promise<void> {
+  if (katex) return;
+  // @ts-expect-error — a stylesheet import: vite emits it as the chunk's css
+  const [mod] = await Promise.all([import('katex'), import('katex/dist/katex.min.css')]);
+  katex = mod.default as unknown as Katex;
+}
 
 export interface Resolve {
   /** Where a [[target]] goes (a path of the vault's pages) — null: no such note. */
@@ -90,8 +104,9 @@ function math(md: MarkdownIt): void {
     state.pos = end + fence.length;
     return true;
   });
-  md.renderer.rules.math = (tokens, i) =>
-    katex.renderToString(tokens[i].content, { displayMode: tokens[i].meta.display, throwOnError: false, output: 'html' });
+  md.renderer.rules.math = (tokens, i) => katex
+    ? katex.renderToString(tokens[i].content, { displayMode: tokens[i].meta.display, throwOnError: false, output: 'html' })
+    : `<code class="math">${md.utils.escapeHtml(tokens[i].content)}</code>`;
 }
 
 export function renderer(resolve: Resolve): (text: string) => string {

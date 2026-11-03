@@ -3,7 +3,7 @@
 // the portal's pages and the agents' pages; the sign-in, Claude's consent and the approvals are server
 // pages of their own.
 
-import { frame, h, header, load, main, message, pageHead, replace, section, showPending } from '/auth/static/site.js';
+import { frame, h, header, keys, load, main, message, pageHead, replace, section, showPending } from '/auth/static/site.js';
 import { t } from './lib/i18n';
 import * as account from './pages/account';
 import * as agents from './pages/agents';
@@ -51,6 +51,7 @@ function routes(): [RegExp, Page][] {
 
 async function render(): Promise<void> {
   const path = location.pathname;
+  keys([]);  // a page declares its own keys as it draws (docs/frame.md §5 R14); none carry over
   for (const [re, page] of routes()) {
     const m = path.match(re);
     if (!m) continue;

@@ -1,0 +1,5 @@
+{
+  "private": true,
+  "type": "commonjs",
+  "description": "The measurement scripts are CommonJS (require), apart from the pages app above (type: module)."
+}

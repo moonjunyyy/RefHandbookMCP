@@ -11,6 +11,15 @@ the site sign-in (docs/calendar.md).
     GET    /calendar/api/v1/freebusy?group=cn&from&to  the members' busy spans, without their titles
     GET/POST/DELETE /calendar/api/v1/feeds[/<token>]   subscription addresses, read-only
     GET    /calendar/feed/<token>.ics                 the feed itself (a public route: the token is the key)
+    GET    /calendar/api/v1/tasks                    this person's to-do list: open ones first, by rank
+    POST   /calendar/api/v1/tasks                    {text, due?}  (due a date, or absent)
+    PATCH  /calendar/api/v1/tasks/<id>               text, done, due, rank
+    DELETE /calendar/api/v1/tasks/<id>
+    POST   /calendar/api/v1/tasks/clear-done         takes out the ones that are done
+    GET    /calendar/api/v1/devices                  the device passwords (name, when made and last used — never the password)
+    POST   /calendar/api/v1/devices {name}           a new one: the password is in the answer, once
+    DELETE /calendar/api/v1/devices/<id>
+    /calendar/dav/…                                  CalDAV (portal/caldav.py), HTTP Basic with uid and a device password
 
 nginx mints the token for the audience `calendar`; what a person may see is theirs and their projects'
 (portal/membership.py, NSS, on every request). Time is kept as UTC instants (2026-11-02T09:00:00Z) and
@@ -18,10 +27,15 @@ all-day events as dates (2026-11-02, the end exclusive), which is what the ICS f
 Repeats are an RRULE subset expanded here: FREQ=DAILY|WEEKLY|MONTHLY|YEARLY, INTERVAL, COUNT, UNTIL,
 BYDAY (weekly), plus EXDATE (the instances taken out; they still count toward COUNT, as the standard
 says). A write must say `Content-Type: application/json` (as portal/apps.py: a cross-site form cannot).
+The to-do list (docs/apps-vault-calendar.md §7.3) is the person's own: short lines with a done mark and
+a due date, kept here because the main page's `tasks` widget and the day panel show them next to the
+events of the day; it is not an event and does not go into the feeds.
 """
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import os
 import re
@@ -37,7 +51,7 @@ from datetime import date, datetime, timedelta, timezone
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 
-from . import membership, tokens
+from . import caldav, membership, tokens
 from .config import Settings
 from .i18n import N_, t
 from .security import SecurityHeadersMiddleware
@@ -92,7 +106,39 @@ CREATE TABLE IF NOT EXISTS feeds (
     name    TEXT NOT NULL DEFAULT '',
     created REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS tasks (
+    id      TEXT PRIMARY KEY,
+    uid     TEXT NOT NULL,
+    text    TEXT NOT NULL,
+    done    INTEGER NOT NULL DEFAULT 0,
+    due     TEXT NOT NULL DEFAULT '',   -- 2026-11-02, or '' when it has no day
+    rank    REAL NOT NULL,              -- the order the person keeps: lower first; a new one goes last
+    created REAL NOT NULL,
+    updated REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS tasks_uid ON tasks(uid, done, rank);
+CREATE TABLE IF NOT EXISTS tombstones (
+    cal     TEXT NOT NULL,              -- an event deleted from this calendar, at this version (sync-collection)
+    id      TEXT NOT NULL,
+    version INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS tombstones_cal ON tombstones(cal, version);
+CREATE TABLE IF NOT EXISTS devices (
+    id        TEXT PRIMARY KEY,
+    uid       TEXT NOT NULL,
+    name      TEXT NOT NULL,
+    secret    TEXT NOT NULL,            -- sha256 of the password; the password itself is shown once and kept nowhere
+    created   REAL NOT NULL,
+    last_used REAL NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS devices_uid ON devices(uid);
 """
+# columns added after the first release (CREATE TABLE IF NOT EXISTS does not add them): table → (column, DDL)
+MIGRATIONS = (("calendars", "version", "INTEGER NOT NULL DEFAULT 0"),   # grows with every change under it: the ctag / sync-token
+              ("events", "ver", "INTEGER NOT NULL DEFAULT 0"),            # the calendar's version at the last write
+              ("events", "ical_uid", "TEXT NOT NULL DEFAULT ''"))         # the UID a CalDAV client gave, kept as it came
+MAX_TASKS = 200  # open or done, of one person
+MAX_DEVICES = 20  # of one person
 
 
 class CalendarError(ValueError):
@@ -274,10 +320,11 @@ class Calendar:
     color: str
     main: bool
     created: float
+    version: int = 0
 
     def json(self) -> dict:
         return {"id": self.id, "owner": self.owner, "kind": self.kind, "name": self.name, "color": self.color,
-                "main": self.main, "created": self.created}
+                "main": self.main, "created": self.created, "version": self.version}
 
 
 @dataclass(frozen=True)
@@ -298,12 +345,30 @@ class Event:
     updated: float
     updated_by: str
     seq: int
+    ver: int = 0
+    ical_uid: str = ""
 
     def json(self) -> dict:
         return {"id": self.id, "cal": self.cal, "summary": self.summary, "description": self.description,
                 "location": self.location, "start": self.start, "end": self.end, "allday": self.allday,
                 "rrule": self.rrule, "exdates": list(self.exdates), "status": self.status, "created": self.created,
                 "created_by": self.created_by, "updated": self.updated, "updated_by": self.updated_by, "seq": self.seq}
+
+
+@dataclass
+class Task:
+    id: str
+    uid: str
+    text: str
+    done: bool
+    due: str
+    rank: float
+    created: float
+    updated: float
+
+    def json(self) -> dict:
+        return {"id": self.id, "text": self.text, "done": self.done, "due": self.due, "rank": self.rank,
+                "created": self.created, "updated": self.updated}
 
 
 class Store:
@@ -314,12 +379,20 @@ class Store:
         self.db = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
         self.db.execute("PRAGMA foreign_keys = ON")
         self.db.executescript(SCHEMA)
+        for table, column, ddl in MIGRATIONS:
+            if column not in {r[1] for r in self.db.execute(f"PRAGMA table_info({table})")}:
+                self.db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
         if path != ":memory:":
             os.chmod(path, 0o600)
 
     # calendars
     def _cal(self, row: tuple) -> Calendar:
-        return Calendar(row[0], row[1], row[2], row[3], row[4], bool(row[5]), row[6])
+        return Calendar(row[0], row[1], row[2], row[3], row[4], bool(row[5]), row[6], row[7])
+
+    def _bump(self, cid: str) -> int:
+        """A change under the calendar: its version grows (the ctag and the sync-token). Under the lock."""
+        self.db.execute("UPDATE calendars SET version=version+1 WHERE id=?", (cid,))
+        return self.db.execute("SELECT version FROM calendars WHERE id=?", (cid,)).fetchone()[0]
 
     def main_calendar(self, owner: str, kind: str, name: str = "") -> Calendar:
         """The owner's main calendar, made on first sight (named `name`, else after the owner)."""
@@ -329,7 +402,7 @@ class Store:
                 return self._cal(row)
             cid = f"{kind[0]}-{uuid.uuid4().hex[:12]}"
             name = name or owner
-            self.db.execute("INSERT INTO calendars VALUES (?,?,?,?,?,1,?)", (cid, owner, kind, name, "", time.time()))
+            self.db.execute("INSERT INTO calendars VALUES (?,?,?,?,?,1,?,0)", (cid, owner, kind, name, "", time.time()))
             return self._cal(self.db.execute("SELECT * FROM calendars WHERE id=?", (cid,)).fetchone())
 
     def calendars_of(self, owner: str, kind: str) -> list[Calendar]:
@@ -345,7 +418,7 @@ class Store:
     def add_calendar(self, owner: str, kind: str, name: str, color: str) -> Calendar:
         cid = f"{kind[0]}-{uuid.uuid4().hex[:12]}"
         with self._lock:
-            self.db.execute("INSERT INTO calendars VALUES (?,?,?,?,?,0,?)", (cid, owner, kind, name, color, time.time()))
+            self.db.execute("INSERT INTO calendars VALUES (?,?,?,?,?,0,?,0)", (cid, owner, kind, name, color, time.time()))
             return self._cal(self.db.execute("SELECT * FROM calendars WHERE id=?", (cid,)).fetchone())
 
     def update_calendar(self, cid: str, name: str | None, color: str | None) -> Calendar:
@@ -363,7 +436,7 @@ class Store:
     # events
     def _event(self, row: tuple) -> Event:
         return Event(row[0], row[1], row[2], row[3], row[4], row[5], row[6], bool(row[7]), row[8],
-                     tuple(json.loads(row[9])), row[10], row[11], row[12], row[13], row[14], row[15])
+                     tuple(json.loads(row[9])), row[10], row[11], row[12], row[13], row[14], row[15], row[16], row[17])
 
     def event(self, eid: str) -> Event | None:
         with self._lock:
@@ -378,26 +451,75 @@ class Store:
             rows = self.db.execute(f"SELECT * FROM events WHERE cal IN ({q}) ORDER BY start", cals).fetchall()
         return [self._event(r) for r in rows]
 
-    def add_event(self, by: str, **v) -> Event:  # noqa: ANN003
-        eid = uuid.uuid4().hex
+    def add_event(self, by: str, eid: str = "", **v) -> Event:  # noqa: ANN003
+        eid = eid or uuid.uuid4().hex
         now = time.time()
         with self._lock:
-            self.db.execute("INSERT INTO events VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)",
+            ver = self._bump(v["cal"])
+            self.db.execute("INSERT INTO events VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,'')",
                             (eid, v["cal"], v["summary"], v["description"], v["location"], v["start"], v["end"],
-                             int(v["allday"]), v["rrule"], json.dumps(v["exdates"]), "CONFIRMED", now, by, now, by))
+                             int(v["allday"]), v["rrule"], json.dumps(v["exdates"]), "CONFIRMED", now, by, now, by, ver))
             return self._event(self.db.execute("SELECT * FROM events WHERE id=?", (eid,)).fetchone())
 
     def update_event(self, eid: str, by: str, **v) -> Event:  # noqa: ANN003
         with self._lock:
+            was = self.db.execute("SELECT cal FROM events WHERE id=?", (eid,)).fetchone()
+            ver = self._bump(v["cal"])
+            if was and was[0] != v["cal"]:  # moved to another calendar: gone from the old one's point of view
+                old_ver = self._bump(was[0])
+                self.db.execute("INSERT INTO tombstones VALUES (?,?,?)", (was[0], eid, old_ver))
             self.db.execute("UPDATE events SET cal=?, summary=?, description=?, location=?, start=?, end=?, allday=?, rrule=?,"
-                            " exdates=?, updated=?, updated_by=?, seq=seq+1 WHERE id=?",
+                            " exdates=?, updated=?, updated_by=?, seq=seq+1, ver=? WHERE id=?",
                             (v["cal"], v["summary"], v["description"], v["location"], v["start"], v["end"], int(v["allday"]),
-                             v["rrule"], json.dumps(v["exdates"]), time.time(), by, eid))
+                             v["rrule"], json.dumps(v["exdates"]), time.time(), by, ver, eid))
             return self._event(self.db.execute("SELECT * FROM events WHERE id=?", (eid,)).fetchone())
+
+    def set_ical(self, eid: str, ical_uid: str) -> None:
+        with self._lock:
+            self.db.execute("UPDATE events SET ical_uid=? WHERE id=?", (ical_uid[:255], eid))
 
     def delete_event(self, eid: str) -> None:
         with self._lock:
+            row = self.db.execute("SELECT cal FROM events WHERE id=?", (eid,)).fetchone()
+            if not row:
+                return
+            ver = self._bump(row[0])
             self.db.execute("DELETE FROM events WHERE id=?", (eid,))
+            self.db.execute("INSERT INTO tombstones VALUES (?,?,?)", (row[0], eid, ver))
+
+    def tombstones(self, cid: str, since: int) -> list[str]:
+        """The ids deleted from the calendar after version `since`."""
+        with self._lock:
+            rows = self.db.execute("SELECT id FROM tombstones WHERE cal=? AND version>? ORDER BY version", (cid, since)).fetchall()
+        return [r[0] for r in rows]
+
+    # devices: a password per device for CalDAV (shown once; kept as a hash)
+    def devices_of(self, uid: str) -> list[dict]:
+        with self._lock:
+            rows = self.db.execute("SELECT id, name, created, last_used FROM devices WHERE uid=? ORDER BY created", (uid,)).fetchall()
+        return [{"id": r[0], "name": r[1], "created": r[2], "last_used": r[3]} for r in rows]
+
+    def add_device(self, uid: str, name: str) -> tuple[dict, str]:
+        did = uuid.uuid4().hex[:10]
+        password = secrets.token_urlsafe(18)
+        now = time.time()
+        with self._lock:
+            self.db.execute("INSERT INTO devices VALUES (?,?,?,?,?,0)", (did, uid, name, hashlib.sha256(password.encode()).hexdigest(), now))
+        return {"id": did, "name": name, "created": now, "last_used": 0}, password
+
+    def delete_device(self, uid: str, did: str) -> bool:
+        with self._lock:
+            return self.db.execute("DELETE FROM devices WHERE uid=? AND id=?", (uid, did)).rowcount > 0
+
+    def device_login(self, uid: str, password: str) -> bool:
+        """Whether the password is one of the person's devices' (constant-time compare per device)."""
+        digest = hashlib.sha256(password.encode()).hexdigest()
+        with self._lock:
+            rows = self.db.execute("SELECT id, secret FROM devices WHERE uid=?", (uid,)).fetchall()
+            hit = [r[0] for r in rows if hmac.compare_digest(r[1], digest)]
+            if hit:
+                self.db.execute("UPDATE devices SET last_used=? WHERE id=?", (time.time(), hit[0]))
+        return bool(hit)
 
     # feeds
     def feeds_of(self, uid: str) -> list[dict]:
@@ -420,6 +542,45 @@ class Store:
         with self._lock:
             n = self.db.execute("DELETE FROM feeds WHERE uid=? AND token=?", (uid, token)).rowcount
         return n > 0
+
+    # tasks
+    def _task(self, row: tuple) -> Task:
+        return Task(row[0], row[1], row[2], bool(row[3]), row[4], row[5], row[6], row[7])
+
+    def tasks_of(self, uid: str) -> list[Task]:
+        """Open ones first in the person's order, then the done ones, the latest done first."""
+        with self._lock:
+            rows = self.db.execute("SELECT * FROM tasks WHERE uid=? ORDER BY done, CASE WHEN done THEN -updated ELSE rank END",
+                                   (uid,)).fetchall()
+        return [self._task(r) for r in rows]
+
+    def task(self, uid: str, tid: str) -> Task | None:
+        with self._lock:
+            row = self.db.execute("SELECT * FROM tasks WHERE uid=? AND id=?", (uid, tid)).fetchone()
+        return self._task(row) if row else None
+
+    def add_task(self, uid: str, text: str, due: str) -> Task:
+        tid = uuid.uuid4().hex[:12]
+        now = time.time()
+        with self._lock:
+            last = self.db.execute("SELECT MAX(rank) FROM tasks WHERE uid=?", (uid,)).fetchone()[0]
+            rank = (last or 0.0) + 1.0
+            self.db.execute("INSERT INTO tasks VALUES (?,?,?,0,?,?,?,?)", (tid, uid, text, due, rank, now, now))
+            return self._task(self.db.execute("SELECT * FROM tasks WHERE id=?", (tid,)).fetchone())
+
+    def update_task(self, uid: str, tid: str, **v) -> Task:  # noqa: ANN003
+        sets = ", ".join(f"{k}=?" for k in v)
+        with self._lock:
+            self.db.execute(f"UPDATE tasks SET {sets}, updated=? WHERE uid=? AND id=?", (*v.values(), time.time(), uid, tid))
+            return self._task(self.db.execute("SELECT * FROM tasks WHERE id=?", (tid,)).fetchone())
+
+    def delete_task(self, uid: str, tid: str) -> bool:
+        with self._lock:
+            return self.db.execute("DELETE FROM tasks WHERE uid=? AND id=?", (uid, tid)).rowcount > 0
+
+    def clear_done_tasks(self, uid: str) -> int:
+        with self._lock:
+            return self.db.execute("DELETE FROM tasks WHERE uid=? AND done=1", (uid,)).rowcount
 
 
 # ── expansion ─────────────────────────────────────────────────────────────
@@ -446,8 +607,9 @@ def expand(e: Event, lo: datetime, hi: datetime) -> list[dict]:
     return out
 
 
-def ics(calendars: list[Calendar], events: list[Event], name: str) -> str:
-    """The calendars as an iCalendar feed: the events as kept (RRULE and EXDATE included)."""
+def ics(calendars: list[Calendar], events: list[Event], name: str, domain: str = "calendar") -> str:
+    """The calendars as an iCalendar feed: the events as kept (RRULE and EXDATE included). A UID a
+    CalDAV client gave is kept as it came; the service's own are <id>@<domain>."""
     def esc(s: str) -> str:
         return s.replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,").replace("\n", "\\n")
 
@@ -468,7 +630,10 @@ def ics(calendars: list[Calendar], events: list[Event], name: str) -> str:
     for e in events:
         s, en = parse_when(e.start, e.allday), parse_when(e.end, e.allday)
         kind = ";VALUE=DATE" if e.allday else ""
-        lines += ["BEGIN:VEVENT", f"UID:{e.id}@m00nny", f"DTSTAMP:{ics_time(datetime.fromtimestamp(e.updated, timezone.utc), False)}",
+        lines += ["BEGIN:VEVENT", f"UID:{esc(e.ical_uid) if e.ical_uid else f'{e.id}@{domain}'}",
+                  f"DTSTAMP:{ics_time(datetime.fromtimestamp(e.updated, timezone.utc), False)}",
+                  f"LAST-MODIFIED:{ics_time(datetime.fromtimestamp(e.updated, timezone.utc), False)}",
+                  f"CREATED:{ics_time(datetime.fromtimestamp(e.created, timezone.utc), False)}",
                   f"DTSTART{kind}:{ics_time(s, e.allday)}", f"DTEND{kind}:{ics_time(en, e.allday)}",
                   f"SUMMARY:{esc(e.summary)}", f"SEQUENCE:{e.seq}", f"STATUS:{e.status}"]
         if e.description:
@@ -735,7 +900,7 @@ def create_app(settings: Settings | None = None, store: Store | None = None, pub
         return Response(status_code=204)
 
     @app.get(f"{FEED}/{{token}}.ics")
-    async def feed(token: str):
+    async def feed(request: Request, token: str):
         """The feed: public by route, the token being the key; what it shows is what its owner may see
         now (a lost membership stops a project's events)."""
         f = store.feed(token)
@@ -744,9 +909,98 @@ def create_app(settings: Settings | None = None, store: Store | None = None, pub
         cals = visible(f["uid"])
         if f["cals"]:
             cals = [c for c in cals if c.id in f["cals"]]
-        text = ics(cals, store.events_of([c.id for c in cals]), f["name"] or (cals[0].name if len(cals) == 1 else "calendar"))
+        text = ics(cals, store.events_of([c.id for c in cals]), f["name"] or (cals[0].name if len(cals) == 1 else "calendar"),
+                   request.headers.get("host", "calendar").split(":")[0])
         return Response(text, media_type="text/calendar; charset=utf-8",
                         headers={"Cache-Control": "private, max-age=300", "Content-Disposition": "inline; filename=calendar.ics"})
+
+    # ── tasks (the person's own to-do list)
+    def task_values(data: dict, current: Task | None) -> dict:
+        v: dict = {}
+        if "text" in data or current is None:
+            v["text"] = text_field(data, "text", 200, required=True)
+        if "due" in data:
+            due = text_field(data, "due", 10)
+            if due and not DATE.match(due):
+                raise CalendarError(400, t("due 는 날짜(2026-11-02)입니다."))
+            v["due"] = due
+        if "done" in data:
+            if not isinstance(data["done"], bool):
+                raise CalendarError(400, t("done 은 참/거짓입니다."))
+            v["done"] = int(data["done"])
+        if "rank" in data:
+            if not isinstance(data["rank"], (int, float)) or isinstance(data["rank"], bool):
+                raise CalendarError(400, t("rank 는 수입니다."))
+            v["rank"] = float(data["rank"])
+        return v
+
+    def owned_task(uid: str, tid: str) -> Task:
+        x = store.task(uid, tid)
+        if not x:
+            raise CalendarError(404, t("그런 할 일이 없습니다."))
+        return x
+
+    @app.get(f"{PREFIX}/tasks")
+    async def list_tasks(request: Request):
+        uid = gate(request)
+        return {"tasks": [x.json() for x in store.tasks_of(uid)]}
+
+    @app.post(f"{PREFIX}/tasks")
+    async def add_task(request: Request):
+        uid = gate(request)
+        data = await body_of(request)
+        v = task_values(data, None)
+        if len(store.tasks_of(uid)) >= MAX_TASKS:
+            raise CalendarError(409, t("할 일은 {n}개까지입니다. 끝난 것을 먼저 치우세요.", n=MAX_TASKS))
+        return JSONResponse(store.add_task(uid, v["text"], v.get("due", "")).json(), status_code=201)
+
+    @app.post(f"{PREFIX}/tasks/clear-done")
+    async def clear_done(request: Request):
+        uid = gate(request)
+        return {"removed": store.clear_done_tasks(uid)}
+
+    @app.patch(f"{PREFIX}/tasks/{{tid}}")
+    async def update_task(request: Request, tid: str):
+        uid = gate(request)
+        current = owned_task(uid, tid)
+        v = task_values(await body_of(request), current)
+        if not v:
+            return current.json()
+        return store.update_task(uid, tid, **v).json()
+
+    @app.delete(f"{PREFIX}/tasks/{{tid}}")
+    async def delete_task(request: Request, tid: str):
+        uid = gate(request)
+        owned_task(uid, tid)
+        store.delete_task(uid, tid)
+        return Response(status_code=204)
+
+    # ── devices: a password per device for CalDAV (docs/calendar.md)
+    @app.get(f"{PREFIX}/devices")
+    async def list_devices(request: Request):
+        uid = gate(request)
+        return {"devices": store.devices_of(uid), "url": f"{request.url.scheme}://{request.headers.get('host', request.url.netloc)}{caldav.PREFIX}/",
+                "username": uid}
+
+    @app.post(f"{PREFIX}/devices")
+    async def add_device(request: Request):
+        uid = gate(request)
+        data = await body_of(request)
+        name = text_field(data, "name", 60, required=True)
+        if len(store.devices_of(uid)) >= MAX_DEVICES:
+            raise CalendarError(409, t("기기 비밀번호는 {n}개까지입니다. 안 쓰는 것을 먼저 거두세요.", n=MAX_DEVICES))
+        d, password = store.add_device(uid, name)
+        return JSONResponse({**d, "password": password, "username": uid,
+                             "url": f"{request.url.scheme}://{request.headers.get('host', request.url.netloc)}{caldav.PREFIX}/"}, status_code=201)
+
+    @app.delete(f"{PREFIX}/devices/{{did}}")
+    async def delete_device(request: Request, did: str):
+        uid = gate(request)
+        if not store.delete_device(uid, did):
+            raise CalendarError(404, t("그런 기기가 없습니다."))
+        return Response(status_code=204)
+
+    caldav.mount(app, store, visible, projects_of)
 
     @app.get("/calendar/healthz")
     async def healthz():

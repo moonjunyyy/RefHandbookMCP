@@ -1,5 +1,5 @@
-/* theme.css — the tokens, and nothing else (docs/frame.md §1.1). Every colour, family, shadow and radius
-   the site's parts and apps use is named here once, for the light theme and the dark one. A person's
+/* theme.css — the tokens, and nothing else (docs/frame.md §1.1). Every colour, family, shadow, radius, space
+   and icon size the site's parts and apps use is named here once, for the light theme and the dark one. A person's
    choice is <html data-theme="light|dark"> (theme.js sets it from the site cookie before the first
    paint; site.js keeps it with the account); with no choice, the OS's scheme decides. An app that wants
    another look redeclares a token in its own stylesheet: the cascade does the rest.
@@ -10,6 +10,11 @@
   --ok: #15803d; --bad: #b91c1c; --bad-text: #fff; --warn: #b45309;
   --shadow: 0 1px 2px rgb(28 25 23 / .05); --shadow-pop: 0 8px 24px rgb(28 25 23 / .16); --scrim: rgb(28 25 23 / .35);
   --radius: 10px; --radius-s: 6px;
+  /* the scale of space (docs/frame.md §5 R14): every padding, gap and margin of the parts is one of these */
+  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px;
+  --pad: 16px; --pad-s: 10px; --gap: 10px; --cell: 110px;
+  /* an app's mark: inline (the header, a widget's head) and big (a launcher, a card) */
+  --icon: 1.5em; --icon-big: 36px;
   --serif: "Gowun Batang", "Noto Serif KR", "Nanum Myeongjo", "AppleMyungjo", "Source Serif 4", Georgia, serif;
   --sans: "Plus Jakarta Sans", -apple-system, "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR",
           "Malgun Gothic", system-ui, sans-serif;

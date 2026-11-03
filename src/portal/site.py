@@ -27,7 +27,9 @@ from pathlib import Path
 from .i18n import N_, t
 
 NAME = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
-SIZES = ("1x1", "2x1", "2x2")  # a widget's cells on the main page's grid (columns x rows)
+# A widget's cells on the main page's grid, columns x rows (docs/frame.md §4): the one declaration — the
+# frame receives it (/auth/api/v1/me `sizes`) and draws, snaps and names sizes from it, nowhere else.
+SIZES: dict[str, tuple[int, int]] = {"1x1": (1, 1), "2x1": (2, 1), "1x2": (1, 2), "2x2": (2, 2)}
 THEMES = ("auto", "light", "dark")  # the values of a person's theme (docs/frame.md §1)
 FRAME = 1  # the version of the frame the sign-in serves (/auth/static/site.js, theme.css, parts.css)
 # The catalog's tags (docs/apps-vault-calendar.md §1.1): a fixed vocabulary an app picks from, so the catalog
@@ -66,6 +68,7 @@ class Widget:
     title: str
     module: str
     size: str = "1x1"
+    description: str = ""  # one line: what the piece shows or does, for the person choosing it (docs/frame.md §4)
     href: str = ""  # filled by load(): the module's absolute path
     tr: dict[str, dict[str, str]] = field(default_factory=dict, compare=False, hash=False)
 
@@ -122,6 +125,9 @@ class App:
     # Every app is off until a person turns it on (docs/frame.md §2). `optional = false`: it cannot be
     # turned off (the account), and the frame keeps it in the person's own menu rather than the apps'.
     optional: bool = True
+    # `default = true`: on for an account that has no settings kept yet (docs/frame.md §2 R13); a kept
+    # choice stays as it is. The frame reads it from /auth/api/v1/me — no list of app ids in the code.
+    default: bool = False
     widgets: tuple[Widget, ...] = ()  # what it offers the main page ([[app.widget]], docs/frame.md §4)
     routes: tuple[Route, ...] = ()
 
@@ -178,8 +184,8 @@ def _widget(app_id: str, d: dict) -> Widget:
     if bad:
         raise SiteError(f"app {app_id}: unknown widget fields {sorted(bad)}")
     for lang, words in (d.get("tr") or {}).items():
-        if not isinstance(words, dict) or set(words) - {"title"}:
-            raise SiteError(f"app {app_id}: widget tr.{lang} names title")
+        if not isinstance(words, dict) or set(words) - {"title", "description"}:
+            raise SiteError(f"app {app_id}: widget tr.{lang} names title or description")
     try:
         w = Widget(**d)
     except TypeError as e:
@@ -187,9 +193,11 @@ def _widget(app_id: str, d: dict) -> Widget:
     if not NAME.match(w.id):
         raise SiteError(f"app {app_id}: widget id {w.id!r}: lowercase letters, digits and -")
     if w.size not in SIZES:
-        raise SiteError(f"app {app_id}: widget {w.id}: size is one of {SIZES}")
+        raise SiteError(f"app {app_id}: widget {w.id}: size is one of {tuple(SIZES)}")
     if not w.module or any(c in w.module for c in "{};\n "):
         raise SiteError(f"app {app_id}: widget {w.id}: module is a path")
+    if len(w.description) > 80:
+        raise SiteError(f"app {app_id}: widget {w.id}: description is one line (80 characters)")
     return w
 
 
@@ -233,6 +241,8 @@ def load(path: str | Path, f=None) -> Site:  # noqa: ANN001 — f: portal.facts.
         a = App(**d, routes=routes, links=links, widgets=widgets)
         if not NAME.match(a.id):
             raise SiteError(f"app id {a.id!r}: lowercase letters, digits and -")
+        if a.default and not a.optional:
+            raise SiteError(f"app {a.id}: default is for an optional app (one that is not is always on)")
         if a.static or a.storage:
             a = _hosted(a, f)
         if a.widgets:

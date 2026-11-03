@@ -4,7 +4,7 @@
 // fails, gets the launcher: the app's mark, name and links.
 
 import { Child, h, replace } from './dom';
-import { Card, Widget, frame, prefs } from './frame';
+import { Card, Widget, frame, prefs, sizeOf } from './frame';
 import { lang, t } from './i18n';
 import { api, go } from './parts';
 
@@ -26,7 +26,14 @@ export const LAUNCHER = 'launcher';
 
 /** The widgets an app offers: the launcher first, then the ones it declared. */
 export function widgetsOf(c: Card): Widget[] {
-  return [{ id: LAUNCHER, title: c.title, href: '', size: '1x1' }, ...c.widgets];
+  return [{ id: LAUNCHER, title: c.title, description: c.description, href: '', size: sizeOf(undefined).id }, ...c.widgets];
+}
+
+/** A cell's place on the grid for a size: the spans, as inline style (no class per size — the sizes are the
+ * site's declaration, docs/frame.md §4). */
+export function spanStyle(sizeId: string | undefined): string {
+  const s = sizeOf(sizeId);
+  return `grid-column: span ${s.cols}; grid-row: span ${s.rows};`;
 }
 
 /** Draw a widget into its cell: the module when there is one, the launcher otherwise or on failure. */

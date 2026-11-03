@@ -21,7 +21,10 @@ instead of the sandbox policies: for each registered directory it makes an **idm
 stay the person's (owner, mode, quota). It runs when a vault is registered (the `.path` unit watches
 the request file the service touches) and every minute (`.timer`); the service's unit starts after
 it and may write only there (`ReadWritePaths=-/run/<name>-vault-mounts`). A vault just registered is
-`pending` until the stage is there, which the page says in one line.
+`pending` until the stage is there. The page shows a vault that is not ready as a card: its standing
+(준비 중 · 오류), the reason in the person's words with what to do (the folder is missing, is not a
+folder, is not theirs, is outside where a vault may be, read-only), and the actions — retry (root looks
+again now), rename, take it off, add another.
 
 Where a vault may be is `PORTAL_VAULT_ROOTS` (`/etc/<name>-vault/vault.env`; the syntax of
 `RHB_SANDBOX_MOUNTS`, `FROM[=NAME][:ro]`, `{user}` and `{uid}` for the person; unset:
@@ -34,8 +37,10 @@ Without a stage root (`PORTAL_VAULT_STAGE` unset: a local run, the tests) the re
 
 | | |
 |---|---|
-| `GET /vaults` | `{vaults: [{id, name, path, status, created}], roots: [...]}` — `status` is `ok`, `pending`, or why not |
-| `POST /vaults` `{path, name}` | register a directory of their storage (name empty: the directory's) → 201 |
+| `GET /vaults` | `{vaults: [{id, name, path, status, reason, created}], roots: [...]}` — `status` is `ok`, `pending` or `error`; `reason` says why, in the person's language, with what to do (empty when ok) |
+| `POST /vaults` `{path, name}` | register a directory of their storage (name empty: the directory's) → 201; a path outside the offered roots is refused with where a vault may be (400) |
+| `PATCH /vaults/<id>` `{name}` | call it something else |
+| `POST /vaults/<id>/retry` | after fixing the folder: root looks again now; the vault as it stands |
 | `DELETE /vaults/<id>` | forget it; the files stay |
 | `GET /vaults/<id>/tree` | folders and notes (`type`: `dir`, `note`, `text`, `file`; `.obsidian`, `.git`, `.trash` hidden), at most 20000 entries |
 | `GET /vaults/<id>/file?path=` | `{path, text, sha256, mtime, size}` of a text file (`.md .txt .json .canvas .csv`, up to 4 MB) |

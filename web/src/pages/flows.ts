@@ -8,7 +8,7 @@
 // simple case), so this one editor saves, runs and schedules them all; a past run opens here too
 // (?from=<run>), to start again as it was or changed. The backend checks a flow and says what is wrong.
 
-import { act, agents, empty, flash, flashNext, form, go, h, link, main, pageHead, replace, section, svg, tag, values, when } from '/auth/static/site.js';
+import { act, agents, empty, flash, flashNext, form, go, h, help, link, main, meta, pageHead, replace, section, svg, tag, values, when } from '/auth/static/site.js';
 import type { Json } from '/auth/static/site.js';
 import { n_, t } from '../lib/i18n';
 import { grantForm, Key, keyLabel, modelPicker, Options } from './grant';
@@ -285,11 +285,10 @@ async function editor(name: string | null): Promise<void> {
       draw();
     });
     return h('div', { class: 'next-actions' },
-      h('h3', null, t('다음 동작')),
-      h('p', { class: 'muted small' }, out.length > 1
+      h('h3', null, t('다음 동작'), help(out.length > 1
         ? t('이 블럭의 모델이 끝날 때 결과를 보고 아래 이름 중 하나를 고릅니다. 명령에 언제 무엇을 고를지 적어 두세요.')
         : out.length === 1 ? t('끝나면 언제나 {next}(으)로 결과를 넘깁니다.', { next: titleOf(flow, out[0].to) })
-          : t('여기서 끝납니다. 이 블럭의 결과가 실행의 결과가 됩니다.')),
+          : t('여기서 끝납니다. 이 블럭의 결과가 실행의 결과가 됩니다.'))),
       out.map(e => h('div', { class: 'next-row' },
         h('input', { value: e.label, placeholder: titleOf(flow, e.to), maxlength: 60, 'aria-label': t('이름'),
                      oninput: (ev: Event) => { e.label = (ev.target as HTMLInputElement).value; changed(); drawShapes(); } }),
@@ -306,19 +305,18 @@ async function editor(name: string | null): Promise<void> {
     if (sel?.kind === 'edge') {
       const e = flow.edges.find(x => edgeId(x) === sel!.id);
       if (!e) { sel = null; return drawPanel(); }
-      replace(panel, h('h3', null, t('화살표')),
+      replace(panel, h('h3', null, t('화살표'), help(t('앞 블럭의 결과 글과 노트가 다음 블럭의 명령 뒤에 붙어 넘어갑니다.'))),
         h('p', { class: 'small' }, `${titleOf(flow, e.from)} → ${titleOf(flow, e.to)}`),
         field(t('이름'), t('모델이 고를 때 쓰는 이름'), h('input', { value: e.label, placeholder: titleOf(flow, e.to), maxlength: 60,
           oninput: (ev: Event) => { e.label = (ev.target as HTMLInputElement).value; changed(); drawShapes(); } })),
-        h('p', { class: 'muted small' }, t('앞 블럭의 결과 글과 노트가 다음 블럭의 명령 뒤에 붙어 넘어갑니다.')),
         h('div', { class: 'actions' }, h('button', { type: 'button', class: 'secondary', onclick: removeSelected }, t('화살표 지우기'))));
       return;
     }
     const s = sel?.kind === 'step' ? step(sel.id) : null;
     if (!s) {
-      replace(panel, h('h3', null, t('사용법')),
-        h('p', { class: 'muted small' }, t('블럭을 누르면 여기서 키·모델·명령과 다음 동작을 정합니다. 블럭 오른쪽의 점을 다른 블럭으로 끌어도 화살표가 생깁니다. 빈 곳을 끌면 화면이 움직이고, 휠로 확대합니다. 선택한 것은 Delete 키로 지웁니다.')),
-        h('p', { class: 'muted small' }, t('▶ 표시가 시작 블럭입니다. 실행의 입력은 시작 블럭이 받고, 화살표가 없는 블럭에서 끝납니다.')));
+      replace(panel, h('h3', null, t('블럭'), help([t('블럭을 누르면 여기서 키·모델·명령과 다음 동작을 정합니다. 블럭 오른쪽의 점을 다른 블럭으로 끌어도 화살표가 생깁니다. 빈 곳을 끌면 화면이 움직이고, 휠로 확대합니다. 선택한 것은 Delete 키로 지웁니다.'), ' ',
+        t('▶ 표시가 시작 블럭입니다. 실행의 입력은 시작 블럭이 받고, 화살표가 없는 블럭에서 끝납니다.')])),
+        empty(t('블럭을 누르세요.')));
       return;
     }
     const k = byRef.get(s.key);
@@ -338,13 +336,10 @@ async function editor(name: string | null): Promise<void> {
       k && field(t('모델'), t('이 키의 모델'), modelPicker(k.models, s.model, m => {
         if (m !== s.model) { s.model = m; changed(); drawShapes(); } })),
       h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: s.team, onchange: (e: Event) => {
-        s.team = (e.target as HTMLInputElement).checked; changed(); drawShapes(); } }), t('팀으로 실행')),
-      h('p', { class: 'muted small' }, t('켜면 이 블럭의 에이전트가 일을 나눠 하위 에이전트에게 맡기고 결과를 모읍니다.')),
-      field(t('명령'), t('이 블럭이 할 일'), h('textarea', { rows: 7, oninput: (e: Event) => {
-        s.command = (e.target as HTMLTextAreaElement).value; changed(); drawShapes(); } }, s.command)),
-      h('p', { class: 'muted small' }, s.id === flow.start
-        ? t('시작 블럭: 명령과 함께 실행의 입력을 받습니다.')
-        : t('앞 블럭의 결과가 이 명령 뒤에 붙어 전달됩니다.')),
+        s.team = (e.target as HTMLInputElement).checked; changed(); drawShapes(); } }), t('팀으로 실행'), help(t('켜면 이 블럭의 에이전트가 일을 나눠 하위 에이전트에게 맡기고 결과를 모읍니다.'))),
+      field(t('명령'), s.id === flow.start ? t('시작 블럭: 명령과 함께 실행의 입력을 받습니다.') : t('앞 블럭의 결과가 이 명령 뒤에 붙어 전달됩니다.'),
+        h('textarea', { rows: 7, 'aria-label': t('이 블럭이 할 일'), oninput: (e: Event) => {
+          s.command = (e.target as HTMLTextAreaElement).value; changed(); drawShapes(); } }, s.command)),
       nextActions(s),
       h('div', { class: 'actions' },
         s.id !== flow.start && h('button', { type: 'button', class: 'secondary', onclick: () => {
@@ -543,14 +538,14 @@ async function editor(name: string | null): Promise<void> {
   const schedules = h('div');
   async function drawSchedules(): Promise<void> {
     const p = name ? ((await agents.get('/presets')) as Json[]).find(x => x.name === name) : null;
-    if (!p) { replace(schedules, h('p', { class: 'muted small' }, t('저장하면 여기서 예약할 수 있습니다.'))); return; }
+    if (!p) { replace(schedules, empty(t('저장하면 여기서 예약할 수 있습니다.'))); return; }
     const s = scheduling(p.name, p.schedules, drawSchedules);
-    replace(schedules, h('p', { class: 'muted small' }, cronHelp()), s.add, s.list);
+    replace(schedules, h('p', { class: 'small' }, help(cronHelp())), s.add, s.list);
   }
 
   replace(main(),
-    pageHead(preset ? preset.title : past ? t('지난 실행으로 새 실행') : t('새 프리셋'), agentTabs()), h('p', { class: 'muted' }, [link('/agents/presets', t('프리셋 목록')),
-      ' · ', t('블럭마다 키·모델·명령을 정하고, 끝난 뒤 어디로 갈지를 다음 동작(화살표)으로 잇습니다.')]),
+    pageHead(preset ? preset.title : past ? t('지난 실행으로 새 실행') : t('새 프리셋'), agentTabs()), meta(link('/agents/presets', t('프리셋 목록')),
+      help(t('블럭마다 키·모델·명령을 정하고, 끝난 뒤 어디로 갈지를 다음 동작(화살표)으로 잇습니다.'))),
     !keys.length && h('p', { class: 'flash error' }, t('블럭에 쓸 API 키가 없습니다. 먼저 등록하세요.'), ' ', link('/agents/keys', t('API 키 등록'))),
     section(t('순서도'), head),
     section(t('흐름'),
@@ -565,8 +560,7 @@ async function editor(name: string | null): Promise<void> {
         h('label', { class: 'inline-field' }, t('한 블럭 최대 반복 (회)'), ' ', visits)),
       h('div', { class: 'flow-editor' }, canvas, panel)),
     section(t('예약'), schedules),
-    h('details', { class: 'panel' }, h('summary', null, t('한도 · 실행 환경')),
-      h('p', { class: 'muted small' }, t('라우팅은 블럭의 키·모델로 정해집니다. 여기서는 턴·토큰 한도와 샌드박스 정책을 정합니다.')), gf.el));
+    h('details', { class: 'panel' }, h('summary', null, t('한도 · 실행 환경'), help(t('라우팅은 블럭의 키·모델로 정해집니다. 여기서는 턴·토큰 한도와 샌드박스 정책을 정합니다.'))), gf.el));
   gf.el.addEventListener('input', changed);
   gf.el.addEventListener('change', changed);
   draw();

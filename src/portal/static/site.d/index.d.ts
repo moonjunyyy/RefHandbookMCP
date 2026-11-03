@@ -1,10 +1,10 @@
 export declare const version = 1;
 export { h, append, replace, svg, values } from './dom';
 export type { Child } from './dom';
-export { frame, prefs, DEFAULTS, THEMES, load, savePrefs, applyTheme, onApps, ownCard } from './frame';
-export type { Card, Widget, Frame, Prefs, Placement, Theme } from './frame';
+export { frame, prefs, DEFAULTS, THEMES, load, savePrefs, applyTheme, onApps, ownCard, sizeOf } from './frame';
+export type { Card, Widget, Frame, Prefs, Placement, Theme, Size } from './frame';
 export { LANGS, setLang, resolveLang, lang, locale, t, n_ } from './i18n';
-export { main, api, site, agents, account, ApiError, message, header, title, pageHead, section, empty, help, tag, flash, flashNext, showPending, act, button, toggle, select, choice, form, dialog, go, link, primaryLink, when, num } from './parts';
-export type { Json } from './parts';
-export { launcher, LAUNCHER, widgetsOf, mount, widgetList, openWord } from './widgets';
+export { main, api, site, agents, account, ApiError, message, header, title, pageHead, section, empty, help, tag, flash, flashNext, showPending, act, button, toggle, select, choice, form, dialog, go, link, primaryLink, when, num, meta, menu, onMenu, menuButton, closeMenu, keys, keysDialog } from './parts';
+export type { Json, MenuItem, MenuSection, MenuAt, Key } from './parts';
+export { launcher, LAUNCHER, widgetsOf, mount, widgetList, openWord, spanStyle } from './widgets';
 export type { WidgetContext, WidgetModule } from './widgets';

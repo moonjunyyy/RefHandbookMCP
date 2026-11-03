@@ -3,6 +3,8 @@ behind the site sign-in (docs/vault.md).
 
     GET    /vault/api/v1/vaults                         {vaults: [...], roots: [...]} — theirs, and where they may add one
     POST   /vault/api/v1/vaults   {path, name}          register a directory of their storage
+    PATCH  /vault/api/v1/vaults/<id>  {name}             call it something else
+    POST   /vault/api/v1/vaults/<id>/retry              ask root to stage it again now (after fixing the folder)
     DELETE /vault/api/v1/vaults/<id>                    forget it (the files stay)
     GET    /vault/api/v1/vaults/<id>/tree               folders and notes (dotted folders hidden)
     GET    /vault/api/v1/vaults/<id>/file?path=         {path, text, sha256, mtime, size}
@@ -20,6 +22,9 @@ handbook's sandbox mounts: refhandbook/agents/mounts.py with --picks vault). Wit
 local run, the tests) the real path is used. A registered path must lie under an offered root
 (PORTAL_VAULT_ROOTS, the syntax of RHB_SANDBOX_MOUNTS). The index (search, links) is the service's
 own SQLite per vault, refreshed from the files' mtimes when asked.
+A vault's `status` is ok, pending (root has not staged it yet) or error, and `reason` says why in the
+person's words, with what to do (docs/apps-vault-calendar.md §7.5, R11); a refused registration says
+where a vault may be (400).
 """
 
 from __future__ import annotations
@@ -132,6 +137,12 @@ class Registry:
     def remove(self, uid: str, vid: str) -> bool:
         with self._lock:
             return self.db.execute("DELETE FROM vaults WHERE uid=? AND id=?", (uid, vid)).rowcount > 0
+
+    def rename(self, uid: str, vid: str, name: str) -> VaultRecord | None:
+        with self._lock:
+            self.db.execute("UPDATE vaults SET name=? WHERE uid=? AND id=?", (name, uid, vid))
+            row = self.db.execute("SELECT * FROM vaults WHERE uid=? AND id=?", (uid, vid)).fetchone()
+        return self._rec(row) if row else None
 
 
 # ── paths ─────────────────────────────────────────────────────────────────
@@ -434,29 +445,47 @@ def create_app(settings: Settings | None = None, registry: Registry | None = Non
             raise VaultError(401, t("먼저 로그인하세요."))
         return uid
 
-    def status(uid: str, rec: VaultRecord) -> tuple[str, Path | None]:
-        """Whether the vault's files can be reached now: ok (with the directory), pending (root has not
-        staged it yet), or why not."""
+    PENDING = t("준비하는 중입니다 — 1분 안에 붙습니다. 그 뒤에도 그대로면 다시 시도하세요.")
+
+    def reason_of(said: str) -> str:
+        """What root said of a path (mounts.py, English with the path in it), as the person reads it."""
+        if said.endswith("does not exist"):
+            return t("그 폴더가 없습니다. 폴더를 만들거나, 경로를 고쳐 다시 등록하세요.")
+        if said.endswith("is not a directory"):
+            return t("폴더가 아닙니다. 노트가 든 폴더의 경로를 등록하세요.")
+        if "is not yours" in said:
+            return t("내 것이 아닌 폴더입니다. 내 저장소 안의 폴더를 등록하세요.")
+        if "read-only" in said:
+            return t("읽기 전용으로만 붙일 수 있는 폴더입니다.")
+        if "leads outside" in said or "may mount from" in said:
+            return t("볼트로 등록할 수 있는 곳 밖입니다.")
+        return t("경로를 읽을 수 없습니다: {path}", path=said)
+
+    def status(uid: str, rec: VaultRecord) -> tuple[str, str, Path | None]:
+        """Whether the vault's files can be reached now: (ok|pending|error, why in the person's words, the
+        directory when ok)."""
         if stage_root is None:
             p = Path(rec.path)
-            return ("ok", p) if p.is_dir() else (t("그런 디렉터리가 없습니다."), None)
+            return ("ok", "", p) if p.is_dir() else ("error", t("그 폴더가 없습니다. 폴더를 만들거나, 경로를 고쳐 다시 등록하세요."), None)
         st = mounts.status_of(stage_root, uid).get(rec.path)
         if st == "ok":
             p = mounts.staged_path(stage_root, uid, rec.path)
-            return ("ok", p) if p.is_dir() else ("pending", None)
-        return (st or "pending", None)
+            return ("ok", "", p) if p.is_dir() else ("pending", PENDING, None)
+        if not st:
+            return ("pending", PENDING, None)
+        return ("error", reason_of(st), None)
 
     def item(uid: str, rec: VaultRecord) -> dict:
-        st, _ = status(uid, rec)
-        return {"id": rec.id, "name": rec.name, "path": rec.path, "status": st, "created": rec.created}
+        st, why, _ = status(uid, rec)
+        return {"id": rec.id, "name": rec.name, "path": rec.path, "status": st, "reason": why, "created": rec.created}
 
     def opened(uid: str, vid: str) -> Vault:
         rec = registry.get(uid, vid)
         if not rec:
             raise VaultError(404, t("그런 볼트가 없습니다."))
-        st, root = status(uid, rec)
+        st, why, root = status(uid, rec)
         if root is None:
-            raise VaultError(409 if st == "pending" else 404, t("볼트가 아직 준비되지 않았습니다.") if st == "pending" else st)
+            raise VaultError(409 if st == "pending" else 404, why)
         key = f"{uid}/{rec.id}"
         with open_lock:
             v = vaults.get(key)
@@ -509,16 +538,45 @@ def create_app(settings: Settings | None = None, registry: Registry | None = Non
             n = pwd.getpwnam(uid).pw_uid
         except KeyError:
             n = 0
+        where = ", ".join(mounts.expand(o.template, uid, n) for o in offered)
+        if ".." in path.split("/"):
+            raise VaultError(400, t("경로에 '..' 은 쓰지 않습니다."))
         try:
             host, _ = mounts.source_path(path, offered, uid, n)
         except mounts.MountError as e:
-            raise VaultError(400, str(e)) from e
+            if not where:
+                raise VaultError(400, t("이 사이트는 볼트를 둘 곳을 아직 열지 않았습니다. 관리자에게 물으세요.")) from e
+            raise VaultError(400, t("{path} 은(는) 볼트로 등록할 수 있는 곳이 아닙니다. 등록할 수 있는 곳: {where} 안의 폴더", path=path, where=where)) from e
         if len(registry.of(uid)) >= 20:
             raise VaultError(409, t("볼트는 20개까지입니다."))
         rec = registry.add(uid, name or host.rpartition("/")[2] or host, host)
         if stage_root is not None:
             mounts.request(data)  # root stages it now (<name>-vault-mounts.path), else within a minute
         return JSONResponse(item(uid, rec), status_code=201)
+
+    @app.patch(f"{PREFIX}/vaults/{{vid}}")
+    async def rename_vault(request: Request, vid: str):
+        uid = gate(request)
+        d = await body_of(request)
+        name = str(d.get("name") or "").strip()[:60]
+        if not name:
+            raise VaultError(400, t("이름을 적으세요."))
+        rec = registry.rename(uid, vid, name)
+        if not rec:
+            raise VaultError(404, t("그런 볼트가 없습니다."))
+        return item(uid, rec)
+
+    @app.post(f"{PREFIX}/vaults/{{vid}}/retry")
+    async def retry_vault(request: Request, vid: str):
+        """After the person fixed the folder: root looks again now, and the vault says where it stands."""
+        uid = gate(request)
+        rec = registry.get(uid, vid)
+        if not rec:
+            raise VaultError(404, t("그런 볼트가 없습니다."))
+        vaults.pop(f"{uid}/{vid}", None)
+        if stage_root is not None:
+            mounts.request(data)
+        return item(uid, rec)
 
     @app.delete(f"{PREFIX}/vaults/{{vid}}")
     async def remove_vault(request: Request, vid: str):

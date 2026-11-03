@@ -50,9 +50,16 @@ def test_a_service_app_declares_its_widgets_pages_and_routes():
     cal = next(a for a in s.apps if a.id == "calendar")
     assert cal.audience == "calendar" and cal.upstream.endswith(":8120") and cal.menu_href == "/calendar"
     assert [(w.id, w.href, w.size) for w in cal.widgets] == [("today", "/apps/site/widgets/calendar.js", "2x1"),
-                                                            ("upcoming", "/apps/site/widgets/calendar.js", "1x1")]
+                                                            ("upcoming", "/apps/site/widgets/calendar.js", "1x1"),
+                                                            ("tasks", "/apps/site/widgets/calendar.js", "1x1")]
     routes = {r.path: r for r in cal.routes}
     assert not routes["/calendar/api/"].signin and routes["/calendar/feed/"].auth == "public"
+    # CalDAV: public (the service answers its own 401 with Basic), a body for an event, and the discovery redirect
+    assert routes["/calendar/dav/"].auth == "public" and not routes["/calendar/dav/"].signin and routes["/calendar/dav/"].body
+    wk = routes["/.well-known/caldav"]
+    assert wk.match == "exact" and wk.auth == "public" and wk.nginx.startswith("return 301 /calendar/dav/")
+    assert "location = /.well-known/caldav" in site.render_locations(s, "m00nny")
+    assert cal.default and vault.default if (vault := next(a for a in s.apps if a.id == "vault")) else False
     vault = next(a for a in s.apps if a.id == "vault")
     assert vault.audience == "vault" and vault.upstream.endswith(":8110")
     assert [w.id for w in vault.widgets] == ["recent", "home"] and vault.widgets[1].size == "2x2"

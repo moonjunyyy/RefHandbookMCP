@@ -5,6 +5,9 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi.testclient import TestClient
 
 from portal import tokens
+import base64
+
+from portal import caldav
 from portal.calendar import CalendarError, Rule, Store, create_app, expand, occurrences, parse_rule, parse_when
 from portal.config import Settings
 
@@ -184,3 +187,173 @@ def test_a_feed_is_a_public_ics_of_what_its_owner_may_see(client, key):
     assert client.delete(f"/calendar/api/v1/feeds/{token}", headers=alice).status_code == 204
     assert client.get(f"/calendar/feed/{token}.ics").status_code == 404
     assert client.get("/calendar/feed/nope.ics").status_code == 404
+
+
+# ── the to-do list (docs/apps-vault-calendar.md §7.3) ─────────────────────
+
+
+def test_the_to_do_list_is_the_persons_own_in_their_order(client, key):
+    h = as_user(key)
+    assert client.get("/calendar/api/v1/tasks", headers=h).json() == {"tasks": []}
+    a = post(client, h, "tasks", {"text": "  논문 초록 고치기 "})
+    assert a.status_code == 201 and a.json()["text"] == "논문 초록 고치기" and a.json()["done"] is False and a.json()["due"] == ""
+    b = post(client, h, "tasks", {"text": "세미나 신청", "due": "2026-11-05"}).json()
+    assert b["due"] == "2026-11-05" and b["rank"] > a.json()["rank"]
+    # a new one goes last; the list is open ones first in rank order
+    assert [x["text"] for x in client.get("/calendar/api/v1/tasks", headers=h).json()["tasks"]] == ["논문 초록 고치기", "세미나 신청"]
+    # moving: a rank between
+    assert post(client, h, f"tasks/{b['id']}", {"rank": 0.5}, "patch").json()["rank"] == 0.5
+    assert [x["text"] for x in client.get("/calendar/api/v1/tasks", headers=h).json()["tasks"]] == ["세미나 신청", "논문 초록 고치기"]
+    # done ones go below the open ones; clearing takes them out
+    done = post(client, h, f"tasks/{b['id']}", {"done": True}, "patch").json()
+    assert done["done"] is True
+    assert [x["text"] for x in client.get("/calendar/api/v1/tasks", headers=h).json()["tasks"]] == ["논문 초록 고치기", "세미나 신청"]
+    assert post(client, h, f"tasks/{a.json()['id']}", {"text": "초록 고치기", "due": ""}, "patch").json()["text"] == "초록 고치기"
+    assert post(client, h, "tasks/clear-done", {}).json() == {"removed": 1}
+    assert [x["text"] for x in client.get("/calendar/api/v1/tasks", headers=h).json()["tasks"]] == ["초록 고치기"]
+    # another person sees none of it, and cannot touch it
+    other = as_user(key, "bob")
+    assert client.get("/calendar/api/v1/tasks", headers=other).json() == {"tasks": []}
+    assert post(client, other, f"tasks/{a.json()['id']}", {"done": True}, "patch").status_code == 404
+    assert client.delete(f"/calendar/api/v1/tasks/{a.json()['id']}", headers=other).status_code == 404
+    assert client.delete(f"/calendar/api/v1/tasks/{a.json()['id']}", headers=h).status_code == 204
+    assert client.get("/calendar/api/v1/tasks", headers=h).json() == {"tasks": []}
+    # what is refused, in the person's language
+    assert post(client, h, "tasks", {"text": ""}).status_code == 400
+    assert post(client, h, "tasks", {"text": "x" * 201}).status_code == 400
+    r = post(client, h, "tasks", {"text": "x", "due": "tomorrow"})
+    assert r.status_code == 400 and "날짜" in r.json()["error"]
+    assert post(client, h, "tasks", {"text": "x", "due": "2026-11-05"}).status_code == 201
+    assert client.get("/calendar/api/v1/tasks").status_code == 401
+
+
+# ── CalDAV (portal/caldav.py; docs/apps-vault-calendar.md §8.3) ───────────
+
+
+VEVENT = """BEGIN:VCALENDAR\r
+VERSION:2.0\r
+PRODID:-//test//EN\r
+BEGIN:VTIMEZONE\r
+TZID:Asia/Seoul\r
+END:VTIMEZONE\r
+BEGIN:VEVENT\r
+UID:abc-123@phone\r
+DTSTAMP:20261103T000000Z\r
+DTSTART;TZID=Asia/Seoul:20261105T090000\r
+DTEND;TZID=Asia/Seoul:20261105T103000\r
+SUMMARY:Lab meeting\\, weekly\r
+DESCRIPTION:line one\\nline two\r
+LOCATION:Room 3\r
+RRULE:FREQ=WEEKLY;BYDAY=TH;COUNT=4\r
+EXDATE;TZID=Asia/Seoul:20261112T090000\r
+BEGIN:VALARM\r
+TRIGGER:-PT10M\r
+END:VALARM\r
+END:VEVENT\r
+END:VCALENDAR\r
+"""
+
+
+def basic(uid, password):
+    return {"Authorization": "Basic " + base64.b64encode(f"{uid}:{password}".encode()).decode()}
+
+
+def dav(client, method, path, h, body="", **headers):
+    return client.request(method, path, headers={**h, "Content-Type": "application/xml", **headers}, content=body)
+
+
+def test_the_icalendar_reader_takes_what_the_model_holds():
+    v = caldav.read_vevent(VEVENT)
+    assert v["uid"] == "abc-123@phone" and v["summary"] == "Lab meeting, weekly" and v["description"] == "line one\nline two"
+    assert v["start"] == "2026-11-05T00:00:00Z" and v["end"] == "2026-11-05T01:30:00Z" and v["allday"] is False  # Seoul → UTC
+    assert v["rrule"] == "FREQ=WEEKLY;BYDAY=TH;COUNT=4" and v["exdates"] == ["2026-11-12T00:00:00Z"] and v["location"] == "Room 3"
+    allday = caldav.read_vevent("BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:d\nDTSTART;VALUE=DATE:20261201\nSUMMARY:Day\nEND:VEVENT\nEND:VCALENDAR\n")
+    assert allday["allday"] and allday["start"] == "2026-12-01" and allday["end"] == "2026-12-02"  # the end defaults to the next day
+    dur = caldav.read_vevent("BEGIN:VEVENT\nUID:e\nDTSTART:20261201T100000Z\nDURATION:PT2H\nSUMMARY:x\nEND:VEVENT\n")
+    assert dur["end"] == "2026-12-01T12:00:00Z"
+    with pytest.raises(caldav.DavError, match="RECURRENCE-ID"):
+        caldav.read_vevent(VEVENT.replace("END:VCALENDAR", "BEGIN:VEVENT\r\nUID:abc-123@phone\r\nRECURRENCE-ID:20261119T000000Z\r\nDTSTART:20261119T010000Z\r\nEND:VEVENT\r\nEND:VCALENDAR"))
+    with pytest.raises(caldav.DavError, match="DTSTART"):
+        caldav.read_vevent("BEGIN:VEVENT\nUID:f\nSUMMARY:x\nEND:VEVENT\n")
+    with pytest.raises(caldav.DavError, match="시간대"):
+        caldav.read_vevent("BEGIN:VEVENT\nUID:g\nDTSTART;TZID=Mars/Olympus:20261201T100000\nEND:VEVENT\n")
+
+
+def test_devices_and_the_caldav_round_trip(client, key):
+    h = as_user(key)
+    # a device password: shown once, never listed, revocable; the DAV address and the username come with it
+    assert client.get("/calendar/api/v1/devices", headers=h).json()["devices"] == []
+    made = post(client, h, "devices", {"name": "폰"})
+    assert made.status_code == 201 and made.json()["name"] == "폰" and len(made.json()["password"]) >= 20
+    assert made.json()["url"].endswith("/calendar/dav/") and made.json()["username"] == "alice"
+    password = made.json()["password"]
+    listed = client.get("/calendar/api/v1/devices", headers=h).json()["devices"]
+    assert [d["name"] for d in listed] == ["폰"] and "password" not in listed[0] and "secret" not in listed[0]
+    # Basic: none → 401 with the challenge; a wrong one → 401; the right one → the principal
+    r = client.request("PROPFIND", "/calendar/dav/")
+    assert r.status_code == 401 and r.headers["www-authenticate"].startswith("Basic")
+    assert client.request("PROPFIND", "/calendar/dav/", headers=basic("alice", "nope")).status_code == 401
+    assert client.request("PROPFIND", "/calendar/dav/", headers=basic("bob", password)).status_code == 401  # not bob's
+    b = basic("alice", password)
+    r = client.request("OPTIONS", "/calendar/dav/", headers=b)
+    assert "calendar-access" in r.headers["dav"] and "REPORT" in r.headers["allow"]
+    r = dav(client, "PROPFIND", "/calendar/dav/", b, '<D:propfind xmlns:D="DAV:"><D:prop><D:current-user-principal/></D:prop></D:propfind>', Depth="0")
+    assert r.status_code == 207 and "<D:href>/calendar/dav/alice/</D:href>" in r.text
+    r = dav(client, "PROPFIND", "/calendar/dav/alice/", b, '<D:propfind xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav"><D:prop><C:calendar-home-set/><D:nope/></D:prop></D:propfind>', Depth="0")
+    assert "<C:calendar-home-set><D:href>/calendar/dav/alice/</D:href></C:calendar-home-set>" in r.text and "<D:nope/>" in r.text and "404 Not Found" in r.text
+    # the home, depth 1: alice's own calendar and the lab's
+    r = dav(client, "PROPFIND", "/calendar/dav/alice/", b, "", Depth="1")
+    cals = client.get("/calendar/api/v1/calendars", headers=h).json()["calendars"]
+    mine = next(c for c in cals if c["kind"] == "user")["id"]
+    lab = next(c for c in cals if c["kind"] == "group")["id"]
+    assert f"/calendar/dav/alice/{mine}/" in r.text and f"/calendar/dav/alice/{lab}/" in r.text
+    assert "<C:calendar/>" in r.text and "<CS:getctag>0</CS:getctag>" in r.text and 'name="VEVENT"' in r.text
+    # PUT a new event from a phone: the resource name becomes the id, the UID is kept, Seoul becomes UTC
+    r = client.request("PUT", f"/calendar/dav/alice/{mine}/abc-123.ics", headers={**b, "Content-Type": "text/calendar", "If-None-Match": "*"}, content=VEVENT)
+    assert r.status_code == 201 and r.headers["etag"] == '"0"'
+    e = client.get("/calendar/api/v1/events/abc-123", headers=h).json()
+    assert e["summary"] == "Lab meeting, weekly" and e["start"] == "2026-11-05T00:00:00Z" and e["rrule"] == "FREQ=WEEKLY;BYDAY=TH;COUNT=4"
+    assert client.request("PUT", f"/calendar/dav/alice/{mine}/abc-123.ics", headers={**b, "If-None-Match": "*"}, content=VEVENT).status_code == 412  # it exists now
+    r = client.request("GET", f"/calendar/dav/alice/{mine}/abc-123.ics", headers=b)
+    assert r.status_code == 200 and "UID:abc-123@phone" in r.text and "SUMMARY:Lab meeting\\, weekly" in r.text and r.headers["etag"] == '"0"'
+    # the calendar changed: ctag 1; depth 1 lists the event with its etag
+    r = dav(client, "PROPFIND", f"/calendar/dav/alice/{mine}/", b, "", Depth="1")
+    assert "<CS:getctag>1</CS:getctag>" in r.text and f"/calendar/dav/alice/{mine}/abc-123.ics" in r.text and '<D:getetag>"0"</D:getetag>' in r.text
+    # PUT a change with the right etag → 204 and a new etag; a stale etag → 412
+    changed = VEVENT.replace("SUMMARY:Lab meeting\\, weekly", "SUMMARY:Lab meeting (moved)")
+    r = client.request("PUT", f"/calendar/dav/alice/{mine}/abc-123.ics", headers={**b, "If-Match": '"0"'}, content=changed)
+    assert r.status_code == 204 and r.headers["etag"] == '"1"'
+    assert client.request("PUT", f"/calendar/dav/alice/{mine}/abc-123.ics", headers={**b, "If-Match": '"0"'}, content=changed).status_code == 412
+    # an event made on the page shows up for the phone too, with its own UID
+    web = post(client, h, "events", {"cal": mine, "summary": "From the page", "start": "2026-11-20T09:00:00Z", "end": "2026-11-20T10:00:00Z"}).json()
+    r = client.request("GET", f"/calendar/dav/alice/{mine}/{web['id']}.ics", headers=b)
+    assert f"UID:{web['id']}@testserver" in r.text
+    # REPORT calendar-query with a time range: only what overlaps; multiget: only what was asked, with the data
+    q = ('<C:calendar-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav"><D:prop><D:getetag/><C:calendar-data/></D:prop>'
+         '<C:filter><C:comp-filter name="VCALENDAR"><C:comp-filter name="VEVENT"><C:time-range start="20261120T000000Z" end="20261121T000000Z"/></C:comp-filter></C:comp-filter></C:filter></C:calendar-query>')
+    r = dav(client, "REPORT", f"/calendar/dav/alice/{mine}/", b, q, Depth="1")
+    assert r.status_code == 207 and f"{web['id']}.ics" in r.text and "abc-123.ics" not in r.text and "BEGIN:VEVENT" in r.text
+    m = ('<C:calendar-multiget xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav"><D:prop><D:getetag/><C:calendar-data/></D:prop>'
+         f'<D:href>/calendar/dav/alice/{mine}/abc-123.ics</D:href><D:href>/calendar/dav/alice/{mine}/nope.ics</D:href></C:calendar-multiget>')
+    r = dav(client, "REPORT", f"/calendar/dav/alice/{mine}/", b, m)
+    assert "abc-123.ics" in r.text and "SUMMARY:Lab meeting (moved)" in r.text and "nope.ics" in r.text and "404 Not Found" in r.text and f"{web['id']}.ics" not in r.text
+    # sync-collection: everything from an empty token; then only what changed; a deletion as a 404 member
+    sc = '<D:sync-collection xmlns:D="DAV:"><D:sync-token>{}</D:sync-token><D:sync-level>1</D:sync-level><D:prop><D:getetag/></D:prop></D:sync-collection>'
+    r = dav(client, "REPORT", f"/calendar/dav/alice/{mine}/", b, sc.format(""))
+    assert "abc-123.ics" in r.text and f"{web['id']}.ics" in r.text
+    token = r.text.split("<D:sync-token>")[-1].split("</D:sync-token>")[0]
+    assert token.endswith("/sync/3")
+    assert client.request("DELETE", f"/calendar/dav/alice/{mine}/{web['id']}.ics", headers=b).status_code == 204
+    r = dav(client, "REPORT", f"/calendar/dav/alice/{mine}/", b, sc.format(token))
+    assert f"{web['id']}.ics" in r.text and "404 Not Found" in r.text and "abc-123.ics" not in r.text
+    assert client.get(f"/calendar/api/v1/events/{web['id']}", headers=h).status_code == 404
+    # what is refused: a calendar made over DAV, a repeat the subset lacks, someone else's path, a bad name
+    assert client.request("MKCALENDAR", "/calendar/dav/alice/new/", headers=b).status_code == 403
+    r = client.request("PUT", f"/calendar/dav/alice/{mine}/hourly.ics", headers=b, content=VEVENT.replace("FREQ=WEEKLY;BYDAY=TH;COUNT=4", "FREQ=HOURLY"))
+    assert r.status_code == 403 and "반복" in r.text
+    assert client.request("PROPFIND", f"/calendar/dav/bob/{mine}/", headers=b).status_code == 404
+    assert client.request("PUT", f"/calendar/dav/alice/{mine}/bad name.ics", headers=b, content=VEVENT).status_code == 403
+    # the device revoked: the phone is out
+    did = listed[0]["id"]
+    assert client.delete(f"/calendar/api/v1/devices/{did}", headers=h).status_code == 204
+    assert client.request("PROPFIND", "/calendar/dav/", headers=b).status_code == 401

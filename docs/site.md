@@ -329,7 +329,10 @@ in `/auth/api/v1/me`; a change that breaks them ships beside this one as `/auth/
 
 ## Each person's site: apps, widgets, theme, language, start page
 
-Every app of the site file (`[[app]]`) is **off** until a person turns it on. The catalog (`/apps`)
+Every app of the site file (`[[app]]`) is off until a person turns it on — except that a new account
+(no settings kept yet) starts with the apps the site file marks `default = true` (the projects, the
+calendar, the notes; `/me` says which, the code names none); a kept choice, an empty one too, stays as
+it is. The catalog (`/apps`)
 is a store: a card for each app they may see (`groups`) — its `icon`, its `title` (a link to the
 app's page), its one line (`description`), its `tags` — with a switch; a search and a row of chips
 (전체 · 내 앱 · each tag) narrow the cards, and the order is the site file's. The app's page
@@ -351,10 +354,20 @@ The main page is a grid of **widgets**: the pieces the apps that are on offer. A
 [[app.widget]]
 id = "boards"            # unique within the app
 title = "최근 작업판"
+description = "최근에 연 작업판으로 바로"   # one line (80 characters): what the person choosing it reads
 module = "widget.js"     # a static app: a path under its own files; a service: an absolute path
 size = "1x1"             # 1x1 | 2x1 | 2x2 cells
-tr.en = { title = "Recent boards" }
+tr.en = { title = "Recent boards", description = "Straight to the boards you opened last" }
 ```
+
+The sizes a cell may have are one declaration (`portal/site.py` `SIZES`, carried in `/me` as `sizes`);
+the person picks widgets on the main page (위젯 고르기): a sheet of the apps that are on, a row per
+widget — a switch, the title, the description, the size — kept as it is switched, with the pointed-at
+widget drawn beside the list by its own module; on the grid a widget is moved by dragging its head and
+resized by its corner (snapping to a declared size), with no edit mode. Every object on the pages has its
+menu where it is (right-click, its ⋯, Shift+F10): an event, a day, a calendar, a vault, a note, a row of
+the tree, a to-do, a widget cell; each page declares its keys and `?` lists them (`docs/frame.md` §5
+R10–R16).
 
 The module is an ES module the frame imports from the app's own path; its default export draws into
 the cell: `export default (host, ctx) => …`, with `ctx = { frame, prefs, t, lang, theme, go, api,
@@ -365,8 +378,10 @@ one module per app that reads `ctx.widget.id` for which of its widgets to draw. 
 pages do, and styles itself with the tokens and the parts. Every app also has a *launcher* widget
 (its mark, name and links), the one shown when it declares no module and the one a failing module
 falls back to. The main page's `편집` lets the person drag cells into order (Alt+←/→ from the
-keyboard), take them off, and add any widget of an app that is on; with no app on, the main page is
-the catalog.
+keyboard), take them off, and add any widget of an app that is on; with no app on, the main page is one
+action, 앱 추가, which goes to the store: the main page shows widgets or the app menu (the launchers of the apps
+that are on) and is never the store itself. An icon carries no margin of its own; the row it sits in sets the
+gap to its text, and `web/e2e/layout.js` measures those gaps, centres and rows on every page.
 
 What a person chooses is kept with their account, not their browser: the pages app has `storage`,
 so `/apps/site/api/store/prefs` holds it (`web/frame/frame.ts`): the language, the theme

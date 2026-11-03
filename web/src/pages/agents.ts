@@ -1,7 +1,7 @@
 // The agents' pages over /agents/api/v1: runs (start one from a preset, follow one), API keys, the
 // workspace's files (the presets, each a flow, are flows.ts's). Approving a run the model asked for is the approval page's.
 
-import { act, agents, empty, flashNext, form, go, h, link, main, num, pageHead, replace, section, tag, title, values, when } from '/auth/static/site.js';
+import { act, agents, empty, flashNext, form, go, h, help, link, main, meta, num, pageHead, replace, section, tag, title, values, when } from '/auth/static/site.js';
 import type { Child, Json } from '/auth/static/site.js';
 import { n_, t } from '../lib/i18n';
 import { flowProgress, flowView, presetItem } from './flows';
@@ -61,7 +61,7 @@ function flowSection(r: Json): HTMLElement {
     h('p', { class: 'small' }, h('b', null, t('지나온 길:')), ' ', path.length ? path.join(' → ') : t('아직 시작하지 않았습니다.')),
     end && h('p', { class: 'flash error' }, t('순서도가 중간에 멈췄습니다: {reason}', { reason: end })),
     flowView(r.flow, states, taken),
-    r.preset && h('p', { class: 'muted small' }, link(`/agents/presets/${r.preset}`, t('이 프리셋 열기'))));
+    r.preset && h('p', { class: 'small' }, link(`/agents/presets/${r.preset}`, t('이 프리셋 열기'))));
 }
 
 let poll = 0;
@@ -71,29 +71,28 @@ export async function run(id: string): Promise<void> {
   const r = await agents.get(`/runs/${encodeURIComponent(id)}`);
   const g = r.grant;
   replace(main(),
-    pageHead(r.title || r.id, agentTabs()), h('p', { class: 'muted' }, h('span', null, h('code', null, r.id), ' ', phase(r.phase),
-      ' · ', t('요청 {who}', { who: r.requested_by === 'model' ? 'Claude' : t('나') }))),
+    pageHead(r.title || r.id, agentTabs()), meta(h('code', null, r.id), ' ', phase(r.phase),
+      ' · ', t('요청 {who}', { who: r.requested_by === 'model' ? 'Claude' : t('나') })),
     r.approve_url && h('p', { class: 'flash' }, t('Claude가 요청한 실행입니다. 승인 화면에서 키·모델·한도를 정해 승인하면 시작합니다.'), ' ',
       h('a', { href: r.approve_url }, t('승인 화면으로'))),
     r.error && h('p', { class: 'flash error' }, r.error),
-    r.flow ? section(t('입력'), r.input ? h('p', null, r.input) : h('p', { class: 'muted' }, t('없음 (블럭의 명령만으로 실행)')))
+    r.flow ? section(t('입력'), r.input ? h('p', null, r.input) : empty(t('없음 (블럭의 명령만으로 실행)')))
       : section(t('목표'), h('p', null, r.goal)),
     g && section(t('허가'),
       h('ol', null, g.routes.map((x: Json) => h('li', null, h('b', null, x.key), ` ${x.model} `,
         h('span', { class: 'muted small' }, x.roles.map(roleName).join(', '))))),
-      h('p', { class: 'muted small' }, t('동시 {agents} · 총 {spawns} · 깊이 {depth} · 턴 {steps} · 토큰 {tokens} · 문맥 {context} · 보관 {retention} · 정책 {policy}',
+      meta(t('동시 {agents} · 총 {spawns} · 깊이 {depth} · 턴 {steps} · 토큰 {tokens} · 문맥 {context} · 보관 {retention} · 정책 {policy}',
         { agents: g.max_agents, spawns: g.max_spawns, depth: g.max_depth, steps: g.max_steps, tokens: g.max_tokens || t('무제한'),
           context: g.context, retention: g.retention, policy: g.policy }))),
     r.flow && flowSection(r),
     section(t('에이전트'),
-      h('p', { class: 'muted small' }, t('입력 {input} · 출력 {output} · 캐시 {cache} 토큰',
+      meta(t('입력 {input} · 출력 {output} · 캐시 {cache} 토큰',
         { input: num(r.usage.input), output: num(r.usage.output), cache: num(r.usage.cache_read) })),
       tree(r.tree) ?? empty(r.phase === 'requested' ? t('승인되면 시작합니다.') : t('아직 시작하지 않았습니다.')),
       r.state === 'open' && h('div', { class: 'actions' }, h('button', { class: 'secondary', onclick: async (e: Event) => {
         if (await act(e.target as HTMLButtonElement, () => agents.post(`/runs/${r.id}/cancel`))) void run(id);
       } }, t('실행 취소')))),
-    section(t('다시 쓰기'),
-      h('p', { class: 'muted small' }, t('이 실행의 순서도·입력·한도를 그대로 씁니다. 처음 순서도가 없던 실행은 블럭 하나(팀)로 엽니다.')),
+    section([t('다시 쓰기'), help(t('이 실행의 순서도·입력·한도를 그대로 씁니다. 처음 순서도가 없던 실행은 블럭 하나(팀)로 엽니다.'))],
       h('div', { class: 'actions' },
         link(`/agents/presets/new?from=${encodeURIComponent(r.id)}`, t('열어서 고치고 실행')),
         h('button', { class: 'secondary', disabled: !r.grant, onclick: async (e: Event) => {
@@ -150,7 +149,7 @@ export async function keys(): Promise<void> {
         if (!confirm(t('{key} 키를 지울까요?', { key: k.ref }) + users)) return;
         if (await act(e.target as HTMLButtonElement, () => agents.del(`/keys/${k.provider}/${k.label}`))) void keys();
       } }, t('삭제'))))) : empty(t('등록한 키가 없습니다.'))),
-    section(t('키 등록'), h('p', { class: 'muted small' }, t('등록할 때 제공자의 모델 목록을 한 번 불러와 키를 확인합니다. 그 목록이 이 키의 모델 선택지가 됩니다.')),
+    section([t('키 등록'), help(t('등록할 때 제공자의 모델 목록을 한 번 불러와 키를 확인합니다. 그 목록이 이 키의 모델 선택지가 됩니다.'))],
       form({ autocomplete: 'off' }, async (f, b) => {
         const k = await act(b, () => agents.post('/keys', values(f)));
         if (k) void keys();
@@ -174,14 +173,14 @@ export async function files(): Promise<void> {
     [' / ', link(`/agents/files?path=${encodeURIComponent(parts.slice(0, i + 1).join('/'))}`, p)])];
   title(t('파일'));
   replace(main(),
-    pageHead(t('파일'), agentTabs()), h('p', { class: 'muted' }, [h('code', null, '/work'), ': ', t('샌드박스에서 스크립트와 에이전트가 쓰는 작업 공간입니다(읽기 전용).'), ' ',
-      t('에이전트 실행은 각자 이 폴더에서 일합니다:'), ' ', h('code', null, '/work/runs/<run>')]),
+    pageHead(t('파일'), agentTabs()), meta(h('code', null, '/work'), help([t('샌드박스에서 스크립트와 에이전트가 쓰는 작업 공간입니다(읽기 전용).'), ' ',
+      t('에이전트 실행은 각자 이 폴더에서 일합니다:'), ' ', h('code', null, '/work/runs/<run>')])),
     section(crumbs, d.kind === 'dir'
       ? (d.entries.length ? h('div', { class: 'table-wrap' }, h('table', null, h('tbody', null, d.entries.map((e: Json) => h('tr', null,
           h('td', { class: 'wrap' }, link(`/agents/files?path=${encodeURIComponent((path ? path + '/' : '') + e.name)}`,
             e.name + (e.kind === 'dir' ? '/' : ''))),
           h('td', { class: 'muted small num' }, e.kind === 'dir' ? '' : `${num(e.size)} B`))))))
         : empty(t('비어 있습니다.')))
-      : d.text === null ? h('p', { class: 'muted' }, t('텍스트가 아닌 파일입니다 ({size} B).', { size: num(d.size) }))
-        : [h('p', { class: 'muted small' }, `${num(d.size)} B`), h('pre', { class: 'wrap' }, d.text)]));
+      : d.text === null ? empty(t('텍스트가 아닌 파일입니다 ({size} B).', { size: num(d.size) }))
+        : [meta(`${num(d.size)} B`), h('pre', { class: 'wrap' }, d.text)]));
 }

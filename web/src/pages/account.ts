@@ -1,7 +1,7 @@
 // The account portal's pages: one's own account, and (for helpdesk and admins) the users, the
 // account requests and the invitations. The operations are the portal API's (/account/api/v1).
 
-import { account, act, empty, flash, flashNext, form, frame, go, h, link, main, pageHead, replace, section, tag, values, when } from '/auth/static/site.js';
+import { account, act, empty, flash, flashNext, form, frame, go, h, help, link, main, meta, pageHead, replace, section, tag, values, when } from '/auth/static/site.js';
 import type { Json } from '/auth/static/site.js';
 import { t } from '../lib/i18n';
 
@@ -57,7 +57,7 @@ export async function mine(): Promise<void> {
         h('label', null, t('이메일'), h('input', { name: 'mail', type: 'email', value: u.mail })),
         h('label', null, t('로그인 셸'), shellSelect(m, u.login_shell)),
         h('div', { class: 'actions' }, h('button', null, t('저장'))))),
-      h('section', { class: 'card section', id: 'password' }, h('h2', null, t('비밀번호 변경')),
+      h('section', { class: 'card section', id: 'password' }, h('h2', null, t('비밀번호 변경'), help(t('이 사이트와 SSH에 함께 쓰는 비밀번호입니다.'))),
         form({}, async (f, b) => {
           const done = await act(b, () => account().post('/me/password', values(f)));
           if (done) f.reset();
@@ -65,8 +65,7 @@ export async function mine(): Promise<void> {
           h('label', null, t('지금 비밀번호'), h('input', { name: 'old', type: 'password', autocomplete: 'current-password', required: true })),
           h('label', null, t('새 비밀번호'), h('input', { name: 'new', type: 'password', minlength: 12, autocomplete: 'new-password', required: true })),
           h('label', null, t('새 비밀번호 확인'), h('input', { name: 'confirm', type: 'password', minlength: 12, autocomplete: 'new-password', required: true })),
-          h('div', { class: 'actions' }, h('button', null, t('비밀번호 변경')))),
-        h('p', { class: 'muted small' }, t('이 사이트와 SSH에 함께 쓰는 비밀번호입니다.')))));
+          h('div', { class: 'actions' }, h('button', null, t('비밀번호 변경')))))));
   if (location.hash === '#password') document.getElementById('password')?.scrollIntoView();
 }
 
@@ -120,8 +119,7 @@ export async function user(uid: string): Promise<void> {
   const u = d.user, may = d.may as Record<string, boolean>;
   const reload = () => user(uid);
   const actions = [
-    may.reset_password && h('div', { class: 'item' }, h('div', { class: 'item-head' }, h('b', null, t('비밀번호 초기화'))),
-      h('p', { class: 'muted small' }, t('임시 비밀번호를 정합니다. 다음 로그인에서 바꾸게 됩니다.')),
+    may.reset_password && h('div', { class: 'item' }, h('div', { class: 'item-head' }, h('b', null, t('비밀번호 초기화')), help(t('임시 비밀번호를 정합니다. 다음 로그인에서 바꾸게 됩니다.'))),
       h('div', { class: 'actions' }, h('button', { onclick: async (e: Event) => {
         const r = await act(e.target as HTMLButtonElement, () => account().post(`/users/${uid}/reset`));
         if (r) replace(main(), pageHead(uid, tabs(m)), oneTime(uid, r.password, t('비밀번호를 초기화했습니다')),
@@ -141,13 +139,12 @@ export async function user(uid: string): Promise<void> {
           go(`${p}/admin/users`);
         }
       },
-        h('p', { class: 'muted small' }, t('계정, 개인 그룹, 모든 그룹 소속을 지웁니다. 되돌릴 수 없습니다. 파일은 그대로 남습니다.')),
-        h('label', null, t('확인하려면 사용자명을 입력하세요:'), ' ', h('code', null, uid),
+        h('label', null, t('확인하려면 사용자명을 입력하세요:'), ' ', h('code', null, uid), help(t('계정, 개인 그룹, 모든 그룹 소속을 지웁니다. 되돌릴 수 없습니다. 파일은 그대로 남습니다.')),
           h('input', { name: 'confirm', autocomplete: 'off', required: true, pattern: uid })),
         h('div', { class: 'actions' }, h('button', { class: 'danger' }, t('{uid} 삭제', { uid }))))),
   ].filter(Boolean);
   replace(main(),
-    pageHead(u.display_name || uid, tabs(m)), h('p', { class: 'muted' }, h('code', null, uid)),
+    pageHead(u.display_name || uid, tabs(m)), meta(h('code', null, uid)),
     h('div', { class: 'grid' },
       section(t('계정'), h('dl', null,
         h('dt', null, t('이름')), h('dd', null, u.name || '-'), h('dt', null, t('이메일')), h('dd', null, u.mail || '-'),

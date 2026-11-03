@@ -1,7 +1,7 @@
 // Legibility measured, not eyeballed: WCAG contrast of every visible text element against the
 // background actually behind it (first non-transparent ancestor), on a board of the pages app — the
 // main page (widgets of the calendar, the notes, the projects and eq-sandbox), the name menu open,
-// editing, the widget dialog, the store, an app's page, the settings, the calendar with a day open
+// editing, the widget dialog, the store, an app's page, the settings, the calendar with a day open, its week,
 // and the event dialog, the notes read and edited. The first line is the total (run.sh reads it);
 // then the worst offenders.
 const { chromium } = require('playwright');
@@ -23,7 +23,7 @@ const MEASURE = (scope) => {
   const out = [];
   for (const el of root.querySelectorAll('*')) {
     if (el.tagName === 'INPUT' && ['checkbox', 'radio', 'range'].includes(el.type)) continue;  // no text of its own
-    if (!['BUTTON', 'SPAN', 'P', 'SUMMARY', 'H1', 'H2', 'H3', 'LABEL', 'A', 'LI', 'TD', 'TH', 'KBD', 'SMALL', 'B', 'STRONG', 'EM', 'text', 'INPUT', 'OUTPUT', 'OPTION', 'SELECT', 'TEXTAREA', 'CODE'].includes(el.tagName)) continue;
+    if (!['BUTTON', 'SPAN', 'P', 'SUMMARY', 'H1', 'H2', 'H3', 'LABEL', 'A', 'LI', 'TD', 'TH', 'KBD', 'SMALL', 'B', 'STRONG', 'EM', 'text', 'INPUT', 'OUTPUT', 'OPTION', 'SELECT', 'TEXTAREA', 'CODE', 'DIV', 'TIME'].includes(el.tagName)) continue;  // a DIV counts when it has text of its own (the grid heads)
     const text = (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' ? el.value || el.placeholder : el.tagName === 'SELECT' ? el.value : el.textContent || '').trim();
     if (!text) continue;
     const own = [...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim());
@@ -51,12 +51,14 @@ const MEASURE = (scope) => {
   mock.reset();
   mock.put('site', 'prefs', { lang: 'auto', theme: 'auto', start: '/', apps: ['eq-sandbox', 'calendar', 'vault', 'projects'],
                               home: [{ app: 'calendar', widget: 'today' }, { app: 'eq-sandbox', widget: 'boards' }, { app: 'vault', widget: 'recent' },
-                                     { app: 'projects', widget: 'mine' }, { app: 'vault', widget: 'home' }, { app: 'eq-sandbox', widget: 'launcher' }],
+                                     { app: 'projects', widget: 'mine' }, { app: 'vault', widget: 'home' }, { app: 'eq-sandbox', widget: 'launcher' },
+                                     { app: 'calendar', widget: 'tasks' }],
                               seen: ['eq-sandbox', 'wordgen', 'agents'] });
   mock.put('eq-sandbox', 'boards', [{ id: 'b1', title: '작업판 1', updated: Date.now() }]);
   const page = await ctx.newPage();
   const passes = [];
   const measure = async (name, scope = 'body') => passes.push([name, await page.evaluate(MEASURE, scope)]);
+  const menuAt = async (sel) => { await page.click(sel, { button: 'right' }); await page.waitForSelector('.menu[role=menu]'); };
   const visit = async (p, sel) => { await page.goto(`${mock.ORIGIN}${p}`, { waitUntil: 'networkidle' }); await page.waitForSelector(sel); await page.waitForTimeout(100); };
 
   // the main page, with every kind of widget; the name menu; editing; the widget dialog
@@ -71,17 +73,34 @@ const MEASURE = (scope) => {
   await visit('/', '.widget[data-widget=home] .note-body');
   await page.waitForSelector('.widget[data-widget=today] .widget-list');
   await page.waitForSelector('.widget[data-widget=boards] .widget-list');
+  await page.waitForSelector('.widget[data-widget=tasks] input[name=task]');
+  await page.fill('.widget[data-widget=tasks] input[name=task]', '초록 고치기');
+  await page.keyboard.press('Enter');
+  await page.waitForSelector('.widget[data-widget=tasks] ul.tasks li');
+  await page.hover('.widget[data-widget=tasks] ul.tasks li');
   await measure('home');
+  await menuAt('.widget[data-widget=tasks] ul.tasks li');
+  await measure('task-menu', '.menu[role=menu]');
+  await page.keyboard.press('Escape');
   await page.click('header details.me summary');
   await page.waitForTimeout(100);
   await measure('menu', 'header details.me');
   await page.click('header details.me summary');
-  await page.click('.section-head button:text-is("편집")');
+  await page.hover('.widgets .widget:nth-child(2)');
   await page.waitForTimeout(100);
-  await measure('editing', 'main');
-  await page.click('.section-head button:text-is("+ 위젯")');
-  await page.waitForSelector('dialog[open]');
+  await measure('hovered', 'main');
+  await menuAt('.widgets .widget:nth-child(2)');
+  await measure('cell-menu', '.menu[role=menu]');
+  await page.keyboard.press('Escape');
+  await page.click('.section-head button:text-is("위젯 고르기")');
+  await page.waitForSelector('dialog[open] .pick-list');
+  await page.hover('dialog .pick-row[data-app="eq-sandbox"][data-widget="boards"]');
+  await page.waitForSelector('dialog .pick-preview .widget-list');
   await measure('dialog', 'dialog');
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('?');
+  await page.waitForSelector('dialog[open] ul.keys');
+  await measure('keys', 'dialog');
   await page.keyboard.press('Escape');
 
   // the store and an app's page (one new app, so the "new" tag shows)
@@ -96,7 +115,29 @@ const MEASURE = (scope) => {
   await visit('/calendar', '.cal-grid');
   await page.click('.cal-day.today .cal-num');  // the number: the cell's middle may be the event itself
   await page.waitForSelector('.day-list .cal-ev');
+  await page.hover('.day-list .day-row');
   await measure('calendar');
+  await menuAt('.day-list .cal-ev');
+  await measure('event-menu', '.menu[role=menu]');
+  await page.keyboard.press('Escape');
+  await menuAt('.cal-sources .chip:has-text("내 캘린더")');
+  await measure('cal-menu', '.menu[role=menu]');
+  await page.keyboard.press('Escape');
+  await page.click('.cal-sources-row button.more');
+  await page.waitForSelector('.menu[role=menu]');
+  await page.click('.menu[role=menu] .menu-item:has(strong:text-is("기기 연결…"))');
+  await page.waitForSelector('dialog[open] form.devices-add');
+  await page.fill('dialog input[name=device]', '폰');
+  await page.keyboard.press('Enter');
+  await page.waitForSelector('dialog .device-made input');
+  await measure('devices', 'dialog');
+  await page.keyboard.press('Escape');
+  await page.click('.cal-nav .chip:text-is("주")');
+  await page.waitForSelector('.wk-body');
+  await page.waitForTimeout(100);
+  await measure('week');
+  await page.click('.cal-nav .chip:text-is("월")');
+  await page.waitForSelector('.day-list .cal-ev');
   await page.click('.day-list .cal-ev');
   await page.waitForSelector('dialog[open]');
   await measure('event', 'dialog');
@@ -111,6 +152,21 @@ const MEASURE = (scope) => {
   await page.click('.note-head label.switch input');
   await page.waitForSelector('textarea.editor');
   await measure('editor', 'main');
+  await page.click('.vault-side .vault-head button.more');
+  await page.waitForSelector('.menu[role=menu]');
+  await measure('vault-menu', '.menu[role=menu]');
+  await page.keyboard.press('Escape');
+  // a vault that is not ready: the status card; the add dialog
+  await page.click('.vault-side .vault-head button.more');
+  await page.waitForSelector('.menu[role=menu]');
+  await page.click('.menu[role=menu] .menu-item:has(strong:text-is("볼트 추가…"))');
+  await page.waitForSelector('dialog[open] input[name=sub]');
+  await measure('vault-add', 'dialog');
+  await page.fill('dialog input[name=sub]', 'Obsidian/Nowhere');
+  await page.click('dialog button:text-is("추가")');
+  await page.waitForTimeout(300);
+  await visit('/vault/v2', '.vault-status');
+  await measure('vault-status', 'main');
 
   // disabled controls are allowed to be dim (WCAG exempts them); everything else must reach 4.5:1
   const all = passes.flatMap(([pass, rows]) => rows.filter((r) => r.where === 'on' && !r.disabled).map((r) => ({ ...r, pass })));

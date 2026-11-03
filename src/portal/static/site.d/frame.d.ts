@@ -1,8 +1,15 @@
+/** A widget's cells on the grid: one of the sizes the site declares (`frame.sizes`, from portal/site.py SIZES). */
+export interface Size {
+    id: string;
+    cols: number;
+    rows: number;
+}
 export interface Widget {
     id: string;
     title: string;
+    description: string;
     href: string;
-    size: '1x1' | '2x1' | '2x2';
+    size: string;
 }
 export interface Card {
     id: string;
@@ -14,6 +21,7 @@ export interface Card {
     icon: string;
     href: string;
     optional: boolean;
+    default: boolean;
     links: {
         label: string;
         href: string;
@@ -33,12 +41,14 @@ export interface Frame {
         label: string;
         href: string;
     }[];
+    sizes: Size[];
 }
 export declare const THEMES: readonly ["auto", "light", "dark"];
 export type Theme = (typeof THEMES)[number];
 export interface Placement {
     app: string;
     widget: string;
+    size?: string;
 }
 export interface Prefs {
     lang: string;
@@ -48,8 +58,12 @@ export interface Prefs {
     home: Placement[];
     seen: string[];
 }
+/** The settings an account starts with. `apps`: the apps the site file marks `default = true` (docs/frame.md §2
+ * R13) — filled from the frame once it is loaded; a kept `apps`, an empty one too, is the person's own choice. */
 export declare const DEFAULTS: Prefs;
 export declare const frame: Frame;
+/** The size a placement has: its own, else its widget's; unknown ids fall back to the first declared size. */
+export declare function sizeOf(id: string | undefined): Size;
 export declare const prefs: Prefs;
 /** The person's theme onto the document, and into the site cookie theme.js reads before the first paint. */
 export declare function applyTheme(theme: string): void;

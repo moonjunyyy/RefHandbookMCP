@@ -248,12 +248,14 @@ def create_app(settings: Settings | None = None, kerberos=None, signing_key=None
         def card(a):  # noqa: ANN001, ANN202 — `href`: where the app opens (its first link, or its menu's)
             return {"id": a.id, "title": a.text("title", lang), "description": a.text("description", lang),
                     "about": a.text("about", lang), "tags": [t(x) for x in a.tags], "code": a.code, "icon": a.icon, "href": a.menu_href or (a.links[0].href if a.links else ""),
-                    "optional": a.optional,
+                    "optional": a.optional, "default": a.default,
                     "links": [{"label": ln.label_in(lang), "href": ln.href} for ln in a.links],
-                    "widgets": [{"id": w.id, "title": w.text("title", lang), "href": w.href, "size": w.size}
+                    "widgets": [{"id": w.id, "title": w.text("title", lang), "description": w.text("description", lang),
+                                 "href": w.href, "size": w.size}
                                 for w in a.widgets]}
         return JSONResponse({"uid": uid, "title": s.site_title, "signin": SIGNIN, "portal": facts().portal_root,
                              "lang": lang, "theme": theme, "frame": site_mod.FRAME,
+                             "sizes": [{"id": k, "cols": c, "rows": r} for k, (c, r) in site_mod.SIZES.items()],
                              "cards": [card(a) for a in site.cards(groups)],
                              "menu": [{"label": ln.label, "href": ln.href} for ln in site.menu(groups, lang)]},
                             headers={"Cache-Control": "no-store", "Vary": "Cookie, Accept-Language"})

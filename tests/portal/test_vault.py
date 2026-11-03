@@ -66,15 +66,25 @@ def test_a_person_registers_a_directory_of_their_storage(client, key, home):
     r = client.get("/vault/api/v1/vaults", headers=alice).json()
     assert r["vaults"] == [] and r["roots"] == [f"{home}/data/alice"]
     r = register(client, alice, f"{home}/data/alice/Obsidian/Research")
-    assert r.status_code == 201 and r.json()["status"] == "ok" and r.json()["name"] == "Research"
+    assert r.status_code == 201 and r.json()["status"] == "ok" and r.json()["reason"] == "" and r.json()["name"] == "Research"
     vid = r.json()["id"]
     assert register(client, alice, f"{home}/data/alice/Obsidian/Research").status_code == 409  # once
     assert register(client, alice, f"{home}/data/bob").status_code == 400  # not hers to register
-    assert register(client, alice, "/etc").status_code == 400
-    assert register(client, alice, "storage/Obsidian/../..").status_code == 400
+    r = register(client, alice, "/etc")
+    assert r.status_code == 400 and f"{home}/data/alice" in r.json()["error"]  # the refusal says where a vault may be
+    r = register(client, alice, "storage/Obsidian/../..")
+    assert r.status_code == 400 and ".." in r.json()["error"]
     gone = register(client, alice, "storage/Nowhere").json()
-    assert gone["status"] != "ok"  # registered, but there is no such directory
+    assert gone["status"] == "error" and "폴더가 없습니다" in gone["reason"]  # registered, but there is no such directory: it says so, and what to do
     assert client.get(f"/vault/api/v1/vaults/{gone['id']}/tree", headers=alice).status_code == 404
+    # the folder made, a retry finds it; the vault is called something else
+    (home / "data" / "alice" / "Nowhere").mkdir()
+    again = client.post(f"/vault/api/v1/vaults/{gone['id']}/retry", headers=alice).json()
+    assert again["status"] == "ok" and again["reason"] == ""
+    assert client.patch(f"/vault/api/v1/vaults/{gone['id']}", headers={**alice, **JSON}, json={"name": "Somewhere"}).json()["name"] == "Somewhere"
+    assert client.patch(f"/vault/api/v1/vaults/{gone['id']}", headers={**alice, **JSON}, json={"name": " "}).status_code == 400
+    assert client.patch(f"/vault/api/v1/vaults/{gone['id']}", headers={**bob, **JSON}, json={"name": "x"}).status_code == 404
+    assert client.post(f"/vault/api/v1/vaults/{gone['id']}/retry", headers=bob).status_code == 404
     assert [v["id"] for v in client.get("/vault/api/v1/vaults", headers=bob).json()["vaults"]] == []
     assert client.get(f"/vault/api/v1/vaults/{vid}/tree", headers=bob).status_code == 404
     assert client.delete(f"/vault/api/v1/vaults/{vid}", headers=bob).status_code == 404

@@ -35,7 +35,10 @@
 # Every app with a card is in the catalog (/apps) for whoever may see it; nothing is on until a person
 # turns it on there (docs/frame.md §2–§3), and what they turn on is in their header and on their main page
 # (its widgets: [[app.widget]], docs/frame.md §4). `optional = false` keeps an app out of the catalog and in
-# the person's own menu (the account).
+# the person's own menu (the account); `default = true` has an optional app on for an account with no settings
+# kept yet (docs/frame.md §2). A widget: id, title, description (one line, for the person choosing it),
+# module, size (one of portal/site.py SIZES: 1x1 | 2x1 | 1x2 | 2x2 — the person may resize a placed one),
+# tr.en = { title, description }.
 #
 # An app the site hosts needs no routes: `static = true` serves its built files at /apps/<id>/
 # (publish them with `sudo deploy/install.sh --app <id> <dist>`), and `storage = true` gives each
@@ -112,6 +115,7 @@ link = [{ label = "내 계정", href = "@@portal_root@@/", tr = { en = "My accou
 
 [[app]]
 id = "projects"
+default = true
 title = "프로젝트"
 icon = "🧩"
 description = "함께 쓰는 그룹 — 저장소·캘린더·볼트의 주인"
@@ -123,11 +127,13 @@ link = [{ label = "프로젝트", href = "/projects", tr = { en = "Projects" } }
   [[app.widget]]
   id = "mine"
   title = "내 프로젝트"
+  description = "내가 속한 프로젝트와 그 저장소로 가는 링크"
   module = "/apps/site/widgets/projects.js"
-  tr.en = { title = "My projects" }
+  tr.en = { title = "My projects", description = "The projects you belong to, with a link to each" }
 
 [[app]]
 id = "calendar"
+default = true
 title = "캘린더"
 icon = "📅"
 description = "내 일정과 프로젝트 일정을 한 달력에"
@@ -141,14 +147,22 @@ link = [{ label = "캘린더", href = "/calendar", tr = { en = "Calendar" } }]
   [[app.widget]]
   id = "today"
   title = "오늘"
+  description = "오늘의 일정과 마감인 할 일 — 넓은 칸"
   module = "/apps/site/widgets/calendar.js"
   size = "2x1"
-  tr.en = { title = "Today" }
+  tr.en = { title = "Today", description = "Today's events and the tasks due today — a wide cell" }
   [[app.widget]]
   id = "upcoming"
   title = "다가오는 일"
+  description = "앞으로 일주일의 일정, 날짜순"
   module = "/apps/site/widgets/calendar.js"
-  tr.en = { title = "Coming up" }
+  tr.en = { title = "Coming up", description = "The next seven days' events, in order" }
+  [[app.widget]]
+  id = "tasks"
+  title = "할 일"
+  description = "체크리스트 — 홈에서 바로 적고, 끝나면 체크"
+  module = "/apps/site/widgets/calendar.js"
+  tr.en = { title = "Tasks", description = "A checklist — write it on the main page, tick it when done" }
   [[app.route]]
   path = "/calendar/api/"
   limit = "api"
@@ -162,9 +176,24 @@ link = [{ label = "캘린더", href = "/calendar", tr = { en = "Calendar" } }]
   limit = "api"
   burst = 20
   note = "the ICS subscription feeds: the address is the key, for a phone's calendar"
+  [[app.route]]
+  path = "/calendar/dav/"
+  auth = "public"
+  signin = false
+  limit = "api"
+  burst = 40
+  body = "2m"
+  note = "CalDAV (RFC 4791 subset, portal/calendar.py): a phone's or a desktop's calendar app reads and writes with a device password (Basic); the service answers its own 401"
+  [[app.route]]
+  path = "/.well-known/caldav"
+  match = "exact"
+  auth = "public"
+  nginx = "return 301 /calendar/dav/;"
+  note = "CalDAV discovery (RFC 6764): a client given only the host finds the service here"
 
 [[app]]
 id = "vault"
+default = true
 title = "노트"
 icon = "📝"
 description = "Obsidian 볼트를 브라우저에서"
@@ -178,12 +207,15 @@ link = [{ label = "노트", href = "/vault", tr = { en = "Notes" } }]
   [[app.widget]]
   id = "recent"
   title = "최근 노트"
+  description = "최근에 고친 노트 다섯"
   module = "/apps/site/widgets/vault.js"
-  tr.en = { title = "Recent notes" }
+  tr.en = { title = "Recent notes", description = "The five notes changed most recently" }
   [[app.widget]]
   id = "home"
   title = "Home"
+  description = "볼트의 Home 노트를 그대로 — 큰 칸"
   module = "/apps/site/widgets/vault.js"
+  tr.en = { description = "The vault's Home note as it is — a big cell" }
   size = "2x2"
   [[app.route]]
   path = "/vault/api/"
@@ -197,17 +229,18 @@ link = [{ label = "노트", href = "/vault", tr = { en = "Notes" } }]
 id = "eq-sandbox"
 title = "수식 플립플롭"
 icon = "🧮"
-description = "수식을 블록처럼 뒤집고 옮기는 작업판"
-about = "방정식의 항을 끌어 옮기고 뒤집어 정리합니다. 작업판은 계정에 남고, 홈의 위젯이 최근 작업판을 보여 줍니다."
+description = "식의 꼴을 손으로 바꾸고 같은 꼴을 모으는 작업판"
+about = "식의 부분을 끌어 옮기고, 같다고 주장한 꼴을 무브로 잇고, 서명하거나 증명보조기에 물어 근거를 올립니다. 작업판은 계정에 남고, 홈의 위젯이 최근 작업판을 보여 줍니다."
 tags = ["연구", "도구"]
-tr.en = { title = "Equation Flip-Flop", description = "Equations that flip and move like blocks", about = "Drag the terms of an equation, flip them, tidy up. Boards stay with your account; a widget on the main page shows the recent ones." }
+tr.en = { title = "Equation Flip-Flop", description = "Reshape equations by hand, gather equal forms", about = "Drag parts of an expression, connect the forms you claim equal by moves, and raise the grounds by signing or asking the prover. Boards stay with your account; a widget on the main page shows the recent ones." }
 static = true
 storage = true
   [[app.widget]]
   id = "boards"
   title = "최근 작업판"
+  description = "최근에 연 작업판으로 바로"
   module = "widget.js"
-  tr.en = { title = "Recent boards" }
+  tr.en = { title = "Recent boards", description = "Straight to the boards you opened last" }
 
 [[app]]
 id = "wordgen"

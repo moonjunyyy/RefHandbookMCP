@@ -11,4 +11,9 @@ export const EN: Record<string, string> = {
   '확인': 'OK',
   '취소': 'Cancel',
   '열기': 'Open',
+  '메뉴': 'Menu',
+  '더 보기': 'More',
+  '닫기': 'Close',
+  '이 페이지의 키': 'Keys on this page',
+  '이 목록': 'this list',
 };

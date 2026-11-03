@@ -2,7 +2,7 @@
 // one), a project (its members, how one joins, what an owner manages), and an invitation link. The
 // operations are the portal API's (/account/api/v1/projects).
 
-import { account, act, empty, flash, flashNext, form, frame, go, h, link, main, pageHead, replace, section, tag, values, when } from '/auth/static/site.js';
+import { account, act, empty, flash, flashNext, form, frame, go, h, help, link, main, meta, pageHead, replace, section, tag, values, when } from '/auth/static/site.js';
 import type { Json } from '/auth/static/site.js';
 import { n_, t } from '../lib/i18n';
 
@@ -56,14 +56,13 @@ export async function projects(): Promise<void> {
       if (r) { flashNext('ok', t('프로젝트를 만들었습니다.')); go(`${P}/${r.cn}`); }
     },
       h('div', { class: 'cols' },
-        h('label', null, t('이름 (그룹·공유 이름)'), h('input', { name: 'name', required: true, pattern: '[a-z][a-z0-9_-]{1,31}',
+        h('label', null, t('이름 (그룹·공유 이름)'), help(t('이름은 영문 소문자로 시작하는 2–32자이고 나중에 바꿀 수 없습니다. 만든 사람이 첫 소유자입니다.')), h('input', { name: 'name', required: true, pattern: '[a-z][a-z0-9_-]{1,31}',
           autocomplete: 'off', placeholder: 'chain-image' })),
         h('label', null, t('제목'), h('input', { name: 'title', maxlength: 64, placeholder: t('사람이 읽는 이름') }))),
       h('label', null, t('설명'), h('textarea', { name: 'description', rows: 2, maxlength: 500 })),
       h('div', { class: 'cols' },
         h('label', null, t('가입'), policySelect()),
         h('label', { class: 'check' }, h('input', { name: 'listed', type: 'checkbox', checked: true }), ' ', t('목록에 보이기'))),
-      h('p', { class: 'muted small' }, t('이름은 영문 소문자로 시작하는 2–32자이고 나중에 바꿀 수 없습니다. 만든 사람이 첫 소유자입니다.')),
       h('div', { class: 'actions' }, h('button', null, t('만들기'))))));
 }
 
@@ -99,10 +98,10 @@ export async function project(cn: string): Promise<void> {
     may.leave && h('button', { class: 'secondary danger-text', onclick: async (e: Event) => {
       if (await act(e.target as HTMLButtonElement, () => api().post(`${path}/leave`))) reload();
     } }, t('나가기')),
-    !p.member && !may.join && !p.requested && p.join_policy === 'invite' && h('p', { class: 'muted small' }, t('초대 링크로만 들어갈 수 있습니다.')),
+    !p.member && !may.join && !p.requested && p.join_policy === 'invite' && tag(t('초대로만 가입')),
   ].filter(Boolean);
   replace(main(),
-    pageHead(p.title), h('p', { class: 'muted' }, [h('code', null, p.cn), ' · gid ', String(p.gid), ' · ', state(p)]),
+    pageHead(p.title), meta(h('code', null, p.cn), ' · gid ', String(p.gid), ' · ', state(p)),
     h('div', { class: 'grid' },
       section(t('프로젝트'), h('dl', null,
         h('dt', null, t('설명')), h('dd', null, p.description || '-'),
@@ -161,8 +160,8 @@ export async function project(cn: string): Promise<void> {
           } }, t('프로젝트 보관')),
           may.restore && h('button', { onclick: async (e: Event) => {
             if (await act(e.target as HTMLButtonElement, () => api().post(`${path}/restore`))) reload();
-          } }, t('되살리기'))),
-        h('p', { class: 'muted small' }, t('보관하면 그룹과 구성원은 그대로 남고(파일은 그대로 읽힙니다), 바꾸거나 들어올 수는 없습니다.')),
+          } }, t('되살리기')),
+          (may.archive || may.restore) && help(t('보관하면 그룹과 구성원은 그대로 남고(파일은 그대로 읽힙니다), 바꾸거나 들어올 수는 없습니다.'))),
         may.delete && h('details', { class: 'panel' }, h('summary', null, h('span', { class: 'danger-text' }, t('프로젝트 삭제…'))),
           form({}, async (f, b) => {
             const c = String(values(f).confirm);
@@ -171,8 +170,7 @@ export async function project(cn: string): Promise<void> {
               go(P);
             }
           },
-            h('p', { class: 'muted small' }, t('그룹과 모든 구성원 소속, 신청과 초대 링크를 지웁니다. 되돌릴 수 없습니다. 파일은 그대로 남습니다.')),
-            h('label', null, t('확인하려면 이름을 입력하세요:'), ' ', h('code', null, cn),
+            h('label', null, t('확인하려면 이름을 입력하세요:'), ' ', h('code', null, cn), help(t('그룹과 모든 구성원 소속, 신청과 초대 링크를 지웁니다. 되돌릴 수 없습니다. 파일은 그대로 남습니다.')),
               h('input', { name: 'confirm', autocomplete: 'off', required: true, pattern: cn })),
             h('div', { class: 'actions' }, h('button', { class: 'danger' }, t('{cn} 삭제', { cn }))))))),
     h('p', null, link(P, t('프로젝트 목록으로'))));
