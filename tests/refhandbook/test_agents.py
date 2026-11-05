@@ -835,3 +835,52 @@ def test_a_loop_stops_at_its_visits_and_a_missing_choice_ends_it(tmp_path, ks):
     asyncio.run(_drive(crew, run))
     path = crew.g.node(crew.team.root(run))["attrs"]["flow_path"]
     assert [x["step"] for x in path] == ["write", "review", "publish"]
+
+
+def test_a_run_that_ends_hands_its_branches_to_the_runner_and_keeps_what_became_of_them(tmp_path, ks, monkeypatch):
+    """agents/branches.py: the crew tells the runner how each run ended (done, cancelled), outside the store's lock,
+    and the run keeps the answer; a policy with a read-write mount tells the agents about their branch."""
+    ks.put("moon", "anthropic", "main", "sk-ant-api03-abcdefghijklmnop")
+
+    def quick(agent, history, system):
+        return {"calls": [("finish", {"outcome": "done", "text": "ok"})]}
+
+    class Runner:
+        calls = []
+
+        def end_branches(self, run, policy, outcome, goal):
+            self.calls.append((run, policy, outcome, goal))
+            return {"branch": "run/x", "why": "", "repos": [{"repo": "/W/a", "state": "merged", "files": 1, "why": ""}]}
+
+    crew = _crew(tmp_path, ks, quick)
+    crew.runner = Runner()
+    root = tmp_path / "data"
+    (root / crew.ws.owner / "w").mkdir(parents=True)
+    monkeypatch.setenv("RHB_SANDBOX_MOUNTS", str(root / "{user}"))
+    with crew.lock:
+        crew.ws.set_policy("dev", actor="user", mounts=[{"source": str(root / crew.ws.owner / "w"), "target": "/W", "rw": True}])
+    run = _start(crew, goal="tidy", policy="dev")
+    asyncio.run(_drive(crew, run))
+    assert Runner.calls == [(run, "dev", "done", "tidy")]
+    assert crew.g.node(run)["attrs"]["branches"]["repos"][0]["state"] == "merged"
+    first = C.Transcript(C.run_dir(crew.ws, run) / "transcripts" / "a1.jsonl").lines()[0]["entries"][0]["text"]
+    assert f"worktree on this run's branch run/{run.split(':')[1]}" in first and "(/W)" in first
+
+    def forever(agent, history, system):
+        return {"calls": [("recall", {"query": "x"})]}
+
+    (tmp_path / "two").mkdir()
+    crew2 = _crew(tmp_path / "two", ks, forever)
+    crew2.runner = Runner()
+    run2 = _start(crew2, max_steps=500)
+
+    async def go():
+        for _ in range(5):
+            await crew2.tick()
+            await asyncio.sleep(0.01)
+        with crew2.lock:
+            crew2.team.request_cancel(run2, "enough", by="user")
+        await _drive(crew2, run2)
+
+    asyncio.run(go())
+    assert Runner.calls[-1][2] == "cancelled"

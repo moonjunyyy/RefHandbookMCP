@@ -75,7 +75,9 @@ Errors are `{error}` with the status (`400` a bad value, `404` not theirs, `415`
 A phone's or a desktop's calendar app reads and writes the calendars over CalDAV (RFC 4791, the subset
 `portal/caldav.py` implements): HTTP Basic with the username and a *device password* made on the
 calendar page (칩 줄 ⋯ → 기기 연결), one per device, shown once and kept as a hash. Discovery:
-`/.well-known/caldav` → `/calendar/dav/`; `PROPFIND /calendar/dav/` names the principal
+`/.well-known/caldav` → `/calendar/dav/`; a plain `GET` of the root or of the home answers as a
+collection (200, the calendars and where they are: the macOS account setup looks with `GET` before it asks
+with `PROPFIND`, and stops at a 404); `PROPFIND /calendar/dav/` names the principal
 `/calendar/dav/<uid>/`, which is also the calendar home (depth 1: the calendars the person may see —
 their own and their projects'); a calendar `/calendar/dav/<uid>/<cid>/` carries `getctag` and a
 `sync-token` (its `version`, grown by every change under it); an event is `<id>.ics` with `getetag`

@@ -184,8 +184,16 @@ the site's sign-in does (portal/sso.py).
 1. Claude calls `/mcp` without a token and gets `401` with a pointer to
    `/.well-known/oauth-protected-resource/mcp`, which names this server as the authorization server.
 2. Claude registers itself at `/register` (dynamic client registration). Only the redirect URIs in
-   `RHB_REDIRECT_ALLOW` are accepted: by default claude.ai's and claude.com's callbacks, and loopback
-   for Claude Code.
+   `RHB_REDIRECT_ALLOW` are accepted, each compared exactly (a loopback entry `http://localhost:*`
+   takes any port): by default claude.ai's and claude.com's callbacks, and loopback for Claude Code.
+   Setting the variable (in `handbook.env`, then a restart) **replaces** that list, so it names the
+   defaults it keeps as well as the new callback. Every authorization response names this server
+   (RFC 9207): `iss`, exactly the metadata's `issuer`, on the code and on every error redirect, and
+   the metadata says `authorization_response_iss_parameter_supported`. A client that keys its
+   callback on that uses one stable callback: ChatGPT sends
+   `https://chatgpt.com/connector_platform_oauth_redirect` to such a server, and to one without it a
+   callback with a per-connection id (`https://chatgpt.com/connector/oauth/<id>`), which no exact
+   entry can allow.
 3. The browser opens `/authorize`, which forwards to `/login`. nginx puts `/login` behind the site
    sign-in (`auth_request`); the sign-in vouches for the user with `X-Auth-Token`, an EdDSA JWT for
    this app's audience valid for a minute, which this server checks with the sign-in's public key

@@ -73,6 +73,7 @@ LANG: dict[str, str] = {
     '(제목 없음)': '(untitled)',
     '캘린더는 캘린더 페이지에서 지웁니다.': 'A calendar is deleted on the calendar page.',
     '캘린더는 캘린더 페이지에서 만들고 지웁니다.': 'Calendars are made and deleted on the calendar page.',
+    '{uid} 의 캘린더 (CalDAV)': "{uid}'s calendars (CalDAV)",
     '할 일은 {n}개까지입니다. 끝난 것을 먼저 치우세요.': 'At most {n} to-dos. Clear the done ones first.',
     '그런 구독 주소가 없습니다.': 'No such subscription address.',
     # ── the vault (portal/vault.py) ──

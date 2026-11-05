@@ -63,6 +63,18 @@ def test_space_is_a_token_scale():
     assert parts.count("var(--s") > 200  # the scale is what the parts use
 
 
+RADIUS = re.compile(r"border-radius\s*:\s*([^;}]+)")
+
+
+def test_corners_are_the_tokens_a_look_redeclares():
+    """§1.3: the corners a person picks (--radius, --radius-s) reach every part — a corner in parts.css is one of the two
+    tokens, a pill (999px), a circle (50%) or a hairline (≤ 3px), never a number of its own."""
+    parts = (STATIC / "parts.css").read_text()
+    own = [v.strip() for v in RADIUS.findall(parts)
+           if any(not re.fullmatch(r"0|999px|50%|[0-3]px", w) for w in re.sub(r"var\(--radius(?:-s)?\)", "", v).split())]
+    assert not own, f"corners of their own in parts.css: {own}"
+
+
 def test_nothing_the_site_file_declares_is_repeated_in_the_code():
     """R13/§4: which apps a new account starts with, and which sizes a cell may have, are the site file's and
     portal/site.py's declarations; the frame and the pages carry no copy of them."""
@@ -104,6 +116,7 @@ def test_the_frame_tells_the_persons_theme_and_its_version(app):
     c = TestClient(app)
     me = c.get("/auth/api/v1/me").json()
     assert me["theme"] == "auto" and me["frame"] == site.FRAME
+    assert set(me["look"]) == {*site.LOOK_KINDS, "columns"} and me["look"]["palette"][0]["id"]  # what the settings offer
     assert c.get("/auth/api/v1/me", cookies={"theme": "dark"}).json()["theme"] == "dark"
     assert c.get("/auth/api/v1/me", cookies={"theme": "sepia"}).json()["theme"] == "auto"  # not a theme we have
     c, _ = sign_in(app)

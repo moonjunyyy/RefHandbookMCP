@@ -247,7 +247,7 @@ def create_app(settings: Settings | None = None, kerberos=None, signing_key=None
 
         def card(a):  # noqa: ANN001, ANN202 — `href`: where the app opens (its first link, or its menu's)
             return {"id": a.id, "title": a.text("title", lang), "description": a.text("description", lang),
-                    "about": a.text("about", lang), "tags": [t(x) for x in a.tags], "code": a.code, "icon": a.icon, "href": a.menu_href or (a.links[0].href if a.links else ""),
+                    "about": a.text("about", lang), "tags": [t(x) for x in a.tags], "code": [{"label": c.label_in(lang), "value": c.value} for c in a.code], "icon": a.icon, "href": a.menu_href or (a.links[0].href if a.links else ""),
                     "optional": a.optional, "default": a.default,
                     "links": [{"label": ln.label_in(lang), "href": ln.href} for ln in a.links],
                     "widgets": [{"id": w.id, "title": w.text("title", lang), "description": w.text("description", lang),
@@ -256,6 +256,7 @@ def create_app(settings: Settings | None = None, kerberos=None, signing_key=None
         return JSONResponse({"uid": uid, "title": s.site_title, "signin": SIGNIN, "portal": facts().portal_root,
                              "lang": lang, "theme": theme, "frame": site_mod.FRAME,
                              "sizes": [{"id": k, "cols": c, "rows": r} for k, (c, r) in site_mod.SIZES.items()],
+                             "look": site.look_in(lang),
                              "cards": [card(a) for a in site.cards(groups)],
                              "menu": [{"label": ln.label, "href": ln.href} for ln in site.menu(groups, lang)]},
                             headers={"Cache-Control": "no-store", "Vary": "Cookie, Accept-Language"})

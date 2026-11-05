@@ -11,6 +11,8 @@ export NODE_PATH=${NODE_PATH:-/work/e2e/node_modules}   # where playwright is in
 export STATIC_ROOT=${STATIC_ROOT:-$(cd ../../src/portal/static && pwd)}
 export DIST_ROOT=${DIST_ROOT:-$(cd ../dist && pwd)}
 export EQ_ROOT=${EQ_ROOT:-/work/frame-e2e/eq}
+# the look's choices as /me carries them (portal/site.py reads [look] of the site file — the mock takes the same declaration)
+export LOOK_JSON=${LOOK_JSON:-$(cd ../.. && PYTHONPATH=src python3 -c 'import json, tomllib; from portal.site import Site, _look; print(json.dumps(Site((), _look(tomllib.load(open("deploy/site.toml", "rb")))).look_in("ko"), ensure_ascii=False))')}
 rm -rf out
 node e2e.js > e2e.log 2>&1
 grep -v '^ok' e2e.log

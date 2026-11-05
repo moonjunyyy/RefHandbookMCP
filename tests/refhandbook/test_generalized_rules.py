@@ -3,6 +3,7 @@ general rule, then shows the case that exposed it."""
 
 import pytest
 
+from refhandbook.kernel import migrate
 from refhandbook.research import ResearchError
 
 from .test_research import DOC_V1, Turn, rs, seed_claim  # noqa: F401 (rs is a fixture)
@@ -114,12 +115,13 @@ def test_a_change_elsewhere_opens_a_pending_hit_here(t, rs, kernel):
 def test_cross_ledger_edges_survive_the_projection_of_either_side(t, rs, kernel):
     t.add("H", "rests on the kernel's theorem", "user", "open", dep="ref:kernel/E1")  # H2
     g = rs.k.g
-    assert [e["dst"] for e in g.edges(src="geo:r:H2", type_="dep_ref")] == ["kernel:r:E1"]
+    H2, E1 = migrate.row_node(g, "geo", "H2"), migrate.row_node(g, "kernel", "E1")
+    assert [e["dst"] for e in g.edges(src=H2, type_="dep_ref")] == [E1]
     kernel.add("H", "a new claim re-projects the kernel", "user", "open")
-    assert [e["dst"] for e in g.edges(src="geo:r:H2", type_="dep_ref")] == ["kernel:r:E1"]
-    assert g.node("kernel:r:E1")["attrs"]["xref"] == "kernel/E1"
+    assert [e["dst"] for e in g.edges(src=H2, type_="dep_ref")] == [E1]  # the same node: named by its nid
+    assert g.node(E1)["attrs"]["xref"] == "kernel/E1"
     t.add("H", "a new claim re-projects geo", "user", "open")
-    assert [e["dst"] for e in g.edges(src="geo:r:H2", type_="dep_ref")] == ["kernel:r:E1"]
+    assert [e["dst"] for e in g.edges(src=H2, type_="dep_ref")] == [E1]
 
 
 def test_a_ref_into_a_ledger_that_is_gone_is_missing(t, rs, kernel):
@@ -260,5 +262,6 @@ def test_a_directive_rests_on_nothing_and_is_not_reopened(t, rs):
     out = t.set("H2", "status", "superseded")
     assert "U2" not in out  # not reopened by its subject's change
     g = rs.k.g
-    assert [e["dst"] for e in g.edges(src="geo:r:U2", type_="on")] == ["geo:r:A1", "geo:r:H2"]
-    assert g.edges(src="geo:r:U2", type_="dep_ref") == []
+    node = lambda rid: migrate.row_node(g, "geo", rid)  # noqa: E731
+    assert sorted(e["dst"] for e in g.edges(src=node("U2"), type_="on")) == sorted([node("A1"), node("H2")])
+    assert g.edges(src=node("U2"), type_="dep_ref") == []

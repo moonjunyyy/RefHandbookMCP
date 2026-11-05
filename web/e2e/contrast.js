@@ -92,7 +92,7 @@ const MEASURE = (scope) => {
   await menuAt('.widgets .widget:nth-child(2)');
   await measure('cell-menu', '.menu[role=menu]');
   await page.keyboard.press('Escape');
-  await page.click('.section-head button:text-is("위젯 고르기")');
+  await page.click('.widgets > button.add-widget');
   await page.waitForSelector('dialog[open] .pick-list');
   await page.hover('dialog .pick-row[data-app="eq-sandbox"][data-widget="boards"]');
   await page.waitForSelector('dialog .pick-preview .widget-list');
@@ -167,6 +167,9 @@ const MEASURE = (scope) => {
   await page.waitForTimeout(300);
   await visit('/vault/v2', '.vault-status');
   await measure('vault-status', 'main');
+  // a run's page with its branches (agents/branches.py): the merged, kept and unchanged tags
+  await visit('/agents/runs/run:b1', 'ul.branches');
+  await measure('run-branches', 'main');
 
   // disabled controls are allowed to be dim (WCAG exempts them); everything else must reach 4.5:1
   const all = passes.flatMap(([pass, rows]) => rows.filter((r) => r.where === 'on' && !r.disabled).map((r) => ({ ...r, pass })));

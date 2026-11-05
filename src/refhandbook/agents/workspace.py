@@ -33,15 +33,17 @@ import os
 import secrets
 import shutil
 import signal
+import socket
 import sqlite3
 import stat
 import subprocess
 import tempfile
 import threading
 import time
+import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any
+from typing import IO, Any
 
 from ..kernel import capabilities, capkinds  # noqa: F401 — registers the kernel's kinds
 from ..kernel.graph import Conflict, Graph, KernelError
@@ -532,8 +534,7 @@ class Workspace:
             with os.scandir(d) as it:
                 for e in sorted(it, key=lambda e: e.name):
                     st = e.stat(follow_symlinks=False)
-                    kind = ("link" if stat.S_ISLNK(st.st_mode) else "dir" if stat.S_ISDIR(st.st_mode)
-                            else "file" if stat.S_ISREG(st.st_mode) else "special")
+                    kind = _kind(st.st_mode)
                     out.append((e.name, kind, st.st_size if kind == "file" else 0))
             return out
         finally:
@@ -570,6 +571,182 @@ class Workspace:
             raise WorkspaceError(f"no {rel!r} in the workspace") from e
         finally:
             os.close(d)
+
+    def kind(self, rel: str) -> str:
+        """What the name is, not following it: 'dir', 'file', 'link' or 'special' (the workspace itself is a dir)."""
+        parts = self._parts(rel)
+        if not parts:
+            return "dir"
+        d = self._dir_fd(parts[:-1])
+        try:
+            st = os.stat(parts[-1], dir_fd=d, follow_symlinks=False)
+        except FileNotFoundError as e:
+            raise WorkspaceError(f"no {rel!r} in the workspace") from e
+        finally:
+            os.close(d)
+        return _kind(st.st_mode)
+
+    def mkdir(self, rel: str) -> str:
+        """A new folder (with the folders above it that are missing); an existing name is refused."""
+        parts = self._parts(rel)
+        if not parts:
+            raise WorkspaceError("name a folder")
+        d = self._dir_fd(parts[:-1], create=True)
+        try:
+            os.mkdir(parts[-1], 0o755, dir_fd=d)
+        except FileExistsError as e:
+            raise WorkspaceError(f"{rel!r} already exists") from e
+        finally:
+            os.close(d)
+        return "/".join(parts)
+
+    def move(self, src: str, dst: str) -> str:
+        """Renames `src` to `dst`, both inside the workspace: a file, or a folder with what it holds; a
+        symlink moves as itself, never followed. `dst` is the new path (folder/name), its missing folders
+        made; a name already there is refused (checked just before the rename: nothing is overwritten),
+        and so is a folder moved into itself. The new path is returned."""
+        a, b = self._parts(src), self._parts(dst)
+        if not a:
+            raise WorkspaceError("the workspace itself cannot be moved")
+        if not b:
+            raise WorkspaceError("name the new path")
+        if b[:len(a)] == a:
+            raise WorkspaceError(f"{dst!r} is {src!r} itself or inside it")
+        sd = self._dir_fd(a[:-1])
+        try:
+            try:
+                os.stat(a[-1], dir_fd=sd, follow_symlinks=False)
+            except FileNotFoundError as e:
+                raise WorkspaceError(f"no {src!r} in the workspace") from e
+            dd = self._dir_fd(b[:-1], create=True)
+            try:
+                try:
+                    os.stat(b[-1], dir_fd=dd, follow_symlinks=False)
+                except FileNotFoundError:
+                    os.rename(a[-1], b[-1], src_dir_fd=sd, dst_dir_fd=dd)
+                else:
+                    raise WorkspaceError(f"{dst!r} already exists")
+            finally:
+                os.close(dd)
+        finally:
+            os.close(sd)
+        return "/".join(b)
+
+    def open_file(self, rel: str) -> tuple[IO[bytes], int]:
+        """A regular file of the workspace to read as bytes, and its size (a symlink or a special file is refused)."""
+        f = os.fdopen(self._open_file(rel, os.O_RDONLY), "rb")
+        return f, os.fstat(f.fileno()).st_size
+
+    def move_into(self, srcs: list[str], into: str) -> list[str]:
+        """Moves each of `srcs` into the folder `into` under its own name (the folder made if missing). Every
+        move is checked before any is made — a source missing, a name already there, two sources with one
+        name, a folder moved into itself — so a refusal leaves everything where it was. The new paths."""
+        dest = self._parts(into)
+        names = [self._parts(s)[-1:] for s in srcs]
+        if not srcs or any(not n for n in names):
+            raise WorkspaceError("name what to move (not the workspace itself)")
+        flat = [n[0] for n in names]
+        if len(set(flat)) != len(flat):
+            raise WorkspaceError("two of them have one name: move them one at a time")
+        targets = ["/".join(dest + [n]) for n in flat]
+        for s, t in zip(srcs, targets):
+            a = self._parts(s)
+            if dest[:len(a)] == a:
+                raise WorkspaceError(f"{into!r} is {s!r} itself or inside it")
+            self.kind(s)  # missing → refused
+            try:
+                self.kind(t)
+            except WorkspaceError:
+                continue
+            raise WorkspaceError(f"{t!r} already exists")
+        return [self.move(s, t) for s, t in zip(srcs, targets)]
+
+    def zip_dir(self, rel: str, out: IO[bytes]) -> int:
+        """Writes the folder `rel` (the workspace itself when empty) to `out` as a zip of what it holds, paths
+        relative to it. It walks descriptors as the rest of the class does: no symlink is followed, and only
+        folders and regular files are packed (a link or a special file is left out). `out` may be a pipe:
+        the zip is written as a stream. The number of files packed is returned."""
+        top = self._dir_fd(self._parts(rel))
+        try:
+            with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_DEFLATED) as z:
+                return _zip_walk(z, top, "")
+        finally:
+            os.close(top)
+
+    def zip_paths(self, rels: list[str], out: IO[bytes]) -> int:
+        """Writes several entries to `out` as one zip, each under its own name: a file as itself, a folder with
+        what it holds (a link or a special file is left out, as in zip_dir). Two entries with one name are refused."""
+        parts = [self._parts(r) for r in rels]
+        if any(not p for p in parts):
+            raise WorkspaceError("name the entries (the workspace itself is zip_dir)")
+        if len({p[-1] for p in parts}) != len(parts):
+            raise WorkspaceError("two of them have one name")
+        packed = 0
+        with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_DEFLATED) as z:
+            for p in parts:
+                d = self._dir_fd(p[:-1])
+                try:
+                    packed += _zip_entry(z, d, p[-1], "")
+                finally:
+                    os.close(d)
+        return packed
+
+
+def _zip_entry(z: zipfile.ZipFile, fd: int, name: str, prefix: str) -> int:
+    """Packs the entry `name` of the folder `fd` as `prefix + name`: a folder with what it holds, a regular file
+    as itself, anything else (a link, a special file, one gone since it was listed) left out. Files packed."""
+    try:
+        st = os.stat(name, dir_fd=fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return 0
+    arc = prefix + name
+    if stat.S_ISDIR(st.st_mode):
+        try:
+            sub = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=fd)
+        except OSError:
+            return 0  # swapped for a link since it was listed
+        try:
+            z.writestr(_zip_info(arc + "/", st, folder=True), b"")
+            return _zip_walk(z, sub, arc + "/")
+        finally:
+            os.close(sub)
+    if not stat.S_ISREG(st.st_mode):
+        return 0
+    try:
+        f = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=fd)
+    except OSError:
+        return 0
+    with os.fdopen(f, "rb") as src:
+        fst = os.fstat(src.fileno())
+        if not stat.S_ISREG(fst.st_mode):
+            return 0
+        os.set_blocking(src.fileno(), True)
+        info = _zip_info(arc, fst)
+        info.file_size = fst.st_size
+        with z.open(info, "w", force_zip64=fst.st_size >= zipfile.ZIP64_LIMIT) as dst:
+            shutil.copyfileobj(src, dst, 1 << 20)
+    return 1
+
+
+def _zip_walk(z: zipfile.ZipFile, fd: int, prefix: str) -> int:
+    """Packs what the folder `fd` holds under `prefix`, in name order. Files packed."""
+    with os.scandir(fd) as it:
+        names = sorted(e.name for e in it)
+    return sum(_zip_entry(z, fd, n, prefix) for n in names)
+
+
+def _kind(mode: int) -> str:
+    return ("link" if stat.S_ISLNK(mode) else "dir" if stat.S_ISDIR(mode) else "file" if stat.S_ISREG(mode)
+            else "special")
+
+
+def _zip_info(name: str, st: os.stat_result, folder: bool = False) -> zipfile.ZipInfo:
+    """A zip entry for `name` with the file's time (a zip holds none before 1980) and mode; a folder's is
+    stored, with the MS-DOS directory bit as zip readers expect."""
+    info = zipfile.ZipInfo(name, time.localtime(max(st.st_mtime, 315532800))[:6])
+    info.external_attr = (st.st_mode & 0xFFFF) << 16 | (0x10 if folder else 0)
+    info.compress_type = zipfile.ZIP_STORED if folder else zipfile.ZIP_DEFLATED
+    return info
 
 
 # ── the runner ───────────────────────────────────────────────────────────
@@ -705,6 +882,10 @@ class Runner:
         for src, dst, _ in mounts:
             st = os.stat(src)
             ids[dst] = [st.st_dev, st.st_ino]
+        # an agent's command: the run's worktrees over the repositories of its read-write mounts (agents/branches.py)
+        branched, more = self._branch_views(j["attrs"]["agent"], pol, [(s, d) for s, d, rw in mounts if rw]) \
+            if j["attrs"].get("agent") else ([], {})
+        ids.update(more)
         (jobdir / "root").mkdir(parents=True, exist_ok=True)
         script = jobdir / "script"
         with self.lock:
@@ -727,12 +908,103 @@ class Runner:
             root=str(jobdir / "root"), work=str(self.ws.work), hostetc=str(self.hostetc),
             binds_ro=[(str(script), "/job/script")] + [(src, dst) for src, dst, rw in mounts if not rw]
             + out.get("binds_ro", []), egress_port=out.get("egress_port"),
-            binds_rw=[(src, dst) for src, dst, rw in mounts if rw],
+            binds_rw=[(src, dst) for src, dst, rw in mounts if rw] + branched,
             layers=trees, network=bool(pol["network"]),
             ports=(None if pol.get("ports") in ("any", None) else list(pol["ports"])) if pol["network"] else None,
             timeout=float(j["attrs"]["timeout"]), commands=None if every else list(paths or {}),
             command_paths=paths, bind_ids=ids, limits=limits, cgroup=leaf, env=env,
             work_exec=bool(pol.get("exec_work")))
+
+    # ── a run's branches (agents/branches.py) ──────────────────────────────────────────────────────────
+
+    def _branch_views(self, agent: str, pol: dict[str, Any], rw: list[tuple[str, str]]) -> tuple[list[tuple[str, str]], dict[str, list[int]]]:
+        """The binds that put an agent's run's worktrees over the repositories of its read-write mounts; the run's
+        first command makes them. A run whose branches cannot be made works in place, as before; why is kept."""
+        from .branches import Branches
+        from .crew import run_dir
+
+        if not rw:
+            return [], {}
+        with self.lock:
+            a = self.ws.g.get_node(agent)
+        run = a["attrs"].get("run") if a else None
+        if not run:
+            return [], {}
+        offers = pol["commands"] == ["*"] or {"sh", "git"} <= set(pol["commands"])
+        return Branches(run_dir(self.ws, run), run).views(
+            rw, lambda binds, ids, script, env: self._git(pol, binds, ids, script, env, run),
+            "" if offers else "the policy offers no git (sh and git): the repositories are written in place")
+
+    def end_branches(self, run: str, policy: str, outcome: str, goal: str) -> dict[str, Any] | None:
+        """At a run's end: its branches committed, merged when it ended done (agents/branches.py). None when the
+        run had none."""
+        from .branches import BranchError, Branches
+        from .crew import run_dir
+
+        b = Branches(run_dir(self.ws, run), run)
+        if not b.path.exists():
+            return None
+        try:
+            with self.lock:
+                pol = self.ws.policy(policy)["attrs"]
+            launch = lambda binds, ids, script, env: self._git(pol, binds, ids, script, env, run)  # noqa: E731
+        except WorkspaceError as e:
+            def launch(*_: Any, why: str = str(e)) -> tuple[int, str]:
+                raise BranchError(f"the run's policy is no longer in force ({why}): the branch is left as it was")
+        head = next((ln.strip() for ln in goal.splitlines() if ln.strip()), "")[:72] or "agents"
+        got = b.finish(outcome, f"{head}\n\nagents run {run.split(':', 1)[1]}", launch)
+        return got if got["repos"] or got["why"] else None
+
+    def _git(self, pol: dict[str, Any], binds: list[tuple[str, str]], ids: dict[str, list[int]], script: str,
+             env: dict[str, str], run: str) -> tuple[int, str]:
+        """A script of git commands in the sandbox: the run's policy's commands (sh and git only), layers and limits,
+        no network, no /work of the workspace, these read-write binds only. A repository's config and hooks are an
+        agent's to write; this is where they run, if anywhere."""
+        from .branches import MARK, BranchError
+        from .capkinds import layer_env, layer_trees, resolve_command
+
+        with self.lock:
+            trees = layer_trees(self.ws.caps, pol.get("layers") or []) if pol.get("layers") else []
+            lenv = layer_env(self.ws.caps, pol.get("layers") or []) if pol.get("layers") else {}
+        paths = {c: p for c in ("sh", "git") if (p := resolve_command(c, trees))}
+        if len(paths) < 2:
+            raise BranchError("sh or git is on neither the policy's layers nor the host")
+        every = pol["commands"] == ["*"]
+        argv0 = "/usr/bin/sh"
+        if every:  # no command view: sh where a layer or the host has it, by its path inside
+            under = next((t for t in trees if paths["sh"].startswith(os.path.realpath(t).rstrip("/") + "/")), None)
+            argv0 = paths["sh"][len(os.path.realpath(under)):] if under else paths["sh"]
+        key = f"git-{run.split(':', 1)[1]}-{secrets.token_hex(3)}"
+        jobdir = self.ws.base / "jobs" / key
+        (jobdir / "root").mkdir(parents=True, exist_ok=True)
+        (jobdir / "work").mkdir(exist_ok=True)
+        (jobdir / "script").write_text(script)
+        limits = sandbox.Limits(memory_mb=int(pol["memory_mb"]), cpus=float(pol["cpus"]), tmp_mb=int(pol["tmp_mb"]),
+                                address_space=self.cg is None)
+        leaf = str(self.cg.leaf(key, limits)) if self.cg is not None else None
+        who = f"agents run {run.split(':', 1)[1]}"
+        mail = f"{self.ws.owner}@{socket.getfqdn()}"
+        spec = sandbox.Spec(
+            argv=[argv0, "/job/script"], root=str(jobdir / "root"), work=str(jobdir / "work"), hostetc=str(self.hostetc),
+            binds_ro=[(str(jobdir / "script"), "/job/script")], binds_rw=list(binds), layers=trees, network=False,
+            timeout=float(pol["timeout"]), commands=None if every else list(paths), command_paths=None if every else paths,
+            bind_ids=dict(ids), limits=limits, cgroup=leaf,
+            env={**lenv, "GIT_AUTHOR_NAME": who, "GIT_COMMITTER_NAME": who, "GIT_AUTHOR_EMAIL": mail,
+                 "GIT_COMMITTER_EMAIL": mail, **env})
+        try:
+            (jobdir / "spec.json").write_text(spec.to_json())
+            p = subprocess.run(sandbox.command(str(jobdir / "spec.json")), capture_output=True, stdin=subprocess.DEVNULL,
+                               timeout=float(pol["timeout"]) + 60, start_new_session=True)
+        except subprocess.TimeoutExpired as e:
+            raise BranchError(f"git did not finish within the policy's {pol['timeout']} s") from e
+        finally:
+            if self.cg is not None:
+                sandbox.Cgroups.remove(self.cg.base / key)
+            shutil.rmtree(jobdir, ignore_errors=True)
+        out = p.stdout.decode(errors="replace")
+        if p.returncode != 0 and MARK not in out:  # the sandbox did not start, or the script did not get far
+            raise BranchError((p.stderr.decode(errors="replace").strip().splitlines() or [f"exit {p.returncode}"])[-1][:300])
+        return p.returncode, out
 
     def _build(self, j: dict[str, Any]) -> None:
         """A layer build: a sandbox of the layer's policy (its commands, network, ports, limits and

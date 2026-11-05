@@ -195,6 +195,21 @@ class Handbook:
     def close(self) -> None:
         self.db.close()
 
+    def backup(self, tag: str) -> bool:
+        """Copy the store to `<path>.<tag>` before a migration changes it, once: an existing copy is
+        kept (it is the state before the first such migration). Returns True when it copied."""
+        if self.path == ":memory:":
+            return False
+        dest = Path(f"{self.path}.{tag}")
+        if dest.exists():
+            return False
+        target = sqlite3.connect(dest)
+        try:
+            self.db.backup(target)
+        finally:
+            target.close()
+        return True
+
     # ── change notification: a mirror (the kernel graph) follows the cards ──
 
     def on_change(self, fn: "Callable[[], None]") -> None:

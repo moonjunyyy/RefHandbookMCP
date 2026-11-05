@@ -12,6 +12,9 @@ Opening a store runs, once each and in order:
             ledger, and check each ledger's projection by round trip (the export rebuilt from the
             graph must equal the export). A ledger that does not round-trip is quarantined: its
             tools refuse with the reason, the others work. Nothing is lost: its rows stay in rl_*.
+  schema 2  rows carry node ids (rl_rows.nid, research.ensure_nid: the store is backed up to
+            `<db>.pre-nid` before the column is added), and the projection names each row's node by
+            it. Recorded so that older code, which inserts rows without the column, refuses the store.
   packages  every open compares the installed package rules with the code's. A rule the store
             still has as installed is replaced by the new version; a rule the user has changed
             since is kept, and the conflict is logged (k_log 'package conflict') for the review.
@@ -33,8 +36,8 @@ from .graph import Graph
 
 log = logging.getLogger("refhandbook.kernel")
 _ATTACH = threading.Lock()
-SCHEMA_VERSION = 1
-PROJECTION = "ref-1"  # the projection's shape; changing it re-projects every ledger on open
+SCHEMA_VERSION = 2
+PROJECTION = "nid-1"  # the projection's shape; changing it re-projects every ledger on open
 # log lines that say the rules and the work rubbed (rs_o_review counts them since the last review):
 # a refusal of the work, a hit disposed as unaffected, a directive carried, a plan object dropped
 # (GLOB: case-sensitive, anchored at the start of the line research.py writes)
@@ -213,6 +216,14 @@ class Mirror:
         log.info("kernel migration of %s: schema 1, %d quarantined", self.hb.path, len(bad))
         return bad
 
+    def migrate_v2(self) -> None:
+        """Rows carry node ids: research.ensure_nid gave them when the store was opened, and the
+        projection (PROJECTION) has named each row's node by its nid since. Recorded so that older
+        code, which inserts rows without the column, refuses the store instead of failing a write."""
+        with self.g.tx():
+            self.set_meta("schema", "2")
+            self.g.log("kernel", "migration v2: rows carry node ids (nid)", "store")
+
     def upgrade_packages(self) -> list[str]:
         """Bring the installed package rules to this code's version, without ever making the store
         unopenable. Returns the rules kept against a new package version.
@@ -284,17 +295,8 @@ class Mirror:
 
 
 def _backup(hb: Handbook, tag: str) -> None:
-    if hb.path == ":memory:":
-        return
-    dest = Path(f"{hb.path}.{tag}")
-    if dest.exists():
-        return
-    target = sqlite3.connect(dest)
-    try:
-        hb.db.backup(target)
-    finally:
-        target.close()
-    log.info("backed up %s to %s", hb.path, dest)
+    if hb.backup(tag):
+        log.info("backed up %s to %s.%s", hb.path, hb.path, tag)
 
 
 def attach(hb: Handbook) -> Mirror:
@@ -323,6 +325,8 @@ def attach(hb: Handbook) -> Mirror:
             m.upgrade_packages()
             m.reconcile(r)
             m.sync_handbook()
+        if m.schema() < 2:
+            m.migrate_v2()
         m.g.prune_blobs()
         if hb.db.in_transaction:  # opening is a boundary: what it decided is durable before any tool runs
             hb.db.commit()

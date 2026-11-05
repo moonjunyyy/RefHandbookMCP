@@ -54,6 +54,7 @@ from .keys import Key, KeyError_, KeyStore, scrub
 from . import flows
 from .presets import Presets
 from .team import NOTE_KINDS, ROLES, Team, TeamError, render_note
+from .branches import branch_name
 from .workspace import Workspace
 
 log = logging.getLogger("refhandbook.crew")
@@ -266,6 +267,7 @@ class Crew:
         self.rid = f"crew:{os.getpid()}:{secrets.token_hex(3)}"
         self.tasks: dict[str, asyncio.Task[None]] = {}
         self.sems: dict[str, asyncio.Semaphore] = {}
+        self.ending: list[tuple[str, str]] = []  # runs that just ended, and how: their branches are finished next
         self.stopped = False
 
     # ── the planner ──────────────────────────────────────────────────────
@@ -299,7 +301,28 @@ class Crew:
             for aid in start:
                 self.tasks[aid] = asyncio.create_task(self._agent(aid), name=aid)
                 started += 1
+        while self.ending:  # outside the store's lock: git runs in the sandbox for as long as it takes
+            await self._end_branches(*self.ending.pop(0))
         return started
+
+    async def _end_branches(self, run: str, outcome: str) -> None:
+        """A run's branches at its end (agents/branches.py): committed, merged when it ended done; the run keeps
+        what became of each."""
+        if self.runner is None or not hasattr(self.runner, "end_branches"):
+            return
+        try:
+            with self.lock:
+                goal = self.g.node(run)["content"]
+                policy = self.team.grant(run)["policy"]
+        except (TeamError, KernelError):
+            return  # never granted: no command ran, no branch was made
+        try:
+            got = await asyncio.to_thread(self.runner.end_branches, run, policy, outcome, goal)
+            if got:
+                with self.lock:
+                    self.g.update_node(run, actor=K, attrs={"branches": got})
+        except Exception:  # noqa: BLE001 — one run's branches never stop the crew
+            log.exception("run %s: its branches", run)
 
     def _plan(self, run: str) -> list[str]:
         t, g = self.team, self.g
@@ -314,6 +337,7 @@ class Crew:
                 if task is not None:
                     task.cancel()
             t.cancel_run(run, str(a["cancel"]), actor=K)
+            self.ending.append((run, "cancelled"))
             self._retained(run)
             unmark(self.ws, run)
             return []
@@ -337,6 +361,7 @@ class Crew:
             except ScopeRefused as e:
                 t.set_phase(run, "failed", error=str(e))
                 log.warning("run %s cannot close: %s", run, e)
+            self.ending.append((run, g.node(run)["attrs"].get("phase") or "failed"))
             self._retained(run)
             unmark(self.ws, run)
             return []
@@ -545,6 +570,17 @@ class Crew:
         parts.append(f"Sandbox: your working directory is /work/runs/{run.split(':', 1)[1]} (policy "
                      f"{grant['policy']}). Limits: {grant['max_steps']} model turns for you; "
                      f"{grant['max_agents']} agents at once and {grant['max_spawns']} in all for the run.")
+        try:
+            rw = [m["target"] for m in self.ws.policy(grant["policy"])["attrs"].get("mounts") or [] if m.get("rw")]
+        except HandbookError:
+            rw = []
+        if rw:
+            parts.append(f"In the read-write mounts ({', '.join(rw)}) each git repository is a worktree on this run's "
+                         f"branch {branch_name(run)} (its git directory under /git): what you change in one is committed "
+                         "and merged into the branch the repository has checked out when the run ends done, and left on "
+                         "the branch if the merge conflicts. Files outside the repositories change in place. A worktree "
+                         "holds what git tracks: install or build what is untracked (node_modules, .venv) there if you "
+                         "need it.")
         models = sorted({f"{x['model']} ({', '.join(x['roles'])})" for x in grant["routes"]})
         parts.append("Models of the grant: " + "; ".join(models))
         if pinned:

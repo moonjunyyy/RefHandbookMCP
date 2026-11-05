@@ -104,9 +104,10 @@ def test_every_research_rule_fires(everything):
 def test_references_to_nothing_become_missing_nodes_and_survive(everything):
     g = fresh_graph()
     L = migrate.ledger_to_graph(g, everything.export("everything"))
-    assert g.node("everything:r:E99")["type"] == "missing"
-    assert [e["dst"] for e in g.edges(src="everything:r:E4", type_="dep_ref")] == \
-        ["everything:r:E99", "everything:r:T1", "everything:r:Z1"]
+    node = lambda rid: migrate.row_node(g, L, rid)  # noqa: E731 — a row's node is its nid, found through L
+    assert g.node("everything:r:E99")["type"] == "missing"  # a reference to nothing keeps the ledger's name
+    assert sorted(e["dst"] for e in g.edges(src=node("E4"), type_="dep_ref")) == \
+        sorted(["everything:r:E99", node("T1"), node("Z1")])
     assert g.node("everything:c:nocfg")["type"] == "missing"
 
 
@@ -156,8 +157,9 @@ def test_any_word_before_a_colon_reads_as_the_one_relation():
     g = fresh_graph()
     L = migrate.ledger_to_graph(g, r.export("odd_rels"))
     assert not g.edges(type_="pending_hit") and not g.edges(type_="on") and not g.edges(type_="member")
-    assert {e["type"] for e in g.edges(src="odd_rels:r:E1")} == {"dep_ref"}
-    assert {e["dst"] for e in g.edges(src="odd_rels:r:E1")} == {"odd_rels:r:A1", "odd_rels:r:A9"}
+    E1 = migrate.row_node(g, L, "E1")
+    assert {e["type"] for e in g.edges(src=E1)} == {"dep_ref"}
+    assert {e["dst"] for e in g.edges(src=E1)} == {migrate.row_node(g, L, "A1"), "odd_rels:r:A9"}
     assert migrate.ledger_from_graph(g, L)["tables"]["rl_pending"] == []
 
 
@@ -171,7 +173,7 @@ def test_kinds_have_separate_namespaces_and_an_imported_main_replaces_the_line()
     g = fresh_graph()
     L = migrate.ledger_to_graph(g, r.export("names"))
     assert g.node("names:c:main")["attrs"].get("synthetic") is None
-    assert {e["dst"] for e in g.edges(src="names:c:main", type_="member")} == {"names:r:A1"}
+    assert {e["dst"] for e in g.edges(src="names:c:main", type_="member")} == {migrate.row_node(g, L, "A1")}
 
 
 SOURCED = "E1: 'sourced' without a locator (chat:<uuid>, file:<path>, or a URL)"

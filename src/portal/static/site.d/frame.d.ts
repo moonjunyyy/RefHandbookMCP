@@ -11,13 +11,18 @@ export interface Widget {
     href: string;
     size: string;
 }
+/** One way to connect to an app (site.toml's `code`): its value may name the person looking as {user}. */
+export interface Address {
+    label: string;
+    value: string;
+}
 export interface Card {
     id: string;
     title: string;
     description: string;
     about: string;
     tags: string[];
-    code: string;
+    code: Address[];
     icon: string;
     href: string;
     optional: boolean;
@@ -27,6 +32,33 @@ export interface Card {
         href: string;
     }[];
     widgets: Widget[];
+}
+/** One choice of the person's look (docs/frame.md §1.3), as the site file declares it: the tokens it redeclares —
+ * a palette for each theme, the others once. The first choice of a kind is theme.css's own (nothing redeclared). */
+export interface LookChoice {
+    id: string;
+    label: string;
+    tokens?: Record<string, string>;
+    light?: Record<string, string>;
+    dark?: Record<string, string>;
+}
+export interface Look {
+    palette: LookChoice[];
+    corner: LookChoice[];
+    type: LookChoice[];
+    size: LookChoice[];
+    columns: number[];
+}
+export declare const LOOK_KINDS: readonly ["palette", "corner", "type", "size"];
+export type LookKind = (typeof LOOK_KINDS)[number];
+/** What the person picked: a choice of each kind (its id), the main page's columns (0: as many as fit), an image. */
+export interface LookPrefs {
+    palette?: string;
+    corner?: string;
+    type?: string;
+    size?: string;
+    columns?: number;
+    image?: string;
 }
 export interface Frame {
     uid: string | null;
@@ -42,6 +74,7 @@ export interface Frame {
         href: string;
     }[];
     sizes: Size[];
+    look: Look;
 }
 export declare const THEMES: readonly ["auto", "light", "dark"];
 export type Theme = (typeof THEMES)[number];
@@ -57,11 +90,23 @@ export interface Prefs {
     apps: string[];
     home: Placement[];
     seen: string[];
+    look: LookPrefs;
 }
 /** The settings an account starts with. `apps`: the apps the site file marks `default = true` (docs/frame.md §2
  * R13) — filled from the frame once it is loaded; a kept `apps`, an empty one too, is the person's own choice. */
 export declare const DEFAULTS: Prefs;
 export declare const frame: Frame;
+/** An image under the page: an address of this site or an https one, nothing that could leave the url("…"). */
+export declare const IMAGE: RegExp;
+/** The tokens the person's look redeclares, by theme: the palette's for each, the rest for both. */
+export declare function lookTokens(look: Look, p: LookPrefs): {
+    light: Record<string, string>;
+    dark: Record<string, string>;
+    both: Record<string, string>;
+};
+/** The look onto <html> as custom properties (the CSSOM, which the pages' CSP allows; an inline style outranks the
+ * theme's selectors), the palette of the theme in force; and into this browser for the next first paint. */
+export declare function applyLook(): void;
 /** The size a placement has: its own, else its widget's; unknown ids fall back to the first declared size. */
 export declare function sizeOf(id: string | undefined): Size;
 export declare const prefs: Prefs;

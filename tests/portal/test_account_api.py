@@ -105,6 +105,8 @@ def test_the_frame_knows_who_and_what_they_may_see(tmp_path, key, monkeypatch):
     account = next(x for x in me["cards"] if x["id"] == "account")
     assert account["icon"] and account["href"] == "/account/"  # where it opens, for the app list
     assert me["uid"] == "moon" and "사용자 관리" in [ln["label"] for ln in account["links"]]
+    smb = next(x for x in me["cards"] if x["id"] == "smb")  # its ways to connect, each with its label
+    assert smb["code"][-1] == {"label": "macOS · Linux · 그 밖", "value": "smb://samba.m00nny.kr:38445/{user}"}
     c, _ = sign_in(app)
     account = next(x for x in c.get("/auth/api/v1/me").json()["cards"] if x["id"] == "account")
     assert "사용자 관리" not in [ln["label"] for ln in account["links"]]

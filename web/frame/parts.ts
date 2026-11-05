@@ -71,8 +71,23 @@ function current(href: string): boolean {
   return h === '/' ? path === '/' : path === h || path.startsWith(h + '/');
 }
 
-/** The header: the site's name (home), the apps the person has on, and their name — a menu with what is
- * theirs (the account and its pages, the apps catalog, the settings) and the way out. */
+/** A menu of the header (an app's pages, the person's own): it opens under the pointer as it comes (and stays while
+ * the pointer is on it or on its list), with the focus as it comes in, and with a click; Esc and leaving close it. */
+function hoverMenu(d: HTMLDetailsElement): HTMLDetailsElement {
+  let timer = 0;
+  const close = () => { window.clearTimeout(timer); timer = window.setTimeout(() => { d.open = false; }, 120); };
+  const open = () => { window.clearTimeout(timer); for (const o of document.querySelectorAll<HTMLDetailsElement>('header nav details[open]')) if (o !== d) o.open = false; d.open = true; };
+  d.addEventListener('mouseenter', open);
+  d.addEventListener('mouseleave', close);
+  d.addEventListener('focusin', open);
+  d.addEventListener('focusout', ev => { if (!d.contains(ev.relatedTarget as Node | null)) close(); });
+  d.addEventListener('keydown', ev => { if (ev.key === 'Escape' && d.open) { d.open = false; (d.querySelector('summary a, summary') as HTMLElement | null)?.focus(); } });
+  return d;
+}
+
+/** The header: the site's name (home), the apps the person has on — an app with one page is a link, an app with
+ * more opens their list under it — and their name: a menu with what is theirs (the account and its pages, the apps
+ * catalog, the settings) and the way out. */
 export function header(): void {
   const brand = document.getElementById('brand');
   if (brand) brand.textContent = frame.title;
@@ -81,16 +96,23 @@ export function header(): void {
   const own = frame.cards.filter(c => !c.optional);  // the account: not an app to turn on
   replace(nav,
     frame.uid && [
-      onApps().map(c => h('a', { href: c.href, 'aria-current': current(c.href) ? 'page' : null },
-        c.icon && h('span', { class: 'app-icon', 'aria-hidden': 'true' }, c.icon), c.title)),
-      h('details', { class: 'me' },
+      onApps().map(c => {
+        const top = h('a', { href: c.href, 'aria-current': current(c.href) ? 'page' : null },
+          c.icon && h('span', { class: 'app-icon', 'aria-hidden': 'true' }, c.icon), c.title);
+        const pages = c.links.filter((l, i, all) => l.href && all.findIndex(x => x.href === l.href) === i);
+        return pages.length > 1 && pages.some(l => l.href !== c.href)
+          ? hoverMenu(h('details', { class: 'nav-menu' }, h('summary', null, top),
+              h('div', null, pages.map(l => h('a', { href: l.href, 'aria-current': current(l.href) && location.pathname.replace(/\/$/, '') === l.href.replace(/\/$/, '') ? 'page' : null }, l.label)))))
+          : top;
+      }),
+      hoverMenu(h('details', { class: 'me' },
         h('summary', { title: t('내 메뉴') }, h('code', null, frame.uid)),
         h('div', null,
           own.flatMap(c => [h('a', { href: c.href }, c.title), ...c.links.filter(l => l.href !== c.href).map(l => h('a', { href: l.href }, l.label))]),
           h('a', { href: '/apps' }, t('앱')),
           h('a', { href: '/settings' }, t('설정')),
           h('hr'),
-          h('a', { href: `${frame.signin}/logout` }, t('로그아웃')))),
+          h('a', { href: `${frame.signin}/logout` }, t('로그아웃'))))),
     ],
     !frame.uid && [
       h('a', { href: '/apps' }, t('앱')),
@@ -98,8 +120,10 @@ export function header(): void {
   if (!closing) {
     closing = true;
     document.addEventListener('click', ev => {  // the menu closes when anything else is pressed
-      const me = nav.querySelector('details.me[open]');
-      if (me && !me.contains(ev.target as Node)) me.removeAttribute('open');
+      for (const d of nav.querySelectorAll('details[open]')) if (!d.contains(ev.target as Node)) d.removeAttribute('open');
+    });
+    document.addEventListener('keydown', ev => {  // and with Esc, wherever the focus is (a menu opened by the pointer has none)
+      if (ev.key === 'Escape') for (const d of nav.querySelectorAll('details[open]')) d.removeAttribute('open');
     });
   }
 }
@@ -283,10 +307,11 @@ export interface Key { key: string; label: string; run: () => void | Promise<unk
 let pageKeys: Key[] = [];
 let keysInstalled = false;
 
-/** Where typing happens: a letter there is text, not a shortcut. */
+/** Where typing happens: a letter there is text, not a shortcut (a box or a radio takes no text: its page's keys stay). */
 function typing(el: EventTarget | null): boolean {
   const e = el as HTMLElement | null;
-  return !!e && (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.tagName) || e.isContentEditable);
+  if (e instanceof HTMLInputElement) return !['checkbox', 'radio', 'button', 'submit', 'reset'].includes(e.type);
+  return !!e && (['TEXTAREA', 'SELECT'].includes(e.tagName) || e.isContentEditable);
 }
 
 /** The page's shortcuts: `key` as KeyboardEvent.key ('t', '/', 'ArrowLeft', 'Escape'; 'Shift+?'-style modifiers

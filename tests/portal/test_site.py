@@ -27,6 +27,10 @@ def test_the_shipped_file_declares_the_site():
     assert routes[("exact", "/apps")].page and routes[("exact", "/settings")].page  # /apps/<id>/ stay the apps'
     assert routes[("prefix", "/apps/site/api/")].auth == "site" and routes[("prefix", "/apps/site/")].auth == "public"
     assert all(a.icon for a in s.apps if a.card)
+    # the person's look: the kinds the settings page offers, each led by theme.css's own (no tokens redeclared)
+    assert [k for k in site.LOOK_KINDS if s.look[k]] == list(site.LOOK_KINDS) and 0 in s.look["columns"]
+    assert all(not (c.get("tokens") or c.get("light")) for c in (s.look[k][0] for k in site.LOOK_KINDS))
+    assert s.look_in("en")["palette"][1]["label"] == "Forest" and "tr" not in s.look_in("ko")["palette"][1]
 
 
 def test_the_catalog_speaks_of_each_app_as_a_product():
@@ -123,12 +127,33 @@ def test_the_invitation_sign_up_is_public_and_throttled():
     ('[[app]]\nid = "x"\ntitle = "@@nothing@@"\n', "unknown placeholder"),
     ('[[app]]\nid = "x"\ntitle = "X"\ntags = ["연구", "nope"]\n', "tags are among"),
     ('[[app]]\nid = "x"\ntitle = "X"\ntr.en = { tags = ["x"] }\n', "names title, description, about or menu"),
+    ('[look]\nshadow = []\n', "unknown kinds"),
+    ('[[look.corner]]\nid = "x"\nlabel = "X"\ntokens = { radius = "1px; } body { color: red" }\n', "without"),
+    ('[[look.palette]]\nid = "x"\nlabel = "X"\nlight = { accent = "#000" }\ndark = {}\n', "the same tokens"),
+    ('[look]\ncolumns = [3, 40]\n', "columns"),
+    ('[[app]]\nid = "x"\ntitle = "X"\ncode = 3\n', "a string or a list"),
+    ('[[app]]\nid = "x"\ntitle = "X"\ncode = [{ label = "a" }]\n', "with a value"),
+    ('[[app]]\nid = "x"\ntitle = "X"\ncode = [{ value = "v", href = "h" }]\n', "with a value"),
 ])
 def test_a_bad_entry_is_refused_before_anything_is_written(tmp_path, bad, message):
     f = tmp_path / "site.toml"
     f.write_text(bad)
     with pytest.raises(site.SiteError, match=message):
         site.load(f, facts(str(SITE)))
+
+
+def test_an_app_gives_its_ways_to_connect(tmp_path):
+    """`code`: one line (a string), or one labelled address per client; {user} is the person looking."""
+    smb = next(a for a in load().apps if a.id == "smb")
+    assert [c.value for c in smb.code] == ["net use \\\\samba.m00nny.kr\\{user} /TCPPORT:38445",
+                                          "\\\\samba.m00nny.kr\\{user}", "smb://samba.m00nny.kr:38445/{user}"]
+    assert [c.label_in("en") for c in smb.code] == ["Windows — connect once (Command Prompt)",
+                                                    "Windows — Explorer address", "macOS · Linux · others"]
+    assert smb.code[0].label_in("ko").startswith("Windows") and smb.text("title", "en") == "SMB Storage"
+    f = tmp_path / "site.toml"
+    f.write_text('[[app]]\nid = "x"\ntitle = "X"\ncode = "ssh x.example"\n')
+    (x,) = site.load(f, facts(str(SITE))).apps
+    assert [(c.label, c.value) for c in x.code] == [("", "ssh x.example")]
 
 
 def test_the_main_pages_cards_follow_groups_down_to_each_link():
@@ -150,3 +175,38 @@ def test_the_menu_follows_groups():
     s = site.Site((site.App("a", "A", menu="A", menu_href="/a"), site.App("b", "B", menu="B", groups=("admin",))))
     assert [ln.label for ln in s.menu({"user"})] == ["A"]
     assert [ln.label for ln in s.menu({"admin"})] == ["A", "B"]
+
+
+def _luminance(hex_: str) -> float:
+    c = [int(hex_.lstrip("#")[i:i + 2], 16) / 255 for i in (0, 2, 4)] if len(hex_) == 7 else [int(x * 2, 16) / 255 for x in hex_.lstrip("#")]
+    lin = [x / 12.92 if x <= 0.04045 else ((x + 0.055) / 1.055) ** 2.4 for x in c]
+    return 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2]
+
+
+def _contrast(a: str, b: str) -> float:
+    la, lb = sorted((_luminance(a), _luminance(b)), reverse=True)
+    return (la + 0.05) / (lb + 0.05)
+
+
+def test_every_palette_of_the_look_reads_in_both_themes():
+    """docs/frame.md §1.3: a palette the site file declares redeclares the accent tokens over theme.css; in each theme
+    every pairing the parts make of them (a button's text on it and on its hover, a link or a secondary button on the
+    page and on a card, a hover on the soft accent) is at least 4.5:1, as theme.css's own palette is."""
+    import re as _re
+    import tomllib
+    from pathlib import Path
+
+    theme = (Path(__file__).resolve().parents[2] / "src/portal/static/theme.css").read_text()
+    blocks = {"light": _re.search(r":root \{(.*?)\n\}", theme, _re.S).group(1), "dark": _re.search(r':root\[data-theme="dark"\] \{(.*?)\n\}', theme, _re.S).group(1)}
+    base = {k: dict(_re.findall(r"--([a-z-]+):\s*(#[0-9a-f]{3,6})\b", v)) for k, v in blocks.items()}
+    look = site._look(tomllib.loads(SITE.read_text()))
+    pairs = [("accent-text", "accent"), ("accent-text", "accent-hover"), ("accent", "bg"), ("accent", "card"), ("accent-hover", "accent-soft"), ("accent", "accent-soft")]
+    low = []
+    for p in [{"id": "theme.css", "light": {}, "dark": {}}, *look["palette"]]:
+        for scheme in ("light", "dark"):
+            t = {**base[scheme], **p[scheme]}
+            for fg, bg in pairs:
+                r = _contrast(t[fg], t[bg])
+                if r < 4.5:
+                    low.append(f"{p['id']} {scheme}: {fg} on {bg} {r:.2f}")
+    assert not low, "palettes below 4.5:1:\n" + "\n".join(low)

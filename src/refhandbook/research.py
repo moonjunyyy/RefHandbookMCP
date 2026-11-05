@@ -98,6 +98,7 @@ CREATE TABLE IF NOT EXISTS rl_rows (
     evidence TEXT NOT NULL DEFAULT '', dep TEXT NOT NULL DEFAULT '', grp TEXT NOT NULL DEFAULT '',
     turn_created INTEGER NOT NULL, turn_updated INTEGER NOT NULL,
     clock_updated INTEGER NOT NULL DEFAULT 0,
+    nid TEXT,  -- the row's node id: it names the node, not its ledger (ensure_nid)
     PRIMARY KEY (ledger, id)
 );
 CREATE TABLE IF NOT EXISTS rl_configs (
@@ -212,6 +213,32 @@ def xrefs(dep: str) -> list[tuple[str, str]]:
     return [tuple(t.split("/", 1)) for _, t in edges(dep) if "/" in t]
 
 
+# A row's node id names the node, not its ledger: 'n:' + 128 random bits, given at insert by the
+# trigger (every insert path: add, push, import, copy), kept when the ledger is renamed. The graph
+# names the row's node by it (kernel/migrate.py), so a ledger is no longer part of a row's identity.
+NID_SQL = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS rl_rows_nid_idx ON rl_rows(nid)",
+    "CREATE TRIGGER IF NOT EXISTS rl_rows_nid_ins AFTER INSERT ON rl_rows WHEN NEW.nid IS NULL BEGIN"
+    " UPDATE rl_rows SET nid = 'n:' || lower(hex(randomblob(16))) WHERE ledger = NEW.ledger AND id = NEW.id; END",
+)
+
+
+def ensure_nid(db: sqlite3.Connection, backup: Any = None) -> bool:
+    """Give every row its node id. A store made before the column gets it (after `backup()`, called
+    once before the store changes), the rows already there are filled, and the id stays unique.
+    Returns True when the column was added."""
+    added = "nid" not in {r[1] for r in db.execute("PRAGMA table_info(rl_rows)")}
+    if added and backup is not None:
+        backup()
+    with db:
+        if added:
+            db.execute("ALTER TABLE rl_rows ADD COLUMN nid TEXT")
+        db.execute("UPDATE rl_rows SET nid = 'n:' || lower(hex(randomblob(16))) WHERE nid IS NULL")
+        for stmt in NID_SQL:
+            db.execute(stmt)
+    return added
+
+
 def page_card_id(page: str) -> str:
     p = page.strip().lstrip("@")
     return p if p.startswith(CARD_PREFIX) else CARD_PREFIX + slugify(p)
@@ -222,6 +249,7 @@ class Research:
         self.hb = hb
         self.db = hb.db
         self.db.executescript(SCHEMA)
+        self._ensure_nid()
         # The kernel is the only judge: check, obligations and end refusals are its rules. Writes
         # still go to the rl_* tables here, and each seal re-projects the ledger into the kernel.
         # (kernel=False is the bare engine the kernel itself uses while migrating a store.)
@@ -232,6 +260,19 @@ class Research:
             self.k = runtime.attach(hb)
 
     # ── plumbing ─────────────────────────────────────────────────────────
+
+    def _ensure_nid(self) -> None:
+        """Rows carry node ids (ensure_nid; the store is backed up to `<db>.pre-nid` before the column
+        is added). Filling them changes no ledger's content, so a ledger whose seal matched its rows
+        before the fill is sealed again after it: the fill is not an edit outside the device."""
+        unfilled = "nid" not in {r[1] for r in self.db.execute("PRAGMA table_info(rl_rows)")} or \
+            self.db.execute("SELECT 1 FROM rl_rows WHERE nid IS NULL LIMIT 1").fetchone() is not None
+        clean = [L for L, tok in self.db.execute("SELECT id, token FROM rl_ledgers").fetchall()
+                 if tok and self._digest(L) == tok] if unfilled else []
+        ensure_nid(self.db, backup=lambda: self.hb.backup("pre-nid"))
+        if clean:
+            with self.db:
+                self.db.executemany("UPDATE rl_ledgers SET token = ? WHERE id = ?", [(self._digest(L), L) for L in clean])
 
     def _ledger(self, ledger: str) -> dict[str, Any]:
         row = self.db.execute("SELECT * FROM rl_ledgers WHERE id = ?", (ledger,)).fetchone()
@@ -700,7 +741,7 @@ class Research:
             self._check_dep(ledger, dep)
             n = 1 + (self.db.execute("SELECT max(num) FROM rl_rows WHERE ledger = ? AND sec = ?", (ledger, sec)).fetchone()[0] or 0)
             rid = f"{sec}{n}"
-            self.db.execute("INSERT INTO rl_rows VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
+            self.db.execute("INSERT INTO rl_rows VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL)",
                             (ledger, rid, sec, n, content.strip(), origin.strip(), status.strip(), evidence.strip(),
                              dep.strip(), grp.strip(), lg["turn"], lg["turn"]))
             self._log(ledger, lg["turn"], f"+{rid} {status}")
@@ -1041,7 +1082,7 @@ class Research:
                     return f"{w['id']} (the standing @USER continuation, re-armed)"
             n = 1 + (self.db.execute("SELECT max(num) FROM rl_rows WHERE ledger = ? AND sec = 'K'", (ledger,)).fetchone()[0] or 0)
             kid = f"K{n}"
-            self.db.execute("INSERT INTO rl_rows VALUES (?, ?, 'K', ?, ?, ?, ?, ?, ?, '', ?, ?, 0)",
+            self.db.execute("INSERT INTO rl_rows VALUES (?, ?, 'K', ?, ?, ?, ?, ?, ?, '', ?, ?, 0, NULL)",
                             (ledger, kid, n, f"{do} → @{target}", f"entailed({frm})", status, ev,
                              " ".join(ID_RE.findall(on or "")), lg["turn"], lg["turn"]))
             self._log(ledger, lg["turn"], f"+{kid} {status}")
@@ -1571,6 +1612,9 @@ class Research:
                 for t, rows in tables.items():
                     for r in rows:
                         r = {k: v for k, v in r.items() if not (t == "rl_log" and k == "seq")} | {"ledger": lid}
+                        if t == "rl_rows" and r.get("nid") and self.db.execute(
+                                "SELECT 1 FROM rl_rows WHERE nid = ?", (r["nid"],)).fetchone():
+                            r["nid"] = None  # taken in this store (a copy, a re-import): a node of its own
                         self.db.execute(f"INSERT INTO {t} ({', '.join(r)}) VALUES ({', '.join('?' * len(r))})",
                                         list(r.values()))
                     counts[t] = len(rows)
@@ -1591,7 +1635,8 @@ class Research:
                          + ([f"  … {len(errors) + len(warnings) - 30} more"] if len(errors) + len(warnings) > 30 else []))
 
     def copy(self, ledger: str, to: str) -> str:
-        """A separate ledger with the same content: a sandbox to try changes or an import on."""
+        """A separate ledger with the same content: a sandbox to try changes or an import on. Its rows
+        are nodes of their own (new node ids)."""
         out = self.import_(self.export(ledger), as_ledger=to)
         return out.replace("imported ledger", "copied to ledger", 1)
 
@@ -1612,8 +1657,9 @@ class Research:
                 sessions.rescope(self.k.g, ledger, new)
                 self.k.g.db.execute("UPDATE k_meta SET key = ? || substr(key, ?) WHERE key LIKE ?",
                                     (f"prompt:{new}:", len(f"prompt:{ledger}:") + 1, f"prompt:{ledger}:%"))
-            self._seal(new)
+            # the old image goes first: the rows keep their node ids under the new name
             self._sealed(ledger)  # gone: its image is dropped, in the same transaction
+            self._seal(new)
         return (f"renamed ledger {ledger!r} → {new!r}"
                 + ("; open sessions keep their tokens: research_begin(ledger=" + repr(new) + ", session=…)"
                    if lg["open"] else ""))

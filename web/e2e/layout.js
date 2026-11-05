@@ -6,7 +6,8 @@ const { chromium } = require('playwright');
 const mock = require('./mock');
 
 // Rules (px): an icon and its text are 4..12 apart (a big icon, as a card's column: up to 0.35 of its height,
-// so 44px → 15, 64px → 22) and share a centre within 2; chips in a row share a
+// so 44px → 15, 64px → 22) and share a centre within 2 (in a column — a tile, the mark over its name — the gap
+// is below the icon and the centre is the horizontal one); chips in a row share a
 // height within 1 and a centre within 1; buttons in one .actions row share a height within 1; no text
 // element is clipped by its parent; nothing in the header wraps onto a second line.
 const RULES = { gapMin: 4, gapMax: 12, centre: 2, rowHeight: 1 };
@@ -27,8 +28,10 @@ const MEASURE = (rules) => {
     if (!next) continue;
     const nb = next.nodeType === 3 ? rangeOf(next) : r(next);
     if (!nb.width) continue;
-    const gap = +(nb.left - ib.right).toFixed(1);
-    const dy = +(((ib.top + ib.bottom) / 2) - ((nb.top + nb.bottom) / 2)).toFixed(1);
+    // in a column (a tile: the mark over its name) the gap is below the icon and the centres are side by side
+    const column = getComputedStyle(icon.parentElement).flexDirection === 'column';
+    const gap = +(column ? nb.top - ib.bottom : nb.left - ib.right).toFixed(1);
+    const dy = +(column ? ((ib.left + ib.right) / 2) - ((nb.left + nb.right) / 2) : ((ib.top + ib.bottom) / 2) - ((nb.top + nb.bottom) / 2)).toFixed(1);
     const label = `${where(icon.parentElement)} "${text(icon)}${next.nodeType === 3 ? next.textContent.trim().slice(0, 16) : text(next)}"`;
     out.pairs.push({ what: 'icon·text', where: label, gap, dy, iconH: +ib.height.toFixed(1), textH: +nb.height.toFixed(1) });
     const gapMax = Math.max(rules.gapMax, Math.round(ib.height * 0.35));
@@ -54,13 +57,13 @@ const MEASURE = (rules) => {
     if (!vis(el)) continue;
     if (el.scrollWidth > el.clientWidth + 1 && getComputedStyle(el).overflow !== 'visible') out.bad.push({ where: where(el), what: 'clipped', value: el.scrollWidth - el.clientWidth });
   }
-  // the store card: the icon column's top aligns with the title's text top; the switch is vertically centred on the card
+  // the store card: the icon column's top aligns with the title's text top; its one action is vertically centred on the card
   for (const card of document.querySelectorAll('.store-card')) {
-    const icon = card.querySelector('.app-icon'), h3 = card.querySelector('h3'), sw = card.querySelector('label.switch');
+    const icon = card.querySelector('.app-icon'), h3 = card.querySelector('h3'), sw = card.querySelector('.app-tools > *');
     if (!icon || !h3) continue;
     const cb = r(card), ib = r(icon), hb = r(h3);
     out.pairs.push({ what: 'card', where: `card ${card.dataset.app}`, iconTop: +(ib.top - cb.top).toFixed(1), titleTop: +(hb.top - cb.top).toFixed(1), iconH: +ib.height.toFixed(1), titleH: +hb.height.toFixed(1) });
-    if (sw) { const sb = r(sw); const dc = +(((sb.top + sb.bottom) / 2) - ((cb.top + cb.bottom) / 2)).toFixed(1); if (Math.abs(dc) > 8) out.bad.push({ where: `card ${card.dataset.app}`, what: 'switch off centre', value: dc }); }
+    if (sw) { const sb = r(sw); const dc = +(((sb.top + sb.bottom) / 2) - ((cb.top + cb.bottom) / 2)).toFixed(1); if (Math.abs(dc) > 8) out.bad.push({ where: `card ${card.dataset.app}`, what: 'action off centre', value: dc }); }
   }
   // widgets: a cell's head and body have the same left edge; the launcher's icon and name share a baseline line
   for (const w of document.querySelectorAll('.widget')) {
@@ -106,7 +109,7 @@ const MEASURE = (rules) => {
   await page.waitForSelector('.menu[role=menu]');
   await measure('cell-menu');
   await page.keyboard.press('Escape');
-  await page.click('.section-head button:text-is("위젯 고르기")');
+  await page.click('.widgets > button.add-widget');
   await page.waitForSelector('dialog[open] .pick-list');
   await page.hover('dialog .pick-row[data-app="calendar"][data-widget="today"]');
   await page.waitForSelector('dialog .pick-preview .widget');

@@ -39,8 +39,9 @@ export declare const account: () => {
     del: (path: string) => Promise<any>;
 };
 export declare function message(e: unknown): string;
-/** The header: the site's name (home), the apps the person has on, and their name — a menu with what is
- * theirs (the account and its pages, the apps catalog, the settings) and the way out. */
+/** The header: the site's name (home), the apps the person has on — an app with one page is a link, an app with
+ * more opens their list under it — and their name: a menu with what is theirs (the account and its pages, the apps
+ * catalog, the settings) and the way out. */
 export declare function header(): void;
 export declare function title(text: string): void;
 /** The head of a page: its name, and its tabs when it has them. Nothing else: a page that needs a sentence

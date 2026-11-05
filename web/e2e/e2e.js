@@ -37,8 +37,9 @@ const texts = (page, sel) => page.$$eval(sel, (els) => els.map((e) => e.textCont
 const theme = (page) => page.evaluate(() => document.documentElement.getAttribute('data-theme'));
 const bg = (page) => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
 const cells = (page) => page.$$eval('.widgets .widget', (els) => els.map((e) => `${e.dataset.app}/${e.dataset.widget}`));
-const navApps = (page) => page.$$eval('header nav > a', (as) => as.map((a) => a.textContent.trim()));
+const navApps = (page) => page.$$eval('header nav > a, header nav > details.nav-menu > summary > a', (as) => as.map((a) => a.textContent.trim()));
 const cards = (page) => page.$$eval('.catalog .store-card', (r) => r.map((e) => e.dataset.app));
+const tiles = (page) => page.$$eval('.catalog .my-app', (r) => r.map((e) => e.dataset.app));
 const menuItems = (page) => texts(page, '.menu[role=menu] .menu-item strong');
 const menuOf = async (page, sel) => { await page.click(sel, { button: 'right' }); await page.waitForSelector('.menu[role=menu]'); };
 const pickItem = async (page, label) => { await page.click(`.menu[role=menu] .menu-item:has(strong:text-is("${label}"))`); await sleep(300); };
@@ -78,47 +79,85 @@ async function run() {
   await shot(page, 'a-empty');
   await page.click('main a.primary');
   await page.waitForSelector('.catalog .store-card');
-  step("'앱 추가'는 가게(/apps)로 간다: 검색 + 칩 + 카드", page.url().endsWith('/apps') && !!(await page.$('.catalog input[type=search]')) && (await page.$$('.catalog .chips button.chip')).length >= 3 && (await cards(page)).length === 6, `${page.url()} cards ${(await cards(page)).length}`);
+  step("'앱 추가'는 가게(/apps)로 간다: 검색 + 칩 + 추가할 앱의 카드", page.url().endsWith('/apps') && !!(await page.$('.catalog input[type=search]')) && (await page.$$('.catalog .chips button.chip')).length >= 3 && (await cards(page)).length === 6 && !(await page.$('.my-apps')), `${page.url()} cards ${(await cards(page)).length}`);
   step('계정은 가게의 카드가 아니라 이름 메뉴 안이다', !(await page.$('.catalog [data-app=account]')) && (await texts(page, 'header details.me div a')).includes('계정'));
 
-  // (b) the store: a card says name, line and tags; the switch keeps at once; the chips pick a view
-  step('카드는 아이콘·이름 링크·한 줄·태그를 말한다', (await texts(page, '.catalog [data-app=calendar] .desc'))[0] === '내 일정과 프로젝트 일정을 한 달력에'
-    && (await texts(page, '.catalog [data-app=calendar] .tags .tag')).join() === '일정' && (await page.$eval('.catalog [data-app=calendar] h3 a', (a) => a.getAttribute('href'))) === '/app/calendar');
-  await page.click('.catalog [data-app=eq-sandbox] label.switch input');
+  // (b) the store (round 7): the apps added come first as tiles that open them; the rest are cards with one action, 추가 — no switch
+  step('카드는 아이콘·이름 링크·한 줄·태그와 행동 하나(추가)를 말하고, 가게에 스위치가 없다', (await texts(page, '.catalog [data-app=calendar] .desc'))[0] === '내 일정과 프로젝트 일정을 한 달력에'
+    && (await texts(page, '.catalog [data-app=calendar] .tags .tag')).join() === '일정' && (await page.$eval('.catalog [data-app=calendar] h3 a', (a) => a.getAttribute('href'))) === '/app/calendar'
+    && (await texts(page, '.catalog [data-app=calendar] .app-tools button')).join() === '추가' && !(await page.$('.catalog label.switch')));
+  await page.click('.catalog .store-card[data-app=eq-sandbox] .app-tools button');
   await sleep(300);
-  step('스위치로 켜면 저장된다', JSON.stringify(mock.get('site', 'prefs') && mock.get('site', 'prefs').apps) === '["eq-sandbox"]', JSON.stringify(mock.get('site', 'prefs')));
+  step('추가하면 저장되고, 그 앱은 위의 내 앱 타일로 옮겨 간다', JSON.stringify(mock.get('site', 'prefs') && mock.get('site', 'prefs').apps) === '["eq-sandbox"]'
+    && JSON.stringify(await tiles(page)) === '["eq-sandbox"]' && !(await cards(page)).includes('eq-sandbox'), `${JSON.stringify(mock.get('site', 'prefs'))} ${JSON.stringify(await tiles(page))}`);
   await open(page, `${BASE}/`, '.widgets');
-  step('켠 앱의 위젯이 홈에 보인다(기본 = 실행기)', JSON.stringify(await cells(page)) === '["eq-sandbox/launcher"]', JSON.stringify(await cells(page)));
-  step('헤더에 켠 앱이 나타난다', JSON.stringify(await navApps(page)) === '["🧮수식 플립플롭"]', JSON.stringify(await navApps(page)));
+  step('추가한 앱의 위젯이 홈에 보인다(기본 = 실행기)', JSON.stringify(await cells(page)) === '["eq-sandbox/launcher"]', JSON.stringify(await cells(page)));
+  step('헤더에 추가한 앱이 나타난다', JSON.stringify(await navApps(page)) === '["🧮수식 플립플롭"]', JSON.stringify(await navApps(page)));
   await open(page, `${BASE}/apps`, '.catalog');
-  await page.click('.catalog [data-app=wordgen] label.switch input');
+  await page.click('.catalog .store-card[data-app=wordgen] .app-tools button');
   await sleep(200);
-  await page.click('.catalog [data-app=agents] label.switch input');
+  await page.click('.catalog .store-card[data-app=agents] .app-tools button');
   await sleep(200);
-  step('카드의 순서는 사이트 파일의 순서다', JSON.stringify(await cards(page)) === '["projects","calendar","vault","eq-sandbox","wordgen","agents"]', JSON.stringify(await cards(page)));
-  await page.click('.catalog .chips button.chip:text-is("내 앱")');
-  await sleep(100);
-  step("'내 앱' 칩은 켠 것만, 켠 순서로", JSON.stringify(await cards(page)) === '["eq-sandbox","wordgen","agents"]' && page.url().endsWith('?tag=mine'), `${JSON.stringify(await cards(page))} ${page.url()}`);
+  step('내 앱 타일은 추가한 순서, 남은 카드는 사이트 파일의 순서다', JSON.stringify(await tiles(page)) === '["eq-sandbox","wordgen","agents"]' && JSON.stringify(await cards(page)) === '["projects","calendar","vault"]',
+    `${JSON.stringify(await tiles(page))} ${JSON.stringify(await cards(page))}`);
+  step('타일은 아이콘과 이름이고, 누르면 그 앱이다', (await page.$eval('.my-app[data-app=wordgen] > a', (a) => a.getAttribute('href'))) === '/apps/wordgen/'
+    && (await texts(page, '.my-app[data-app=wordgen] .my-app-name')).join() === '글타래' && !!(await page.$('.my-app[data-app=wordgen] .app-icon')));
+  await menuOf(page, '.my-app[data-app=agents]');
+  step('타일의 메뉴(우클릭·⋯): 앱 정보·빼기', JSON.stringify(await menuItems(page)) === '["앱 정보","빼기"]', JSON.stringify(await menuItems(page)));
+  await pickItem(page, '빼기');
+  step('빼면 저장되고 카드로 돌아간다', JSON.stringify(mock.get('site', 'prefs').apps) === '["eq-sandbox","wordgen"]' && JSON.stringify(await tiles(page)) === '["eq-sandbox","wordgen"]'
+    && JSON.stringify(await cards(page)) === '["projects","calendar","vault","agents"]', `${JSON.stringify(await tiles(page))} ${JSON.stringify(await cards(page))}`);
+  await page.click('.catalog .store-card[data-app=agents] .app-tools button');
+  await sleep(200);
+  step("칩은 '전체'와 태그다('내 앱'은 칩이 아니라 위의 타일)", !(await texts(page, '.catalog .chips button.chip')).includes('내 앱') && (await texts(page, '.catalog .chips button.chip'))[0] === '전체');
   await page.click('.catalog .chips button.chip:text-is("일정")');
   await sleep(100);
-  step('태그 칩은 그 갈래만', JSON.stringify(await cards(page)) === '["calendar"]');
+  step('태그 칩은 그 갈래만(타일도 카드도)', JSON.stringify(await cards(page)) === '["calendar"]' && (await tiles(page)).length === 0 && page.url().endsWith('?tag=%EC%9D%BC%EC%A0%95'), page.url());
   await page.click('.catalog .chips button.chip:text-is("전체")');
   await page.fill('.catalog input[type=search]', '글');
   await sleep(100);
-  step('검색이 카드를 거르고 주소에 남는다', JSON.stringify(await cards(page)) === '["vault","wordgen"]' && page.url().includes('q=%EA%B8%80'), `${JSON.stringify(await cards(page))} ${page.url()}`);
+  step('검색이 타일과 카드를 함께 거르고 주소에 남는다', JSON.stringify(await tiles(page)) === '["wordgen"]' && JSON.stringify(await cards(page)) === '["vault"]' && page.url().includes('q=%EA%B8%80'),
+    `${JSON.stringify(await tiles(page))} ${JSON.stringify(await cards(page))} ${page.url()}`);
+  await page.fill('.catalog input[type=search]', '');
+  await sleep(100);
   await shot(page, 'b-store');
   await open(page, `${BASE}/app/calendar`, '.store-head');
-  step('앱 페이지: 이름·한 줄·스위치·소개·위젯·링크', (await texts(page, '.store-head h1'))[0] === '캘린더' && !!(await page.$('.store-head label.switch')) && (await texts(page, 'main .about'))[0].startsWith('내 캘린더와')
-    && (await texts(page, 'main ul.plain li')).join('|').includes('오늘') && !(await page.$('main a.primary')), (await texts(page, 'main ul.plain li')).join('|'));
-  await page.click('.store-head label.switch input');
+  step('앱 페이지: 이름·한 줄·행동 하나(추가)·소개·위젯(cols×rows)·링크', (await texts(page, '.store-head h1'))[0] === '캘린더' && !(await page.$('main label.switch'))
+    && (await texts(page, 'main p.actions button')).join() === '추가' && (await texts(page, 'main .about'))[0].startsWith('내 캘린더와')
+    && (await texts(page, 'main ul.plain li')).join('|').includes('오늘 2×1') && !(await page.$('main a.primary')), (await texts(page, 'main ul.plain li')).join('|'));
+  await page.click('main p.actions button');
   await sleep(300);
-  step("앱 페이지에서 켜면 '열기'가 첫 행동이 된다", (await texts(page, 'main a.primary')).join() === '열기' && mock.get('site', 'prefs').apps.includes('calendar'));
+  step("앱 페이지에서 추가하면 '열기'가 첫 행동이고 '빼기'가 옆에 선다", (await texts(page, 'main a.primary')).join() === '열기' && (await texts(page, 'main p.actions button')).join() === '빼기'
+    && mock.get('site', 'prefs').apps.includes('calendar'));
   await shot(page, 'b-app');
+
+  // (b2) the header (round 7): an app with one page is a link; one with more opens its pages under the pointer, as the person's menu does
+  await open(page, `${BASE}/`, '.widgets');
+  step('한 쪽뿐인 앱은 헤더의 링크, 여러 쪽인 앱(에이전트)은 펼침 메뉴다', (await page.$$('header nav > a')).length === 3 && (await page.$$('header nav > details.nav-menu')).length === 1,
+    JSON.stringify(await navApps(page)));
+  await page.hover('header details.nav-menu > summary');
+  await sleep(150);
+  step('짚으면 그 앱의 쪽들이 아래로 펼쳐진다', (await texts(page, 'header details.nav-menu[open] > div a')).join() === '에이전트 실행,프리셋,파일', (await texts(page, 'header details.nav-menu > div a')).join());
+  await page.hover('header details.nav-menu[open] > div a:text-is("파일")');
+  await sleep(250);
+  step('펼친 목록으로 내려가도 닫히지 않는다', !!(await page.$('header details.nav-menu[open]')));
+  await page.mouse.move(5, 700);
+  await sleep(350);
+  step('포인터가 떠나면 닫힌다', !(await page.$('header details[open]')));
+  await page.hover('header details.me > summary');
+  await sleep(150);
+  step('이름 메뉴도 짚으면 펼쳐진다(계정·사용자 관리·앱·설정·로그아웃)', JSON.stringify(await texts(page, 'header details.me[open] > div a')) === '["계정","사용자 관리","앱","설정","로그아웃"]', JSON.stringify(await texts(page, 'header details.me > div a')));
+  await page.keyboard.press('Escape');
+  await sleep(100);
+  step('Esc 가 닫는다', !(await page.$('header details[open]')));
+  await page.mouse.move(5, 700);
+  await sleep(200);
 
   // (c) the widget module: eq-sandbox's recent boards, from its own store
   mock.put('eq-sandbox', 'boards', [{ id: 'b1', title: '작업판 1', updated: Date.now() - 1000 }, { id: 'b2', title: '작업판 2', updated: Date.now() }]);
   await open(page, `${BASE}/`, '.widgets');
-  step("편집 모드가 없다: 머리의 도구는 '위젯 고르기' 하나 (C29)", !(await page.$('.section-head button:text-is("편집")')) && !!(await page.$('.section-head button:text-is("위젯 고르기")')));
+  step("편집 모드가 없다: 격자 위에 도구 줄이 없고, 마지막 칸이 '위젯 고르기'다 (C29, 7차)", !(await page.$('main .section-head')) && !(await page.$('main button:text-is("편집")'))
+    && (await page.$eval('.widgets', (g) => g.lastElementChild.matches('button.add-widget') && g.lastElementChild.textContent.includes('위젯 고르기'))) && (await page.$eval('main', (m) => m.firstElementChild.matches('.widgets'))));
   await page.keyboard.press('w');
   await page.waitForSelector('dialog[open] .pick-list');
   const rows = await page.$$eval('dialog .pick-row', (els) => els.map((e) => ({ app: e.dataset.app, w: e.dataset.widget, title: e.querySelector('.pick-title').textContent, desc: e.querySelector('.pick-desc').textContent, size: e.querySelector('.tag.size').textContent, h: e.getBoundingClientRect().height, on: e.querySelector('input').checked })));
@@ -569,7 +608,7 @@ async function run() {
 
   // (h) the theme: chosen in the settings, applied at once, kept as the cookie and in the account, survives a reload
   await open(page, `${BASE}/settings`, '.value');
-  step('설정은 값 셋이고 설명 문단이 없다', (await page.$$('.value')).length === 3 && (await page.$$('main p.muted')).length === 0 && !(await page.$('main a.button')));
+  step('설정의 첫 묶음은 값 셋이고 설명 문단이 없다', (await page.$$('main > section:nth-of-type(1) .value')).length === 3 && (await page.$$('main p.muted')).length === 0 && !(await page.$('main a.button')));
   const before = await bg(page);
   await page.selectOption('select[name=theme]', 'dark');
   await sleep(300);
@@ -581,10 +620,165 @@ async function run() {
   step('새로고침 뒤에도 어둡다(쿠키 → 첫 칠)', (await theme(page)) === 'dark' && (await page.evaluate(() => document.cookie.includes('theme=dark'))));
   await shot(page, 'h-dark');
 
+  // (h2) the look (round 7, docs/frame.md §1.3): the colour, the corners, the type, the text size, the main page's columns, an image
+  // under the page — the site file's choices as /me carries them, each kept with the account and put on at once as tokens on <html>
+  const LOOK = JSON.parse(process.env.LOOK_JSON);
+  const prop = (name) => page.evaluate((n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim(), name);
+  const chipsOf = (kind) => texts(page, `[data-look=${kind}] button.chip`);
+  const pickLook = async (kind, label) => { await page.click(`[data-look=${kind}] button.chip:text-is("${label}")`); await sleep(300); await page.waitForSelector(`[data-look=${kind}]`); };
+  step('모양 묶음: 사이트 파일이 선언한 색·모서리·글꼴·글자 크기·홈 칸 수의 칩과 배경 이미지 칸', (await chipsOf('palette')).length === LOOK.palette.length && (await chipsOf('corner')).length === LOOK.corner.length
+    && (await chipsOf('type')).length === LOOK.type.length && (await chipsOf('size')).length === LOOK.size.length && (await chipsOf('columns')).length === LOOK.columns.length
+    && !!(await page.$('input[name=image]')) && (await page.$$('[data-look=palette] .swatch')).length === LOOK.palette.length,
+    JSON.stringify([await chipsOf('palette'), await chipsOf('size'), await chipsOf('columns')]));
+  const ownAccent = await prop('--accent');
+  const ownRadius = await prop('--radius');
+  const pal = LOOK.palette.find((c) => Object.keys(c.dark).length);
+  await pickLook('palette', pal.label);
+  step('색을 고르면 바로 그 팔레트의 토큰이 된다(어두운 테마 = dark 값)', (await prop('--accent')) === pal.dark.accent && (await prop('--accent-soft')) === pal.dark['accent-soft'], `${await prop('--accent')} vs ${pal.dark.accent}`);
+  step('고른 모양은 계정에 남는다', mock.get('site', 'prefs').look.palette === pal.id, JSON.stringify(mock.get('site', 'prefs').look));
+  await page.selectOption('select[name=theme]', 'light');
+  await sleep(300);
+  step('테마를 바꾸면 팔레트도 그 테마의 값이다', (await prop('--accent')) === pal.light.accent, await prop('--accent'));
+  await page.selectOption('select[name=theme]', 'dark');
+  await sleep(300);
+  const corner = LOOK.corner.find((c) => c.tokens.radius);
+  await pickLook('corner', corner.label);
+  step('모서리: --radius 와 버튼·칸의 둥글기가 그 값이다', (await prop('--radius')) === corner.tokens.radius
+    && (await page.$eval('main section .inline-field button', (b) => getComputedStyle(b).borderTopLeftRadius)) === corner.tokens['radius-s']
+    && (await page.$eval('main section.card', (s) => getComputedStyle(s).borderTopLeftRadius)) === corner.tokens.radius,
+    `${await prop('--radius')} ${await page.$eval('main section .inline-field button', (b) => getComputedStyle(b).borderTopLeftRadius)}`);
+  const type = LOOK.type.find((c) => c.tokens.sans && !c.tokens.sans.startsWith('var('));
+  await pickLook('type', type.label);
+  step('글꼴: 본문의 글꼴이 그 선언이다', (await page.evaluate(() => getComputedStyle(document.body).fontFamily)).startsWith(type.tokens.sans.split(',')[0]), await page.evaluate(() => getComputedStyle(document.body).fontFamily));
+  const size = LOOK.size.find((c) => c.tokens['root-size']);
+  await pickLook('size', size.label);
+  step('글자 크기: 뿌리 글자 크기가 바뀌고 글이 따라 커지거나 작아진다', (await page.evaluate(() => getComputedStyle(document.documentElement).fontSize)) === `${16 * parseFloat(size.tokens['root-size']) / 100}px`,
+    await page.evaluate(() => getComputedStyle(document.documentElement).fontSize));
+  const n = LOOK.columns.find((x) => x >= 3);
+  await pickLook('columns', `${n}칸`);
+  step('홈 칸 수가 계정에 남는다', mock.get('site', 'prefs').look.columns === n);
+  await page.fill('input[name=image]', 'javascript:alert(1)');
+  await page.press('input[name=image]', 'Enter');
+  await sleep(300);
+  step('배경 이미지: 주소가 아닌 것은 받지 않는다', !mock.get('site', 'prefs').look.image && (await texts(page, '.toast.error')).length === 1);
+  await page.fill('input[name=image]', '/e2e/look.png');
+  await page.press('input[name=image]', 'Enter');
+  await sleep(300);
+  step('배경 이미지: 이 사이트의 주소(또는 https)는 페이지 밑에 깔린다', mock.get('site', 'prefs').look.image === '/e2e/look.png'
+    && (await page.evaluate(() => getComputedStyle(document.body).backgroundImage)).includes('/e2e/look.png'), await page.evaluate(() => getComputedStyle(document.body).backgroundImage));
+  await shot(page, 'h-look');
+  await open(page, `${BASE}/`, '.widgets');
+  step('홈은 고른 칸 수로 나뉜다', (await page.$eval('.widgets', (g) => getComputedStyle(g).gridTemplateColumns.split(' ').length)) === n, await page.$eval('.widgets', (g) => getComputedStyle(g).gridTemplateColumns));
+  await shot(page, 'h-look-home');
+  // before the first paint: a page with theme.js alone (no site.js, no pages) already wears the kept look
+  await page.route(`${BASE}/prepaint`, (r) => r.fulfill({ status: 200, contentType: 'text/html; charset=utf-8',
+    body: '<!doctype html><html><head><link rel="stylesheet" href="/auth/static/theme.css"><script src="/auth/static/theme.js"></script></head><body></body></html>' }));
+  await page.goto(`${BASE}/prepaint`, { waitUntil: 'load' });
+  step('theme.js 혼자서(site.js 없이, 첫 칠 전) 고른 모양을 이미 입힌다', (await prop('--accent')) === pal.dark.accent && (await prop('--radius')) === corner.tokens.radius, `${await prop('--accent')} ${await prop('--radius')}`);
+  await page.unroute(`${BASE}/prepaint`);
+  await open(page, `${BASE}/settings`, '[data-look=palette]');
+  await page.click('.value:has([data-look=palette]) button.link');
+  await sleep(300);
+  step("'기본값'은 theme.css 의 제 색으로 돌린다", (await prop('--accent')) === ownAccent && !('palette' in mock.get('site', 'prefs').look), `${await prop('--accent')} vs ${ownAccent}`);
+  // the steps after read the frame as theme.css draws it: the look goes back to the site's own
+  mock.put('site', 'prefs', { ...mock.get('site', 'prefs'), look: {} });
+  await open(page, `${BASE}/settings`, '[data-look=palette]');
+  step('모양을 다 비우면 theme.css 의 토큰이다(이 브라우저의 사본도)', (await prop('--radius')) === ownRadius && (await page.evaluate(() => getComputedStyle(document.documentElement).fontSize)) === '16px'
+    && (await page.evaluate(() => localStorage.getItem('look'))) === JSON.stringify({ light: {}, dark: {}, both: {} }));
+
   // (i) an app's own page: the same frame (header with the apps that are on, the theme) from site.js
   await open(page, `${BASE}/apps/eq-sandbox/`, 'body[data-ready]');
   step('앱 페이지도 같은 테마다', (await theme(page)) === 'dark');
   step('앱 페이지의 헤더도 같은 프레임이다(켠 앱 셋·이름 메뉴)', (await navApps(page)).length === 3 && !!(await page.$('header details.me')), JSON.stringify(await navApps(page)));
+
+  // (m) the agents' files: the workspace is the user's only way to the sandbox's files — each entry's menu downloads, renames or
+  // moves, deletes; a folder is made; a folder downloads as a zip (site-agent-files U1). Only the workspace is set afresh: the
+  // account's settings stay as the steps before left them (the steps after read them)
+  mock.resetWork();
+  await open(page, `${BASE}/agents/files`, 'main table');
+  const rowsOf = () => texts(page, 'main table tbody tr td:nth-child(2)');
+  step('파일: 폴더의 항목과 머리의 새 폴더·폴더 내려받기', JSON.stringify(await rowsOf()) === '["notes.txt","runs/"]'
+       && (await texts(page, 'main section > div.actions button')).join() === '새 폴더,폴더 내려받기 (zip)', JSON.stringify(await rowsOf()));
+  await menuOf(page, 'main table tbody tr:has-text("notes.txt")');
+  step('파일 줄의 오른쪽 클릭: 열기·내려받기·이름 바꾸기·옮기기·지우기', JSON.stringify(await menuItems(page)) === '["열기","내려받기","이름 바꾸기·옮기기…","지우기"]', JSON.stringify(await menuItems(page)));
+  let dl = page.waitForEvent('download');
+  await pickItem(page, '내려받기');
+  step('파일 내려받기는 그 이름으로 저장된다', (await dl).suggestedFilename() === 'notes.txt');
+  dl = page.waitForEvent('download');
+  await page.click('main table tbody tr:has-text("runs/") button.more');
+  await page.waitForSelector('.menu[role=menu]');
+  await pickItem(page, '내려받기');
+  step('폴더 내려받기는 zip 이다 (⋯ 메뉴)', (await dl).suggestedFilename() === 'runs.zip');
+  await page.click('main section .actions button:text-is("새 폴더")');
+  await page.fill('dialog[open] input', 'keep');
+  await page.keyboard.press('Enter');
+  await page.waitForSelector('main table tbody tr:has-text("keep/")');
+  step('새 폴더가 만들어지고 목록에 선다', mock.work().get('keep') === null && JSON.stringify(await rowsOf()) === '["keep/","notes.txt","runs/"]', JSON.stringify(await rowsOf()));
+  await page.focus('main table tbody tr:has-text("notes.txt") a');
+  await page.keyboard.press('Shift+F10');
+  await page.waitForSelector('.menu[role=menu]');
+  step('Shift+F10 이 같은 메뉴를 연다', (await menuItems(page)).includes('이름 바꾸기·옮기기…'));
+  await pickItem(page, '이름 바꾸기·옮기기…');
+  step('옮기기 칸은 지금 경로로 시작한다', (await page.inputValue('dialog[open] input')) === 'notes.txt');
+  await page.fill('dialog[open] input', 'keep/notes.txt');
+  await page.keyboard.press('Enter');
+  await sleep(400);
+  step('옮기면 줄이 이 폴더를 떠나고 새 경로에 있다', mock.work().has('keep/notes.txt') && !mock.work().has('notes.txt') && JSON.stringify(await rowsOf()) === '["keep/","runs/"]', JSON.stringify(await rowsOf()));
+  await open(page, `${BASE}/agents/files?path=keep/notes.txt`, 'main pre');
+  step('열린 파일: 내려받기 + ⋯, 그리고 그 글', (await texts(page, 'main section > div.actions button')).join() === '내려받기,⋯' && (await texts(page, 'main pre')).join() === 'remember the milk');
+  await page.click('main section .actions button.more');
+  await page.waitForSelector('.menu[role=menu]');
+  step('열린 파일의 메뉴엔 열기가 없다', JSON.stringify(await menuItems(page)) === '["내려받기","이름 바꾸기·옮기기…","지우기"]', JSON.stringify(await menuItems(page)));
+  await pickItem(page, '지우기');
+  step('지우기는 되돌릴 수 없다고 묻는다', (await texts(page, 'dialog[open] p')).join().includes('되돌릴 수 없습니다') && !!(await page.$('dialog[open] button.danger')));
+  await page.click('dialog[open] button.danger');
+  await page.waitForSelector('main p.empty');
+  step('열린 파일을 지우면 그 폴더로 돌아간다', !mock.work().has('keep/notes.txt') && page.url().endsWith('/agents/files?path=keep'), page.url());
+  await open(page, `${BASE}/agents/files`, 'main table');
+  await menuOf(page, 'main table tbody tr:has-text("runs/")');
+  await pickItem(page, '지우기');
+  step('폴더를 지울 땐 그 안의 모든 것이라고 말한다', (await texts(page, 'dialog[open] p')).join().includes('폴더와 그 안의 모든 것'));
+  await page.click('dialog[open] button.danger');
+  await page.waitForFunction(() => !document.querySelector('main table') || ![...document.querySelectorAll('main table tbody tr')].some((r) => r.textContent.includes('runs/')));
+  step('폴더가 그 안의 것과 함께 지워진다', ![...mock.work().keys()].some((k) => k.startsWith('runs')), JSON.stringify([...mock.work().keys()]));
+  // the pick: boxes, Shift-click for a run, the head's box for all; the bar downloads, moves, deletes them together
+  mock.resetWork();
+  mock.work().set('keep', null);
+  await open(page, `${BASE}/agents/files`, 'main table');
+  const headActs = () => texts(page, 'main section > div.actions > *');
+  await page.click('main table tbody tr:has-text("notes.txt") td.pick input');
+  await page.click('main table tbody tr:has-text("runs/") td.pick input', { modifiers: ['Shift'] });
+  step('고르면 머리가 고른 것의 동작으로 바뀐다 (Shift 로 이어 고름)', JSON.stringify(await headActs()) === '["2개 고름","내려받기","옮기기…","지우기","고르기 해제"]'
+       && (await page.$$('main table tbody tr.picked')).length === 2 && (await page.$eval('main table thead input', (e) => e.indeterminate)), JSON.stringify(await headActs()));
+  dl = page.waitForEvent('download');
+  await page.click('main section > div.actions button:text-is("내려받기")');
+  step('고른 것은 한 zip 으로 내려받는다', (await dl).suggestedFilename() === 'work.zip');
+  await page.keyboard.press('Escape');
+  await sleep(150);
+  step('Esc 가 고른 것을 풀고 머리를 돌려놓는다', (await headActs()).join() === '새 폴더,폴더 내려받기 (zip)' && (await page.$$('main table tbody tr.picked')).length === 0, JSON.stringify(await headActs()));
+  await page.click('main table tbody tr:has-text("notes.txt") td.pick input');
+  await page.click('main table tbody tr:has-text("runs/") td.pick input');
+  await page.click('main section > div.actions button:text-is("옮기기…")');
+  step('옮기기 창은 고른 것을 이름으로 보인다', JSON.stringify(await texts(page, 'dialog[open] li code')) === '["notes.txt","runs"]', JSON.stringify(await texts(page, 'dialog[open] li code')));
+  await page.fill('dialog[open] input', 'keep');
+  await page.keyboard.press('Enter');
+  await sleep(400);
+  step('고른 것이 한 폴더로 옮겨진다', mock.work().has('keep/notes.txt') && mock.work().has('keep/runs/r1/report.md') && JSON.stringify(await rowsOf()) === '["keep/"]', JSON.stringify([...mock.work().keys()]));
+  await open(page, `${BASE}/agents/files?path=keep`, 'main table');
+  await page.click('main table thead input');
+  await page.keyboard.press('Delete');
+  await page.waitForSelector('dialog[open]');
+  step('머리의 칸이 모두 고르고, Delete 가 지우기를 묻는다', (await texts(page, 'dialog[open] h2')).join() === '2개 지우기' && !!(await page.$('dialog[open] button.danger')), (await texts(page, 'dialog[open] h2')).join());
+  await page.click('dialog[open] button.danger');
+  await page.waitForSelector('main p.empty');
+  step('고른 것이 함께 지워진다', ![...mock.work().keys()].some((k) => k.startsWith('keep/')), JSON.stringify([...mock.work().keys()]));
+  await shot(page, 'agents-files');
+  // a run's branches (agents/branches.py): what became of each repository of its read-write mounts
+  await open(page, `${BASE}/agents/runs/run:b1`, 'ul.branches');
+  const brs = await page.$$eval('ul.branches li', (ls) => ls.map((l) => [l.querySelector('code').textContent, l.querySelector('.tag').textContent, l.querySelector('pre') ? l.querySelector('pre').textContent : '']));
+  step('실행 페이지가 브랜치와 저장소마다 그 결과를 보인다(병합됨·브랜치에 남음+충돌 파일·바뀐 것 없음)', (await texts(page, 'main section h2 code')).includes('run/b1')
+    && JSON.stringify(brs) === JSON.stringify([['/Workspace/RefHandbookMCP', '병합됨', ''], ['/Workspace/NNG-lean', '브랜치에 남음', 'conflicts:\nREADME.md'], ['/Workspace/OnlineViL', '바뀐 것 없음', '']]), JSON.stringify(brs));
+  await shot(page, 'agents-run-branches');
 
   // (j) a new browser: the account's theme and apps arrive with load(), without the cookie
   const ctx2 = await browser.newContext({ viewport: { width: 1100, height: 820 }, locale: 'ko-KR' });

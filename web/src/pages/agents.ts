@@ -1,8 +1,8 @@
 // The agents' pages over /agents/api/v1: runs (start one from a preset, follow one), API keys, the
 // workspace's files (the presets, each a flow, are flows.ts's). Approving a run the model asked for is the approval page's.
 
-import { act, agents, empty, flashNext, form, go, h, help, link, main, meta, num, pageHead, replace, section, tag, title, values, when } from '/auth/static/site.js';
-import type { Child, Json } from '/auth/static/site.js';
+import { act, agents, button, dialog, empty, flashNext, form, go, h, help, keys as pageKeys, link, main, menuButton, meta, num, onMenu, pageHead, replace, section, tag, title, values, when } from '/auth/static/site.js';
+import type { Child, Json, MenuSection } from '/auth/static/site.js';
 import { n_, t } from '../lib/i18n';
 import { flowProgress, flowView, presetItem } from './flows';
 import { Key, providerName, roleName } from './grant';
@@ -66,6 +66,31 @@ function flowSection(r: Json): HTMLElement {
 
 let poll = 0;
 
+/** What a run's branch is to each repository (agents/branches.py): its label and its tag's kind. */
+function branchState(state: string): [string, string] {
+  switch (state) {
+    case 'open': return [t('작업 중'), ''];
+    case 'merged': return [t('병합됨'), 'ok'];
+    case 'kept': return [t('브랜치에 남음'), 'warn'];
+    case 'unchanged': return [t('바뀐 것 없음'), ''];
+    case 'lost': return [t('사라짐'), 'bad'];
+    default: return [t('만들지 못함'), 'bad'];
+  }
+}
+
+/** The run's branch over the repositories of its read-write mounts: each one's place, what became of it, what git said. */
+function branches(b: Json | null): Child {
+  if (!b) return false;
+  return section(h('span', null, t('브랜치'), ' ', h('code', null, b.branch)),
+    b.why && meta(b.why),
+    b.repos.length > 0 && h('ul', { class: 'plain branches' }, b.repos.map((r: Json) => {
+      const [label, kind] = branchState(r.state);
+      return h('li', null, h('code', null, r.repo), ' ', tag(label, kind),
+        r.files > 0 && [' ', h('span', { class: 'small' }, t('파일 {n}개', { n: r.files }))],
+        r.why && h('pre', { class: 'wrap small' }, r.why));
+    })));
+}
+
 export async function run(id: string): Promise<void> {
   window.clearTimeout(poll);
   const r = await agents.get(`/runs/${encodeURIComponent(id)}`);
@@ -111,6 +136,7 @@ export async function run(id: string): Promise<void> {
           h('button', { class: 'secondary' }, t('프리셋으로 저장'))))),
     r.result && section(h('span', null, t('결과'), ' ', tag(r.result.outcome)), h('pre', { class: 'wrap' }, r.result.text),
       r.result.notes.map((n: Json) => h('p', { class: 'small' }, `[${n.id}] ${n.text}`))),
+    branches(r.branches),
     r.board.length > 0 && section(t('공유된 노트'), r.board.map((n: Json) =>
       h('p', { class: 'small' }, tag(n.state, n.state === 'verified' ? 'ok' : ''), ` ${n.text}`))));
   if (r.state === 'open' && location.pathname === `/agents/runs/${id}`) {
@@ -163,24 +189,154 @@ export async function keys(): Promise<void> {
         h('div', { class: 'actions' }, h('button', null, t('확인하고 등록'))))));
 }
 
-// ── files ───────────────────────────────────────────────────────────────
+// ── files ───────────────────────────────────────────────────────────────────
 
+const filesHref = (p: string) => (p ? `/agents/files?path=${encodeURIComponent(p)}` : '/agents/files');
+const downloadHref = (p: string) => `/agents/api/v1/files/download?path=${encodeURIComponent(p)}`;
+const inside = (dir: string, name: string) => (dir ? `${dir}/${name}` : name);
+const parentOf = (p: string) => p.slice(0, Math.max(0, p.lastIndexOf('/')));
+const trimmed = (p: string) => p.trim().replace(/^\/+|\/+$/g, '');
+
+/** The workspace (/work), the user's only way to the sandbox's files: a folder's entries or a file's text, and what
+ * the user does with them — download (a folder as a zip), make a folder, rename or move, delete. An entry's actions
+ * are its menu (⋯, the right-click, Shift+F10), as the vault's notes have theirs; several entries are picked by
+ * their boxes (Shift-click picks a run of them, the head's box all) and handled together from the bar that picking
+ * brings up (download as one zip, move into a folder, delete). Esc lets the pick go; Delete deletes it. */
 export async function files(): Promise<void> {
-  const path = new URLSearchParams(location.search).get('path') ?? '';
+  const path = trimmed(new URLSearchParams(location.search).get('path') ?? '');
   const d = await agents.get(`/files?path=${encodeURIComponent(path)}`);
   const parts = path.split('/').filter(Boolean);
-  const crumbs = [link('/agents/files', '/work'), ...parts.map((p, i) =>
-    [' / ', link(`/agents/files?path=${encodeURIComponent(parts.slice(0, i + 1).join('/'))}`, p)])];
+  const crumbs = [link(filesHref(''), '/work'), ...parts.map((p, i) =>
+    [' / ', link(filesHref(parts.slice(0, i + 1).join('/')), p)])];
+  const redraw = (p: string) => go(filesHref(p));  // the page again, at p (the same page: drawn anew)
+
+  async function makeFolder(dir: string): Promise<void> {
+    const name = h('input', { type: 'text', required: true, autofocus: true });
+    if (!await dialog(t('새 폴더'), h('div', { class: 'fields' }, h('label', null, t('이름 (폴더/이름)'), name)), { ok: t('만들기') })) return;
+    const q = trimmed(name.value);
+    if (!q) return;
+    await agents.post('/files/mkdir', { path: inside(dir, q) });
+    redraw(dir);
+  }
+
+  async function move(p: string): Promise<void> {
+    const to = h('input', { type: 'text', required: true, value: p, autofocus: true });
+    if (!await dialog(t('이름 바꾸기·옮기기'), h('div', { class: 'fields' }, h('label', null, t('새 경로 (폴더/이름)'), to)), { ok: t('옮기기') })) return;
+    const q = trimmed(to.value);
+    if (!q || q === p) return;
+    const r = await agents.post('/files/move', { from: p, to: q });
+    redraw(p === path ? r.path : path);  // the open file follows its new name; a row moved away leaves this folder
+  }
+
+  async function remove(p: string, kind: string): Promise<void> {
+    const what = kind === 'dir' ? t('{name} 폴더와 그 안의 모든 것을 지웁니다. 되돌릴 수 없습니다.', { name: p })
+      : t('{name} 을(를) 지웁니다. 되돌릴 수 없습니다.', { name: p });
+    if (!await dialog(t('지우기'), h('p', null, what), { ok: t('지우기'), danger: true })) return;
+    await agents.del(`/files?path=${encodeURIComponent(p)}`);
+    redraw(p === path ? parentOf(p) : path);
+  }
+
+  /** An entry's actions, at its row and, for the open file, at its head. */
+  const entryMenu = (p: string, kind: string, opened = false): MenuSection[] => {
+    const whole = kind === 'dir' || kind === 'file';  // a link or a special file is moved or deleted, never followed
+    return [{ title: p, items: [
+      ...(whole && !opened ? [{ label: t('열기'), run: () => go(filesHref(p)) }] : []),
+      ...(whole ? [{ label: t('내려받기'), detail: kind === 'dir' ? 'zip' : '', run: () => location.assign(downloadHref(p)) }] : []),
+      { label: t('이름 바꾸기·옮기기…'), run: () => move(p) },
+      { label: t('지우기'), danger: true, run: () => remove(p, kind) } ] }];
+  };
+
+  // the pick: entries of this folder handled together (their paths, in the folder's order)
+  const entries: Json[] = d.kind === 'dir' ? d.entries : [];
+  const picked = new Set<string>();
+  let anchor = -1;  // the row a Shift-click picks from
+  const boxes: HTMLInputElement[] = [];
+  const all = h('input', { type: 'checkbox', 'aria-label': t('모두 고르기'),
+                           onchange: () => { entries.forEach(e => (all.checked ? picked.add(e.name) : picked.delete(e.name))); shown(); } });
+  const head = h('div', { class: 'actions' });
+  const pickedPaths = () => entries.filter(e => picked.has(e.name)).map(e => inside(path, e.name));
+
+  function pick(i: number, on: boolean, run: boolean): void {
+    const [a, b] = run && anchor >= 0 ? [Math.min(anchor, i), Math.max(anchor, i)] : [i, i];
+    for (let k = a; k <= b; k++) (on ? picked.add(entries[k].name) : picked.delete(entries[k].name));
+    anchor = i;
+    shown();
+  }
+
+  /** The head of the folder: what to do with it, or, while something is picked, with the pick. */
+  function shown(): void {
+    entries.forEach((e, i) => { if (boxes[i]) { boxes[i].checked = picked.has(e.name); boxes[i].closest('tr')?.classList.toggle('picked', boxes[i].checked); } });
+    all.checked = picked.size > 0 && picked.size === entries.length;
+    all.indeterminate = picked.size > 0 && picked.size < entries.length;
+    replace(head, picked.size
+      ? [h('strong', { class: 'picked' }, t('{n}개 고름', { n: picked.size })),
+         button(t('내려받기'), () => location.assign(`/agents/api/v1/files/download?${pickedPaths().map(p => `path=${encodeURIComponent(p)}`).join('&')}`)),
+         button(t('옮기기…'), () => movePicked(), 'secondary'),
+         button(t('지우기'), () => removePicked(), 'danger'),
+         button(t('고르기 해제'), () => { picked.clear(); shown(); }, 'link')]
+      : [button(t('새 폴더'), () => makeFolder(path), 'secondary'),
+         button(t('폴더 내려받기 (zip)'), () => location.assign(downloadHref(path)), 'secondary'),
+         path && menuButton(() => entryMenu(path, 'dir', true))]);
+  }
+
+  /** What the dialogs name: the picked entries, a few of them by name. */
+  const naming = (ps: string[]) => h('ul', { class: 'plain small' }, ps.slice(0, 8).map(p => h('li', null, h('code', null, p))),
+    ps.length > 8 && h('li', { class: 'muted' }, t('외 {n}개', { n: ps.length - 8 })));
+
+  async function movePicked(): Promise<void> {
+    const ps = pickedPaths();
+    const into = h('input', { type: 'text', value: path, autofocus: true });
+    if (!await dialog(t('{n}개 옮기기', { n: ps.length }), h('div', { class: 'fields' }, naming(ps),
+      h('label', null, t('옮길 폴더 (비우면 /work)'), into)), { ok: t('옮기기') })) return;
+    const q = trimmed(into.value);
+    if (q === path) return;
+    await agents.post('/files/move', { from: ps, into: q });
+    redraw(path);
+  }
+
+  async function removePicked(): Promise<void> {
+    const ps = pickedPaths();
+    if (!await dialog(t('{n}개 지우기', { n: ps.length }), h('div', null,
+      h('p', null, t('폴더는 그 안의 것과 함께 지워집니다. 되돌릴 수 없습니다.')), naming(ps)),
+      { ok: t('지우기'), danger: true })) return;
+    await agents.del(`/files?${ps.map(p => `path=${encodeURIComponent(p)}`).join('&')}`);
+    redraw(path);
+  }
+
+  pageKeys([
+    { key: 'Escape', label: t('고르기 해제'), run: () => { picked.clear(); shown(); }, when: () => picked.size > 0 },
+    { key: 'Delete', label: t('고른 것 지우기'), run: () => removePicked(), when: () => picked.size > 0 },
+  ]);
+
+  const entryRow = (e: Json, i: number) => {
+    const p = inside(path, e.name);
+    const whole = e.kind === 'dir' || e.kind === 'file';
+    const box = boxes[i] = h('input', { type: 'checkbox', 'aria-label': t('{name} 고르기', { name: e.name }) });
+    box.addEventListener('click', (ev: MouseEvent) => pick(i, box.checked, ev.shiftKey));
+    return onMenu(h('tr', null,
+      h('td', { class: 'pick' }, box),
+      h('td', { class: 'wrap' }, whole ? link(filesHref(p), e.name + (e.kind === 'dir' ? '/' : ''))
+        : [e.name, ' ', tag(e.kind === 'link' ? t('심볼릭 링크') : t('특수 파일'))]),
+      h('td', { class: 'muted small num' }, e.kind === 'file' ? `${num(e.size)} B` : ''),
+      h('td', { class: 'actions' }, menuButton(() => entryMenu(p, e.kind)))), () => entryMenu(p, e.kind));
+  };
+
   title(t('파일'));
   replace(main(),
-    pageHead(t('파일'), agentTabs()), meta(h('code', null, '/work'), help([t('샌드박스에서 스크립트와 에이전트가 쓰는 작업 공간입니다(읽기 전용).'), ' ',
-      t('에이전트 실행은 각자 이 폴더에서 일합니다:'), ' ', h('code', null, '/work/runs/<run>')])),
-    section(crumbs, d.kind === 'dir'
-      ? (d.entries.length ? h('div', { class: 'table-wrap' }, h('table', null, h('tbody', null, d.entries.map((e: Json) => h('tr', null,
-          h('td', { class: 'wrap' }, link(`/agents/files?path=${encodeURIComponent((path ? path + '/' : '') + e.name)}`,
-            e.name + (e.kind === 'dir' ? '/' : ''))),
-          h('td', { class: 'muted small num' }, e.kind === 'dir' ? '' : `${num(e.size)} B`))))))
-        : empty(t('비어 있습니다.')))
-      : d.text === null ? empty(t('텍스트가 아닌 파일입니다 ({size} B).', { size: num(d.size) }))
-        : [meta(`${num(d.size)} B`), h('pre', { class: 'wrap' }, d.text)]));
+    pageHead(t('파일'), agentTabs()), meta(h('code', null, '/work'), help([t('샌드박스에서 스크립트와 에이전트가 쓰는 작업 공간입니다.'), ' ',
+      t('에이전트 실행은 각자 이 폴더에서 일합니다:'), ' ', h('code', null, '/work/runs/<run>'), ' ',
+      t('줄마다 ⋯(또는 오른쪽 클릭)으로 내려받고, 이름을 바꾸거나 옮기고, 지웁니다.')])),
+    d.kind === 'dir'
+      ? section(crumbs, head,
+          entries.length ? h('div', { class: 'table-wrap' }, h('table', { class: 'files' },
+            h('thead', null, h('tr', null, h('th', { class: 'pick' }, all), h('th', null, t('이름')), h('th', { class: 'num' }, t('크기')), h('th'))),
+            h('tbody', null, entries.map(entryRow))))
+            : empty(t('비어 있습니다.')))
+      : section(crumbs,
+          h('div', { class: 'actions' },
+            button(t('내려받기'), () => location.assign(downloadHref(path))),
+            menuButton(() => entryMenu(path, 'file', true))),
+          d.text === null ? empty(t('텍스트가 아닌 파일입니다 ({size} B).', { size: num(d.size) }))
+            : [meta(`${num(d.size)} B`), h('pre', { class: 'wrap' }, d.text)]));
+  if (d.kind === 'dir') shown();
 }

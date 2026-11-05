@@ -51,7 +51,7 @@ def test_first_open_backs_up_migrates_and_round_trips(tmp_path):
     assert "k_meta" not in tables(path)
     hb = Handbook(path)
     r = Research(hb)
-    assert r.k.schema() == 1 and r.k.meta("quarantine:geo") is None
+    assert r.k.schema() == runtime.SCHEMA_VERSION and r.k.meta("quarantine:geo") is None
     backup = tmp_path / "u.db.pre-kernel"
     assert backup.exists() and "k_meta" not in tables(backup) and "rl_rows" in tables(backup)
     assert verify.roundtrip(r, r.k.g, "geo") == []
@@ -71,7 +71,8 @@ def test_stores_from_0_7_0_are_recognised_as_schema_1(tmp_path):
         m.set_meta("schema", None)  # 0.7.0 recorded only kernel_status
     hb._kernel = None
     del hb._kernel
-    assert runtime.attach(hb).schema() == 1
+    assert runtime.attach(hb).schema() == runtime.SCHEMA_VERSION  # recognised as v1: only the later steps run
+    assert sum(1 for _ in hb.db.execute("SELECT 1 FROM k_log WHERE event LIKE 'migration v1:%'")) == 1
 
 
 def test_a_ledger_that_does_not_round_trip_is_quarantined_alone(tmp_path, monkeypatch):
@@ -98,8 +99,9 @@ def test_a_migration_decision_is_durable_before_any_tool_runs(tmp_path, monkeypa
     assert not hb.db.in_transaction
     with pytest.raises(ResearchError):
         r.begin("geo", "S9-none")  # a refusal rolls back its own transaction, and nothing of the migration
-    assert r.k.meta("quarantine:bad") and r.k.schema() == 1
-    assert sqlite3.connect(path).execute("SELECT value FROM k_meta WHERE key = 'schema'").fetchone() == ("1",)
+    assert r.k.meta("quarantine:bad") and r.k.schema() == runtime.SCHEMA_VERSION
+    assert sqlite3.connect(path).execute("SELECT value FROM k_meta WHERE key = 'schema'").fetchone() == \
+        (str(runtime.SCHEMA_VERSION),)
 
 
 def test_a_quarantine_follows_the_data_not_the_name(tmp_path, monkeypatch):
@@ -200,7 +202,7 @@ def test_remote_stores_attach_on_open(tmp_path):
     from refhandbook.remote import UserStores
 
     hb = UserStores(tmp_path)("moonny")
-    assert hb._kernel.schema() == 1
+    assert hb._kernel.schema() == runtime.SCHEMA_VERSION
     assert (tmp_path / "users" / "moonny.db.pre-kernel").exists()
 
 

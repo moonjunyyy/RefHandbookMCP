@@ -1,18 +1,18 @@
-// The app catalog (/apps) and an app's page (/app/<id>) — a store (docs/apps-vault-calendar.md §1): every
-// app of the site says its name, its one line and its tags on a card, and a switch turns it on — on, and it
-// is in the person's header and on their main page; off, and it is only here. Nothing is on until they turn
-// it on (docs/frame.md §2–§3). A search and a row of chips (all · mine · the tags) narrow the cards; the
-// order is the site file's. The app's page says more: what it does, the widgets it offers the main page,
-// its links. Seeing the catalog marks every app seen (its "new" tag goes).
+// The store (/apps) and an app's page (/app/<id>) (docs/apps-vault-calendar.md §1). The apps the person added
+// come first, as tiles that open them (each tile's ⋯ and right-click: the app's page, remove); below them the
+// store — every app not added yet as a card (its mark, name, one line, tags) with one action, 추가. Nothing is
+// added until they add it (docs/frame.md §2–§3); an added app is in their header and on their main page. A
+// search and the tag chips narrow both; the store's order is the site file's, the tiles' the order they were
+// added. The app's page says more — what it does, the widgets it offers the main page, its links — and its one
+// action is 추가, or 열기 with 빼기 beside it. Seeing the store marks every app seen (its "new" tag goes).
 
-import { choice, frame, h, main, onApps, pageHead, prefs, primaryLink, replace, savePrefs, section, tag, title, toggle, widgetsOf, link } from '/auth/static/site.js';
-import type { Card } from '/auth/static/site.js';
+import { button, choice, flash, frame, go, h, link, main, menuButton, onApps, onMenu, pageHead, prefs, primaryLink, replace, savePrefs, section, sizeOf, tag, title, widgetsOf } from '/auth/static/site.js';
+import type { Address, Card, MenuSection } from '/auth/static/site.js';
 import { t } from '../lib/i18n';
 
 const ALL = '';
-const MINE = 'mine';
 
-/** Turn an app on or off: it enters (leaves) the person's apps and, when they arranged their main page by
+/** Add an app or take it out: it enters (leaves) the person's apps and, when they arranged their main page by
  * hand, its launcher enters (its widgets leave) that arrangement. */
 export async function setOn(c: Card, on: boolean): Promise<void> {
   const apps = on ? [...prefs.apps.filter(x => x !== c.id), c.id] : prefs.apps.filter(x => x !== c.id);
@@ -22,22 +22,19 @@ export async function setOn(c: Card, on: boolean): Promise<void> {
 }
 
 const fresh = (c: Card) => prefs.seen.length > 0 && !prefs.seen.includes(c.id);
+const mark = (c: Card, big = true) => h('span', { class: `app-icon${big ? ' big' : ''}`, 'aria-hidden': 'true' }, c.icon || c.title.slice(0, 1));
+const added = (c: Card) => prefs.apps.includes(c.id);
 
-/** The one switch of an app: on or off, kept at once. */
-function onOff(c: Card, after: () => void): HTMLElement | false {
-  const on = prefs.apps.includes(c.id);
-  return !!frame.uid && toggle(on ? t('켬') : t('끔'), on, async v => { await setOn(c, v); after(); }, { 'aria-label': t('{app} 켜기', { app: c.title }) });
-}
-
-/** The catalog: a search, the chips, the cards. Also the main page when nothing is on yet. */
+/** The store: a search, the chips, the person's apps, the apps to add. */
 export function catalog(query = '', chip = ALL): HTMLElement {
   const all = frame.cards.filter(c => c.optional);
   const tags = [...new Set(all.flatMap(c => c.tags))];
-  const grid = h('div', { class: 'store' });
+  const mine = h('div');
+  const rest = h('div');
   const search = h('input', { type: 'search', value: query, placeholder: t('앱 찾기'), 'aria-label': t('앱 찾기'), autofocus: true,
                               oninput: () => { draw(); remember(); } });
-  const chips = choice([[ALL, t('전체')], ...(frame.uid ? [[MINE, t('내 앱')] as [string, string]] : []), ...tags.map(x => [x, x] as [string, string])],
-                       chip, v => { chip = v; draw(); remember(); }, { 'aria-label': t('앱의 갈래') });
+  const chips = tags.length > 0 && choice([[ALL, t('전체')], ...tags.map(x => [x, x] as [string, string])],
+                                          chip, v => { chip = v; draw(); remember(); }, { 'aria-label': t('앱의 갈래') });
 
   function remember(): void {
     const q = new URLSearchParams();
@@ -46,26 +43,52 @@ export function catalog(query = '', chip = ALL): HTMLElement {
     history.replaceState(null, '', q.toString() ? `${location.pathname}?${q}` : location.pathname);
   }
 
+  const shown = (c: Card) => {
+    const q = search.value.trim().toLowerCase();
+    return (!chip || c.tags.includes(chip))
+      && (!q || `${c.title} ${c.description} ${c.about} ${c.tags.join(' ')} ${c.links.map(l => l.label).join(' ')}`.toLowerCase().includes(q));
+  };
+
+  /** An added app: its mark and name open it; its menu has its page and the way out. */
+  function tile(c: Card): HTMLElement {
+    const sections = (): MenuSection[] => [{ title: c.title, items: [
+      { label: t('앱 정보'), run: () => go(`/app/${c.id}`) },
+      { label: t('빼기'), danger: true, run: async () => { await setOn(c, false); draw(); } } ] }];
+    const el = h('div', { class: 'my-app', 'data-app': c.id },
+      h('a', { href: c.href || `/app/${c.id}` }, mark(c), h('span', { class: 'my-app-name' }, c.title)),
+      menuButton(sections, t('{app} 메뉴', { app: c.title })));
+    onMenu(el, sections);
+    return el;
+  }
+
+  /** An app not added yet: what it is, and 추가. */
   function card(c: Card): HTMLElement {
-    const on = prefs.apps.includes(c.id);
-    return h('article', { class: `store-card${on ? ' on' : ''}`, 'data-app': c.id },
-      h('span', { class: 'app-icon big', 'aria-hidden': 'true' }, c.icon || c.title.slice(0, 1)),
+    return h('article', { class: 'store-card', 'data-app': c.id },
+      mark(c),
       h('div', { class: 'store-text' },
         h('h3', null, link(`/app/${c.id}`, c.title), fresh(c) && [' ', tag(t('새 앱'), 'ok')]),
         c.description && h('p', { class: 'desc' }, c.description),
         c.tags.length > 0 && h('p', { class: 'tags' }, c.tags.map(x => tag(x)))),
-      h('div', { class: 'app-tools' }, onOff(c, draw)));
+      !!frame.uid && h('div', { class: 'app-tools' }, add(c)));
+  }
+  function add(c: Card): HTMLButtonElement {
+    const b = button(t('추가'), async () => { await setOn(c, true); draw(); }, 'secondary');
+    b.setAttribute('aria-label', t('{app} 추가', { app: c.title }));
+    return b;
   }
 
   function draw(): void {
-    const q = search.value.trim().toLowerCase();
-    let list = chip === MINE ? onApps() : chip ? all.filter(c => c.tags.includes(chip)) : all;
-    if (q) list = list.filter(c => `${c.title} ${c.description} ${c.about} ${c.tags.join(' ')} ${c.links.map(l => l.label).join(' ')}`.toLowerCase().includes(q));
-    replace(grid, list.length ? list.map(card) : h('p', { class: 'empty muted' }, q || chip ? t('찾는 앱이 없습니다.') : t('쓸 수 있는 앱이 없습니다.')));
+    const yours = frame.uid ? onApps().filter(shown) : [];
+    const others = all.filter(c => !(frame.uid && added(c)) && shown(c));
+    const narrowed = !!(search.value.trim() || chip);
+    replace(mine, yours.length > 0 && section(t('내 앱'), h('div', { class: 'my-apps' }, yours.map(tile))));
+    replace(rest, section(frame.uid ? t('추가할 수 있는 앱') : '',
+      others.length ? h('div', { class: 'store' }, others.map(card))
+        : h('p', { class: 'empty muted' }, narrowed ? t('찾는 앱이 없습니다.') : all.length ? t('모든 앱을 추가했습니다.') : t('쓸 수 있는 앱이 없습니다.'))));
   }
 
   draw();
-  return h('div', { class: 'catalog' }, search, chips, grid);
+  return h('div', { class: 'catalog' }, search, chips, mine, rest);
 }
 
 export async function apps(): Promise<void> {
@@ -83,7 +106,8 @@ function markSeen(): void {
   if (ids.some(id => !prefs.seen.includes(id))) void savePrefs({ seen: ids }).catch(() => undefined);
 }
 
-/** An app's page: its name and line, the switch, what it does, what it puts on the main page, its links. */
+/** An app's page: its mark, name and line, its one action (추가 — or 열기, with 빼기 beside it), what it does,
+ * what it puts on the main page, its links. */
 export async function app(id: string): Promise<void> {
   const c = frame.cards.find(x => x.id === id && x.optional);
   if (!c) {
@@ -93,23 +117,34 @@ export async function app(id: string): Promise<void> {
   }
   title(c.title);
   const head = h('div', { class: 'page-head store-head' });
-  const open = h('p', { class: 'actions' });
+  const acts = h('p', { class: 'actions' });
 
   function draw(): void {
-    const on = prefs.apps.includes(c!.id);
-    replace(head,
-      h('span', { class: 'app-icon big', 'aria-hidden': 'true' }, c!.icon || c!.title.slice(0, 1)),
+    replace(head, mark(c!),
       h('div', { class: 'store-text' }, h('h1', null, c!.title, fresh(c!) && [' ', tag(t('새 앱'), 'ok')]),
-        c!.description && h('p', { class: 'desc' }, c!.description), c!.tags.length > 0 && h('p', { class: 'tags' }, c!.tags.map(x => tag(x)))),
-      h('div', { class: 'app-tools' }, onOff(c!, draw)));
-    replace(open, on && c!.href && primaryLink(c!.href, t('열기')));
+        c!.description && h('p', { class: 'desc' }, c!.description), c!.tags.length > 0 && h('p', { class: 'tags' }, c!.tags.map(x => tag(x)))));
+    replace(acts,
+      !frame.uid ? primaryLink(`${frame.signin}/login?next=/app/${c!.id}`, t('로그인'))
+      : added(c!) ? [c!.href && primaryLink(c!.href, t('열기')), button(t('빼기'), async () => { await setOn(c!, false); draw(); }, 'secondary')]
+      : button(t('추가'), async () => { await setOn(c!, true); draw(); }, 'primary'));
   }
   draw();
   const widgets = widgetsOf(c);
-  replace(main(), head, open,
+  replace(main(), head, acts,
     c.about && h('p', { class: 'about' }, c.about),
-    section(t('홈에 올릴 수 있는 위젯'), h('ul', { class: 'plain' }, widgets.map(w => h('li', null, w.title, ' ', h('span', { class: 'muted small' }, w.size))))),
+    section(t('홈에 올릴 수 있는 위젯'), h('ul', { class: 'plain' }, widgets.map(w => h('li', null, w.title, ' ', h('span', { class: 'muted small' }, `${sizeOf(w.size).cols}×${sizeOf(w.size).rows}`))))),
     c.links.length > 0 && section(t('링크'), h('ul', { class: 'plain' }, c.links.map(l => h('li', null, link(l.href, l.label))))),
-    c.code && section(t('연결 주소'), h('p', null, h('code', { class: 'address' }, c.code))));
+    c.code.length > 0 && section(t('연결 주소'), h('ul', { class: 'plain addresses' }, c.code.map(address))));
   markSeen();
+}
+
+/** One way to connect: which client it is for, the address (a link too when it is a URI the system opens,
+ * smb:// say), and a copy button. {user} in it is the person looking. */
+function address(a: Address): HTMLElement {
+  const value = a.value.split('{user}').join(frame.uid || '{user}');
+  const uri = /^[a-z][a-z0-9+.-]*:\/\//i.test(value) && !/^(javascript|data|vbscript):/i.test(value);
+  const code = h('code', { class: 'address' }, value);
+  return h('li', null, a.label && [h('span', { class: 'muted small' }, a.label), ' '],
+    uri ? h('a', { href: value }, code) : code, ' ',
+    button(t('복사'), async () => { await navigator.clipboard?.writeText(value); flash('ok', t('복사했습니다.')); }, 'secondary'));
 }

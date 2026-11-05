@@ -30,11 +30,13 @@ const CARDS = [
   { id: 'wordgen', title: '글타래', description: '소설을 위한 키워드와 집필 메모', about: '무작위 키워드로 이야기를 틔웁니다.', tags: ['글쓰기'], code: '', icon: '✍️', href: '/apps/wordgen/', optional: true,
     links: [{ label: '열기', href: '/apps/wordgen/' }], widgets: [] },
   { id: 'agents', title: '에이전트', description: '내 API 키로 돌리는 에이전트 팀과 샌드박스', about: '에이전트 팀을 실행합니다.', tags: ['AI', '도구'], code: '', icon: '🤖', href: '/agents/', optional: true,
-    links: [{ label: '에이전트 실행', href: '/agents/' }, { label: '프리셋', href: '/agents/presets' }], widgets: [] },
+    links: [{ label: '에이전트 실행', href: '/agents/' }, { label: '프리셋', href: '/agents/presets' }, { label: '파일', href: '/agents/files' }], widgets: [] },
 ];
 const PAGES = ['/', '/apps', '/settings', '/account', '/account/', '/agents', '/agents/', '/calendar', '/vault', '/projects'];
 // the sizes a cell may have (portal/site.py SIZES, as /me carries them)
 const SIZES = [{ id: '1x1', cols: 1, rows: 1 }, { id: '2x1', cols: 2, rows: 1 }, { id: '1x2', cols: 1, rows: 2 }, { id: '2x2', cols: 2, rows: 2 }];
+// the look's choices (the site file's [look], as /me carries them — run.sh reads them with portal/site.py)
+const LOOK = JSON.parse(process.env.LOOK_JSON || 'null') || { palette: [], corner: [], type: [], size: [], columns: [] };
 let slowLinks = 0;  // ms the /links answer is held back (the page must not wait for it)
 let uid = 'tester';
 
@@ -79,12 +81,33 @@ function tree() {
 const links = (text) => [...text.matchAll(/\[\[([^\[\]|#]+)(?:#[^\[\]|]*)?(?:\|[^\[\]]*)?\]\]/g)].map((m) => m[1].trim());
 const resolve = (target) => { const t = target.replace(/^\/+|\/+$/g, ''); for (const c of [t, `${t}.md`]) if (files.has(c)) return c; const tail = `${t.split('/').pop().toLowerCase()}.md`; return [...files.keys()].find((p) => p.split('/').pop().toLowerCase() === tail) || null; };
 
+// ── the agents' workspace (/work), in memory: path → text for a file, null for a folder ────────────
+let work;
+const under = (rel, top) => rel === top || rel.startsWith(`${top}/`);
+function workEntries(dir) {
+  const out = new Map();
+  for (const [rel, text] of work) {
+    if (dir && !rel.startsWith(`${dir}/`)) continue;
+    const rest = dir ? rel.slice(dir.length + 1) : rel;
+    if (!rest) continue;
+    const name = rest.split('/')[0], deeper = rest.includes('/');
+    if (!out.has(name)) out.set(name, deeper || text === null ? { name, kind: 'dir', size: 0 } : { name, kind: 'file', size: Buffer.byteLength(text) });
+  }
+  return [...out.values()].sort((a, b) => (a.name < b.name ? -1 : 1));
+}
+const workDir = (rel) => !rel || work.get(rel) === null || [...work.keys()].some((k) => k.startsWith(`${rel}/`));
+
+function resetWork() {
+  work = new Map([['notes.txt', 'remember the milk\n'], ['runs/r1/report.md', '# done\n'], ['runs/r1/data/x.csv', '1,2\n']]);
+}
+
 function reset() {
   for (const s of Object.values(store)) s.clear();
   uid = 'tester';
   calendars = [{ id: 'u-1', owner: 'tester', kind: 'user', name: '내 캘린더', color: '', main: true, created: 1 },
                { id: 'g-1', owner: 'lab', kind: 'group', name: 'lab', color: '#33aa55', main: true, created: 2 }];
   events = []; feeds = []; seq = 0; tasks = []; devices = []; slowLinks = 0;
+  resetWork();
   vaults = [{ id: 'v1', name: 'Research', path: '/data/tester/Research', status: 'ok', reason: '', created: 1 }];
   files = new Map([
     ['Home.md', { text: '# Home\n\nStart at [[Ideas/Operators]] and [[Lie algebras|the algebras]]. An operator $T$ acts. #math\n\n$$\\int_0^1 x\\,dx = \\tfrac12$$\n', mtime: 3 }],
@@ -109,9 +132,12 @@ async function handle(route) {
   const url = new URL(req.url());
   const p = url.pathname;
   const q = url.searchParams;
+  if (p === '/e2e/look.png') {  // an image to put under the page (the look's image): one pixel
+    return route.fulfill({ status: 200, contentType: 'image/png', body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', 'base64') });
+  }
   if (p === '/auth/api/v1/me') {
     const theme = ['light', 'dark'].includes(cookie(req, 'theme')) ? cookie(req, 'theme') : 'auto';
-    return json(route, 200, { uid, title: '모의 사이트', signin: '/auth', portal: '/account', lang: 'ko', theme, frame: 1, cards: CARDS, menu: [], sizes: SIZES });
+    return json(route, 200, { uid, title: '모의 사이트', signin: '/auth', portal: '/account', lang: 'ko', theme, frame: 1, cards: CARDS, menu: [], sizes: SIZES, look: LOOK });
   }
   if (p.startsWith('/auth/static/')) return file(route, STATIC, p.slice('/auth/static/'.length));
   let m;
@@ -245,10 +271,72 @@ async function handle(route) {
     }
     return json(route, 404, { error: 'no such api' });
   }
+  if (decodeURIComponent(p) === '/agents/api/v1/runs/run:b1' && req.method() === 'GET') {  // a run that ended, with its branches (agents/branches.py)
+    return json(route, 200, { id: 'run:b1', title: '노트 정리', phase: 'done', state: 'closed', requested_by: 'user', goal: '노트 정리', input: '노트 정리',
+      recipe: { input: '노트 정리', title: '', grant: {}, flow: null }, error: null, grant: null, flow: null, flow_path: [], flow_end: null, proposal: null, approve_url: null,
+      usage: { input: 10, output: 20, cache_read: 0 }, tree: [], result: { outcome: 'done', text: '정리했습니다', notes: [] }, board: [],
+      branches: { branch: 'run/b1', why: '', repos: [
+        { repo: '/Workspace/RefHandbookMCP', state: 'merged', files: 3, why: '' },
+        { repo: '/Workspace/NNG-lean', state: 'kept', files: 1, why: 'conflicts:\nREADME.md' },
+        { repo: '/Workspace/OnlineViL', state: 'unchanged', files: 0, why: '' }] } });
+  }
+  if (p.startsWith('/agents/api/v1/files')) {
+    if (!uid) return json(route, 401, { error: { code: 'unauthorized', message: 'sign in first' } });
+    const rel = (q.get('path') || '').replace(/^\/+|\/+$/g, '');
+    const no = (what) => json(route, 400, { error: { code: 'invalid', message: what } });
+    if (p === '/agents/api/v1/files' && req.method() === 'GET') {
+      if (workDir(rel)) return json(route, 200, { path: rel, kind: 'dir', entries: workEntries(rel) });
+      return work.has(rel) ? json(route, 200, { path: rel, kind: 'file', size: Buffer.byteLength(work.get(rel)), text: work.get(rel) })
+        : json(route, 404, { error: { code: 'not_found', message: `${rel}: no such file or directory` } });
+    }
+    if (p === '/agents/api/v1/files/download' && q.getAll('path').length > 1) {
+      const ps = q.getAll('path'), parents = [...new Set(ps.map((x) => x.slice(0, Math.max(0, x.lastIndexOf('/')))))];
+      const name = (parents.length === 1 && parents[0].split('/').pop()) || 'work';
+      if (ps.some((x) => !work.has(x) && !workDir(x))) return json(route, 404, { error: { code: 'not_found', message: 'no such file' } });
+      return route.fulfill({ status: 200, contentType: 'application/zip', headers: { 'Content-Disposition': `attachment; filename="${name}.zip"` }, body: 'PK\u0005\u0006' + '\u0000'.repeat(18) });
+    }
+    if (p === '/agents/api/v1/files/download') {
+      const name = rel.split('/').pop() || 'work';
+      if (workDir(rel)) return route.fulfill({ status: 200, contentType: 'application/zip', headers: { 'Content-Disposition': `attachment; filename="${name}.zip"` }, body: 'PK\u0005\u0006' + '\u0000'.repeat(18) });
+      return route.fulfill({ status: 200, contentType: 'application/octet-stream', headers: { 'Content-Disposition': `attachment; filename="${name}"` }, body: work.get(rel) });
+    }
+    if (p === '/agents/api/v1/files/mkdir' && req.method() === 'POST') {
+      const d = body(req).path;
+      if (work.has(d) || workDir(d)) return no(`'${d}' already exists`);
+      work.set(d, null); return json(route, 201, { path: d });
+    }
+    if (p === '/agents/api/v1/files/move' && req.method() === 'POST' && Array.isArray(body(req).from)) {
+      const { from, into } = body(req);
+      const pairs = from.map((f) => [f, (into ? `${into}/` : '') + f.split('/').pop()]);
+      for (const [f, t] of pairs) {
+        if (work.has(t) || workDir(t)) return no(`'${t}' already exists`);
+        if (under(into, f)) return no(`'${into}' is '${f}' itself or inside it`);
+      }
+      for (const [f, t] of pairs) for (const k of [...work.keys()].filter((k) => under(k, f))) { work.set(t + k.slice(f.length), work.get(k)); work.delete(k); }
+      return json(route, 200, { moved: pairs.map(([f, t]) => ({ from: f, path: t })) });
+    }
+    if (p === '/agents/api/v1/files/move' && req.method() === 'POST') {
+      const { from, to } = body(req);
+      if (work.has(to) || workDir(to)) return no(`'${to}' already exists`);
+      if (under(to, from)) return no(`'${to}' is '${from}' itself or inside it`);
+      const moving = [...work.keys()].filter((k) => under(k, from));
+      if (!moving.length) return no(`no '${from}' in the workspace`);
+      for (const k of moving) { work.set(to + k.slice(from.length), work.get(k)); work.delete(k); }
+      return json(route, 200, { from, path: to });
+    }
+    if (p === '/agents/api/v1/files' && req.method() === 'DELETE') {
+      const rels = q.getAll('path').map((x) => x.replace(/^\/+|\/+$/g, ''));
+      if (!rels.length || rels.some((x) => !x)) return no('the workspace itself cannot be removed');
+      if (rels.some((x) => ![...work.keys()].some((k) => under(k, x)))) return no('no such entry in the workspace');
+      for (const x of rels) for (const k of [...work.keys()].filter((k) => under(k, x))) work.delete(k);
+      return json(route, 200, { deleted: rels.length === 1 ? rels[0] : rels });
+    }
+    return json(route, 404, { error: { code: 'not_found', message: 'no such api' } });
+  }
   if (p === '/apps/eq-sandbox/widget.js') return file(route, EQ, 'widget.js');
   if (p.startsWith('/apps/site/')) return file(route, DIST, p.slice('/apps/site/'.length));
   if (p.startsWith('/apps/eq-sandbox/')) return route.fulfill({ status: 200, contentType: TYPES['.html'], body: '<!doctype html><html><head><script src="/auth/static/theme.js"></script><link rel="stylesheet" href="/auth/static/style.css"></head><body><header><a class="brand" id="brand" href="/"></a><nav id="nav"></nav></header><main id="main"><h1>eq</h1></main><script type="module">import { load, header } from "/auth/static/site.js"; await load(); header(); document.body.dataset.ready = "1";</script></body></html>' });
-  if (PAGES.includes(p) || p.startsWith('/account/') || p.startsWith('/app/') || p.startsWith('/vault/') || p.startsWith('/projects/')) return file(route, DIST, 'index.html');
+  if (PAGES.includes(p) || p.startsWith('/account/') || p.startsWith('/app/') || p.startsWith('/vault/') || p.startsWith('/projects/') || p.startsWith('/agents/')) return file(route, DIST, 'index.html');
   return route.fulfill({ status: 404, body: 'not found' });
 }
 
@@ -264,6 +352,8 @@ module.exports = {
   vaults: () => vaults.slice(),
   calendars: () => calendars.slice(),
   files: () => files,
+  work: () => work,
+  resetWork,
   setFile: (rel, text) => { files.set(rel, { text, mtime: Date.now() / 1000 }); },
   devices: () => devices.slice(),
   slowLinks: (ms) => { slowLinks = ms; },

@@ -45,6 +45,57 @@ class SiteError(ValueError):
     pass
 
 
+# The person's look (docs/frame.md §1.3): what the settings page offers over theme.css's tokens, declared in the
+# site file ([look]) and carried to the frame (/auth/api/v1/me `look`). A choice redeclares tokens — a palette
+# for the light and the dark theme, the others once — and the first choice of a kind is theme.css's own. The
+# frame writes nothing but these tokens; the parts take them (parts.css), as they take every token.
+LOOK_KINDS = ("palette", "corner", "type", "size")
+TOKEN = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
+TOKEN_VALUE = re.compile(r"^[^;{}<>\\\n]{1,200}$")  # a value inside a declaration: it cannot close one or open another
+
+
+def _tokens(where: str, d: object) -> dict[str, str]:
+    if not isinstance(d, dict):
+        raise SiteError(f"{where}: a table of tokens (name = value)")
+    for k, v in d.items():
+        if not TOKEN.match(k) or not isinstance(v, str) or not TOKEN_VALUE.match(v):
+            raise SiteError(f"{where}: {k} = {v!r}: a token name (lowercase, -) and a value without ; {{ }} < > \\")
+    return dict(d)
+
+
+def _look(data: dict) -> dict:
+    """[look] of the site file, checked: {kind: [{id, label, tr, tokens | light+dark}], columns: [..]}."""
+    look = data.get("look") or {}
+    bad = set(look) - set(LOOK_KINDS) - {"columns"}
+    if bad:
+        raise SiteError(f"look: unknown kinds {sorted(bad)} (the kinds are {LOOK_KINDS} and columns)")
+    out: dict = {}
+    for kind in LOOK_KINDS:
+        seen, choices = set(), []
+        for c in look.get(kind, []):
+            known = {"id", "label", "tr"} | ({"light", "dark"} if kind == "palette" else {"tokens"})
+            if set(c) - known or not NAME.match(str(c.get("id", ""))) or not c.get("label"):
+                raise SiteError(f"look.{kind}: a choice has an id (lowercase, -), a label and {sorted(known - {'id', 'label', 'tr'})}")
+            if c["id"] in seen:
+                raise SiteError(f"look.{kind}: {c['id']} is declared twice")
+            seen.add(c["id"])
+            choice = {"id": c["id"], "label": c["label"], "tr": dict(c.get("tr") or {})}
+            if kind == "palette":
+                light, dark = _tokens(f"look.palette.{c['id']}.light", c.get("light", {})), _tokens(f"look.palette.{c['id']}.dark", c.get("dark", {}))
+                if set(light) != set(dark):
+                    raise SiteError(f"look.palette.{c['id']}: light and dark redeclare the same tokens")
+                choice |= {"light": light, "dark": dark}
+            else:
+                choice["tokens"] = _tokens(f"look.{kind}.{c['id']}.tokens", c.get("tokens", {}))
+            choices.append(choice)
+        out[kind] = choices
+    cols = look.get("columns", [])
+    if not isinstance(cols, list) or any(not isinstance(n, int) or n < 0 or n > 12 for n in cols):
+        raise SiteError("look.columns: numbers of the main page's columns (0 = as many as fit, up to 12)")
+    out["columns"] = list(cols)
+    return out
+
+
 @dataclass(frozen=True)
 class Link:
     label: str
@@ -57,6 +108,33 @@ class Link:
 
     def label_in(self, lang: str) -> str:
         return self.tr.get(lang) or t(self.label)  # a label of ours (N_) has its words in the catalog
+
+
+@dataclass(frozen=True)
+class Address:
+    """One way to connect to an app, shown on its page with a copy button: `value` is what the person
+    types or pastes (an address, a URI, a command), and may name the person looking as {user};
+    `label` says which client it is for."""
+    value: str
+    label: str = ""
+    tr: dict[str, str] = field(default_factory=dict, compare=False, hash=False)  # the label in other languages
+
+    def label_in(self, lang: str) -> str:
+        return self.tr.get(lang) or self.label
+
+
+def _addresses(app_id: str, code) -> tuple[Address, ...]:  # noqa: ANN001 — a string, or a list of tables
+    """An app's `code`: one line (a string), or a list of {value, label, tr} — one address per client."""
+    if isinstance(code, str):
+        return (Address(code),) if code else ()
+    if not isinstance(code, list):
+        raise SiteError(f"app {app_id}: code is a string or a list of {{value, label, tr}}")
+    out = []
+    for c in code:
+        if not isinstance(c, dict) or "value" not in c or set(c) - {"value", "label", "tr"}:
+            raise SiteError(f"app {app_id}: each code is {{value, label, tr}} with a value")
+        out.append(Address(str(c["value"]), str(c.get("label", "")), dict(c.get("tr") or {})))
+    return tuple(out)
 
 
 @dataclass(frozen=True)
@@ -106,7 +184,7 @@ class App:
     menu: str = ""  # the menu label; "" = not in the portal's menu
     menu_href: str = ""
     links: tuple[Link, ...] = ()
-    code: str = ""  # a line shown in a <code> on its card on the main page (an address to connect to)
+    code: tuple[Address, ...] = ()  # the ways to connect to it (Address), on its page in the catalog
     card: bool = True
     icon: str = ""  # a short mark for the app (an emoji or a letter or two) on its card and in the app list
     # the app's words in other languages: {lang: {title, description, about, menu}} (Korean is the file's own)
@@ -139,6 +217,13 @@ class App:
 @dataclass(frozen=True)
 class Site:
     apps: tuple[App, ...] = field(default_factory=tuple)
+    look: dict = field(default_factory=dict, compare=False, hash=False)  # [look], checked (_look)
+
+    def look_in(self, lang: str) -> dict:
+        """The look's choices for the frame, their labels in `lang`."""
+        return {k: ([{**{x: v for x, v in c.items() if x not in ("tr",)}, "label": c["tr"].get(lang) or c["label"]}
+                     for c in self.look.get(k, [])] if k != "columns" else list(self.look.get(k, [])))
+                for k in (*LOOK_KINDS, "columns")}
 
     @property
     def audiences(self) -> tuple[str, ...]:
@@ -225,6 +310,7 @@ def load(path: str | Path, f=None) -> Site:  # noqa: ANN001 — f: portal.facts.
         d = dict(d)
         routes = tuple(_route(d.get("id", "?"), r) for r in d.pop("route", []))
         links = tuple(Link(**{**ln, "groups": tuple(ln.get("groups", ()))}) for ln in d.pop("link", []))
+        code = _addresses(d.get("id", "?"), d.pop("code", ""))
         widgets = tuple(_widget(d.get("id", "?"), w) for w in d.pop("widget", []))
         for lang, words in (d.get("tr") or {}).items():
             if not isinstance(words, dict) or set(words) - {"title", "description", "about", "menu"}:
@@ -234,11 +320,11 @@ def load(path: str | Path, f=None) -> Site:  # noqa: ANN001 — f: portal.facts.
         d["tags"] = tuple(d.get("tags", ()))
         if set(d["tags"]) - set(TAGS):
             raise SiteError(f"app {d.get('id')}: tags are among {TAGS}, not {sorted(set(d['tags']) - set(TAGS))}")
-        known = set(App.__dataclass_fields__) - {"routes", "links", "widgets"}
+        known = set(App.__dataclass_fields__) - {"routes", "links", "widgets", "code"}
         bad = set(d) - known
         if bad:
             raise SiteError(f"app {d.get('id')}: unknown fields {sorted(bad)}")
-        a = App(**d, routes=routes, links=links, widgets=widgets)
+        a = App(**d, routes=routes, links=links, widgets=widgets, code=code)
         if not NAME.match(a.id):
             raise SiteError(f"app id {a.id!r}: lowercase letters, digits and -")
         if a.default and not a.optional:
@@ -272,7 +358,7 @@ def load(path: str | Path, f=None) -> Site:  # noqa: ANN001 — f: portal.facts.
             if not (r.upstream or a.upstream) and not any(d in r.nginx for d in ("alias", "return", "rewrite")):
                 raise SiteError(f"app {a.id}: route {r.path} has no upstream (and no alias/return/rewrite of its own)")
         apps.append(a)
-    return Site(tuple(apps))
+    return Site(tuple(apps), _look(data))
 
 
 def _hosted(a: App, f) -> App:  # noqa: ANN001 — f: portal.facts.Facts

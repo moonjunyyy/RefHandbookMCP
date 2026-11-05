@@ -6,6 +6,12 @@ sign-in (portal.sso); the site's token names the user, and /login only asks to a
 before it issues a one-time code. Access tokens carry the uid as `subject`, and every tool call
 opens that user's database (DATA_DIR/users/<uid>.db).
 
+Every authorization response names this server (RFC 9207): `iss`, exactly the metadata's `issuer`,
+on the code and on every error sent back to the client, and the metadata says so
+(`authorization_response_iss_parameter_supported`). A client can then tell which server answered,
+and one that keys its callback on that (ChatGPT: one stable callback instead of one per connection)
+can be allowed by a single exact entry of RHB_REDIRECT_ALLOW.
+
 The installer renders the settings (RHB_*) into the unit from the site's facts (deploy/templates).
 """
 from __future__ import annotations
@@ -20,7 +26,7 @@ import sqlite3
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 import anyio
 from mcp.server.auth.provider import (
@@ -270,6 +276,9 @@ class SQLiteOAuthProvider:
     def __init__(self, cfg: Config, directory: object | None = None):
         self.cfg = cfg
         self.directory = directory  # Accounts: refreshes re-check the account through it
+        # RFC 9207: the `iss` of every authorization response; the metadata route sets it to the
+        # metadata's own `issuer` string (_authorization_server_routes), so the two cannot differ.
+        self.issuer = cfg.public_url
         cfg.data_dir.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(str(cfg.data_dir / "auth.db"), check_same_thread=False, isolation_level=None)
         self.db.execute("PRAGMA journal_mode=WAL")
@@ -343,7 +352,7 @@ class SQLiteOAuthProvider:
         )
         self.db.execute("INSERT INTO codes VALUES (?,?,?,?)", (_h(code), ac.model_dump_json(), ac.expires_at, now))
         self.db.execute("UPDATE clients SET signed_in=1 WHERE client_id=?", (client_id,))
-        return construct_redirect_uri(str(params.redirect_uri), code=code, state=params.state)
+        return self.respond(str(params.redirect_uri), code=code, state=params.state)
 
     def deny(self, rid: str) -> str | None:
         got = self.pending(rid)
@@ -351,7 +360,11 @@ class SQLiteOAuthProvider:
             return None
         self.drop_pending(rid)
         _, params, _ = got
-        return construct_redirect_uri(str(params.redirect_uri), error="access_denied", state=params.state)
+        return self.respond(str(params.redirect_uri), error="access_denied", state=params.state)
+
+    def respond(self, redirect_uri: str, **params: str | None) -> str:
+        """An authorization response: the client's redirect URI with `params` and this server's `iss`."""
+        return construct_redirect_uri(redirect_uri, **params, iss=self.issuer)
 
     async def load_authorization_code(self, client: OAuthClientInformationFull, authorization_code: str) -> AuthorizationCode | None:
         row = self.db.execute("SELECT data FROM codes WHERE hash=?", (_h(authorization_code),)).fetchone()
@@ -532,7 +545,7 @@ def build(cfg: Config, accounts: Accounts | None = None, sso_tokens: SsoTokens |
         # json_response: a POST is answered with one JSON body, not an event stream, so a proxy that
         # buffers (a router terminating TLS, say) cannot hold a reply back.
         app = m.streamable_http_app(transport_security=security, host=cfg.host, json_response=True)
-        _advertise_public_clients(app, m.settings.auth)  # type: ignore[arg-type]
+        _authorization_server_routes(app, m.settings.auth, provider)  # type: ignore[arg-type]
         from portal.i18n import Language
 
         return Language(app)  # the request's language (portal/i18n.py), for the pages and their messages
@@ -629,15 +642,22 @@ def build(cfg: Config, accounts: Accounts | None = None, sso_tokens: SsoTokens |
     return m
 
 
-def _advertise_public_clients(app, auth: AuthSettings) -> None:  # noqa: ANN001
-    """Serve authorization server metadata that lists "none" among the token endpoint's auth methods.
+def _authorization_server_routes(app, auth: AuthSettings, provider: SQLiteOAuthProvider) -> None:  # noqa: ANN001
+    """The SDK's authorization server routes, made to say what this server does.
 
-    Claude registers through DCR as a public client (token_endpoint_auth_method "none"), and the SDK
-    accepts and authenticates such clients, but its metadata hard-codes only client_secret_post and
-    client_secret_basic. The metadata route is replaced so what we advertise matches what we accept.
+    Public clients: Claude registers through DCR with token_endpoint_auth_method "none", which the SDK
+    accepts and authenticates, but its metadata hard-codes only client_secret_post and
+    client_secret_basic; the metadata lists "none" too.
+
+    Issuer identification (RFC 9207): the metadata sets authorization_response_iss_parameter_supported,
+    and every authorization response carries `iss`, the metadata's `issuer` string exactly (clients
+    compare it byte for byte). The provider puts it on the responses it builds (the code, a denial);
+    the SDK's /authorize builds its own error redirects, so that route's responses get it added on the
+    way out — only to a redirect that is an error response (one carrying `error`): /authorize's
+    redirect to this server's /login is not an authorization response.
     """
     from mcp.server.auth.handlers.metadata import MetadataHandler
-    from mcp.server.auth.routes import build_metadata, cors_middleware
+    from mcp.server.auth.routes import AUTHORIZATION_PATH, build_metadata, cors_middleware
     from starlette.routing import Route
 
     metadata = build_metadata(auth.issuer_url, auth.service_documentation_url,
@@ -647,10 +667,38 @@ def _advertise_public_clients(app, auth: AuthSettings) -> None:  # noqa: ANN001
     metadata.token_endpoint_auth_methods_supported = methods
     if metadata.revocation_endpoint is not None:
         metadata.revocation_endpoint_auth_methods_supported = methods
+    metadata.authorization_response_iss_parameter_supported = True
+    provider.issuer = metadata.model_dump(mode="json")["issuer"]  # the string the metadata serves
     path = "/.well-known/oauth-authorization-server"
+    replaced = wrapped = False
     for i, r in enumerate(app.router.routes):
-        if isinstance(r, Route) and r.path == path:
+        if not isinstance(r, Route):
+            continue
+        if r.path == path:
             app.router.routes[i] = Route(path, endpoint=cors_middleware(MetadataHandler(metadata).handle, ["GET", "OPTIONS"]),
                                          methods=["GET", "OPTIONS"])
-            return
-    raise RuntimeError("authorization server metadata route not found; the SDK layout changed")
+            replaced = True
+        elif r.path == AUTHORIZATION_PATH:
+            r.app = _issuer_on_errors(r.app, provider)
+            wrapped = True
+    if not (replaced and wrapped):
+        raise RuntimeError("authorization server routes not found; the SDK layout changed")
+
+
+def _issuer_on_errors(app, provider: SQLiteOAuthProvider):  # noqa: ANN001, ANN202
+    """ASGI: a redirect from `app` that is an authorization error response gets `iss` (RFC 9207)."""
+
+    def location(value: str) -> str:
+        q = parse_qs(urlparse(value).query)
+        return provider.respond(value) if "error" in q and "iss" not in q else value
+
+    async def asgi(scope, receive, send):  # noqa: ANN001, ANN202
+        async def send_with_iss(message):  # noqa: ANN001, ANN202
+            if message["type"] == "http.response.start" and message["status"] in (301, 302, 303, 307, 308):
+                message = {**message, "headers": [(k, location(v.decode("latin-1")).encode("latin-1") if k.lower() == b"location" else v)
+                                                for k, v in message["headers"]]}
+            await send(message)
+
+        await app(scope, receive, send_with_iss)
+
+    return asgi

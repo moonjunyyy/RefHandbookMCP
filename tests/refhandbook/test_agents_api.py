@@ -142,6 +142,77 @@ def test_the_workspace_read_only(api):
     assert str(ws.work) not in call(api, "GET", "/files").text  # no server paths
 
 
+def test_the_workspace_is_managed_from_the_pages(api):
+    import io
+    import os
+    import zipfile
+
+    ws = Workspace(server._user_store("moon"))
+    ws.write("runs/r1/report.md", "# done\n")
+    ws.write("runs/r1/data/x.csv", "1,2\n")
+    os.symlink("/etc", ws.work / "runs" / "r1" / "etc")
+    # a file as it is, saved under its own name
+    r = call(api, "GET", "/files/download?path=runs/r1/report.md")
+    assert r.status_code == 200 and r.content == b"# done\n"
+    assert r.headers["content-disposition"] == "attachment; filename=\"report.md\"; filename*=UTF-8''report.md"
+    # a folder as a zip of what it holds; the symlink is left out
+    r = call(api, "GET", "/files/download?path=runs/r1")
+    assert r.status_code == 200 and r.headers["content-type"] == "application/zip"
+    assert "r1.zip" in r.headers["content-disposition"]
+    z = zipfile.ZipFile(io.BytesIO(r.content))
+    assert sorted(z.namelist()) == ["data/", "data/x.csv", "report.md"] and z.read("data/x.csv") == b"1,2\n"
+    assert "work.zip" in call(api, "GET", "/files/download").headers["content-disposition"]  # the workspace itself
+    assert call(api, "GET", "/files/download?path=runs/r1/etc").status_code == 400  # a link: not followed
+    assert call(api, "GET", "/files/download?path=../../etc/passwd").status_code == 404
+    assert call(api, "GET", "/files/download?path=nope").status_code == 404
+    # a new folder, a move into it (its folders made), and nothing overwritten
+    assert call(api, "POST", "/files/mkdir", {"path": "keep"}).json() == {"path": "keep"}
+    assert call(api, "POST", "/files/mkdir", {"path": "keep"}).status_code == 400
+    assert call(api, "POST", "/files/move", {"from": "runs/r1/report.md", "to": "keep/2026/report.md"}).json() == \
+        {"from": "runs/r1/report.md", "path": "keep/2026/report.md"}
+    assert ws.read("keep/2026/report.md") == "# done\n"
+    ws.write("keep/other.md", "x")
+    assert call(api, "POST", "/files/move", {"from": "keep/other.md", "to": "keep/2026/report.md"}).status_code == 400
+    assert ws.read("keep/2026/report.md") == "# done\n"
+    assert call(api, "POST", "/files/move", {"from": "keep", "to": "keep/inside"}).status_code == 400
+    assert call(api, "POST", "/files/move", {"from": "keep", "to": "../out"}).status_code == 400
+    # a folder deleted with what it holds; the workspace itself stays
+    assert call(api, "DELETE", "/files?path=runs").json() == {"deleted": "runs"}
+    assert not (ws.work / "runs").exists() and ws.work.is_dir()
+    assert call(api, "DELETE", "/files?path=").status_code == 400
+    assert call(api, "DELETE", "/files?path=/").status_code == 400
+    # writes are the pages' own: without the header they are refused
+    assert call(api, "DELETE", "/files?path=keep", write_header=False).status_code == 403
+    assert (ws.work / "keep").is_dir()
+
+
+def test_a_selection_is_downloaded_moved_and_deleted_together(api):
+    import io
+    import zipfile
+
+    ws = Workspace(server._user_store("moon"))
+    for rel in ("in/a.txt", "in/b.txt", "in/d/c.txt", "in/keep.txt"):
+        ws.write(rel, rel)
+    # several path= : one zip, each under its own name, named after their folder
+    r = call(api, "GET", "/files/download?path=in/a.txt&path=in/d")
+    assert r.status_code == 200 and 'filename="in.zip"' in r.headers["content-disposition"]
+    assert sorted(zipfile.ZipFile(io.BytesIO(r.content)).namelist()) == ["a.txt", "d/", "d/c.txt"]
+    assert call(api, "GET", "/files/download?path=in/a.txt&path=nope").status_code == 404
+    # several into one folder: all checked first — one clash, and none moves
+    ws.write("out/b.txt", "there")
+    assert call(api, "POST", "/files/move", {"from": ["in/a.txt", "in/b.txt"], "into": "out"}).status_code == 400
+    assert ws.read("in/a.txt") == "in/a.txt" and ws.read("out/b.txt") == "there"
+    assert call(api, "POST", "/files/move", {"from": ["in", "in/a.txt"], "into": "in/d"}).status_code == 400  # into itself
+    r = call(api, "POST", "/files/move", {"from": ["in/a.txt", "in/d"], "into": "out/new"})
+    assert r.json() == {"moved": [{"from": "in/a.txt", "path": "out/new/a.txt"}, {"from": "in/d", "path": "out/new/d"}]}
+    assert ws.read("out/new/d/c.txt") == "in/d/c.txt"
+    # several deleted: every one there before any goes
+    assert call(api, "DELETE", "/files?path=in/b.txt&path=nope").status_code == 400
+    assert ws.read("in/b.txt") == "in/b.txt"
+    assert call(api, "DELETE", "/files?path=in/b.txt&path=out/new").json() == {"deleted": ["in/b.txt", "out/new"]}
+    assert not (ws.work / "out" / "new").exists() and (ws.work / "in" / "keep.txt").exists()
+
+
 def test_a_flow_preset_and_a_flow_run(api):
     """A flow is blocks (each its own key, model and command) and named arrows; its routing comes from
     the blocks, so the request needs no routes; a block's key must be one the user registered."""

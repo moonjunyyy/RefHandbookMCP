@@ -23,18 +23,32 @@ approval page (`approve_url`), the user's channel with no script on it.
     PATCH  schedules/{id}             {enabled}
     DELETE schedules/{id}
     POST   cron                       {cron}: the next five times it fires (for a form to show)
-    GET    files?path=                the workspace, read only: a directory's entries or a file's text
+    GET    files?path=                the workspace: a directory's entries or a file's text
+    GET    files/download?path=       a file as it is, or a folder (the workspace itself when path is empty) as a zip;
+                                      several path= as one zip, each under its own name
+    POST   files/move                 {from, to}: rename or move a file or a folder; nothing is overwritten;
+                                      {from: [..], into}: several into one folder, all checked before any moves
+    POST   files/mkdir                {path}: a new folder
+    DELETE files?path=                a file, or a folder with what it holds (the workspace itself stays); several path=
+
+The workspace is the user's only way to their sandbox's files (/work: the scripts' and the runs'), so the
+pages manage it here; every name is resolved by Workspace on descriptors, no symlink followed.
 """
 
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Callable
+import logging
+import os
+import threading
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
-from typing import Any
+from typing import IO, Any
+from urllib.parse import quote
 
 import anyio
 from starlette.requests import Request
+from starlette.responses import StreamingResponse
 
 from portal.api import ApiError, answer, bad, body, endpoint, missing, unauthorized
 
@@ -42,12 +56,15 @@ from ..store import Handbook, HandbookError
 from . import cron, crew, flows
 from . import providers as P
 from . import keys as K
+from .branches import Branches
 from .presets import Presets
 from .team import (CONTEXT_LEVELS, DEFAULT_GRANT, EFFORTS, HANDOFF_LEVELS, MAX_ROUTES, RETENTION_LEVELS, ROLES,
                    Team, TeamError)
-from .workspace import Workspace
+from .workspace import Workspace, WorkspaceError
 
 PREFIX = "/agents/api/v1"
+CHUNK = 1 << 16
+log = logging.getLogger("refhandbook.agents.api")
 
 
 def _key(k: K.KeyInfo) -> dict[str, Any]:
@@ -84,6 +101,43 @@ def _note(n: dict[str, Any]) -> dict[str, Any]:
     a = n["attrs"]
     return {"id": n["id"], "kind": a.get("kind"), "state": n["state"], "by": a.get("by"), "title": a.get("title"),
             "text": n["content"]}
+
+
+def _attachment(name: str) -> str:
+    """A Content-Disposition that saves the response as `name` (RFC 6266: an ASCII fallback, and the name itself)."""
+    plain = "".join(c if c.isascii() and c.isprintable() and c not in '"\\' else "_" for c in name) or "download"
+    return f"attachment; filename=\"{plain}\"; filename*=UTF-8''{quote(name, safe='')}"
+
+
+async def _file_chunks(f: IO[bytes]) -> AsyncIterator[bytes]:
+    """An open file's bytes, read off the event loop."""
+    try:
+        while chunk := await anyio.to_thread.run_sync(f.read, CHUNK):
+            yield chunk
+    finally:
+        f.close()
+
+
+async def _piped(write: Callable[[IO[bytes]], Any]) -> AsyncIterator[bytes]:
+    """What `write` writes to a stream, as it is written: `write` runs in a thread on a pipe's end and the
+    response reads the other. A reader that goes away closes its end, and the writer stops on the broken pipe."""
+    r, w = os.pipe()
+
+    def produce() -> None:
+        try:
+            with os.fdopen(w, "wb") as out:
+                write(out)
+        except BrokenPipeError:
+            pass
+        except Exception:  # noqa: BLE001 — the response is under way: cut it short, and say why in the log
+            log.exception("writing a download")
+
+    threading.Thread(target=produce, name="download", daemon=True).start()
+    try:
+        while chunk := await anyio.to_thread.run_sync(os.read, r, CHUNK):
+            yield chunk
+    finally:
+        os.close(r)
 
 
 def install(m: Any, *, stores: Callable[[str], Handbook], who: Callable[[Request], str | None], data_dir: Path,
@@ -200,6 +254,13 @@ def install(m: Any, *, stores: Callable[[str], Handbook], who: Callable[[Request
 
     # ── runs ─────────────────────────────────────────────────────────────
 
+    def branches_of(ws: Workspace, run: str, a: dict[str, Any]) -> dict[str, Any] | None:
+        """What became of the run's branches (kept on the run at its end), or, while it runs, what they are."""
+        if a.get("branches"):
+            return a["branches"]
+        got = Branches(crew.run_dir(ws, run), run).listing()
+        return got if got["repos"] or got["why"] else None
+
     def the_run(t: Team, run: str) -> dict[str, Any]:
         n = t.g.get_node(run) if run.startswith("run:") and len(run) <= 40 else None
         if n is None or n["type"] != "run":
@@ -236,7 +297,7 @@ def install(m: Any, *, stores: Callable[[str], Handbook], who: Callable[[Request
         run = request.path_params["run"]
 
         def get() -> Any:
-            _, t, _ = space(uid)
+            ws, t, _ = space(uid)
             r = the_run(t, run)
             a = r["attrs"]
             try:
@@ -259,7 +320,7 @@ def install(m: Any, *, stores: Callable[[str], Handbook], who: Callable[[Request
                     "usage": t.run_usage(run), "tree": t.tree(run),
                     "result": ({"outcome": res["attrs"].get("outcome"), "text": res["content"],
                                 "notes": [_note(n) for n in t.carried(res["id"])]} if res else None),
-                    "board": [_note(n) for n in t.board(run)[-50:]]}
+                    "board": [_note(n) for n in t.board(run)[-50:]], "branches": branches_of(ws, run, a)}
         return await locked(get)
 
     @route("/runs/{run}/cancel", ["POST"])
@@ -396,3 +457,92 @@ def install(m: Any, *, stores: Callable[[str], Handbook], who: Callable[[Request
             text = ws.read(rel, limit=500_000)
             return {"path": rel, "kind": "file", "size": size, "text": None if "\x00" in text[:8000] else text}
         return await locked(get)
+
+    def workspace_path(value: Any) -> str:
+        if not isinstance(value, str) or not value.strip("/ "):
+            raise bad("a path in the workspace")
+        return value.strip().strip("/")[:1000]
+
+    @route("/files/download", ["GET"])
+    async def files_download(request: Request) -> Any:
+        """A file as it is; a folder (the workspace itself when path is empty) as a zip, streamed as it is packed."""
+        uid = user(request)
+        many = [p.strip("/")[:1000] for p in request.query_params.getlist("path")]
+        if len(many) > 1:
+            return await download_several(uid, many)
+        rel = request.query_params.get("path", "").strip("/")[:1000]
+
+        def open_() -> tuple[Workspace, str, IO[bytes] | None, int]:
+            ws = Workspace(stores(uid))
+            try:
+                kind = ws.kind(rel)
+            except WorkspaceError as e:
+                raise missing(f"{rel}: no such file or directory") from e
+            if kind == "dir":
+                return ws, kind, None, 0
+            if kind != "file":
+                raise bad(f"{rel}: a {kind} is not downloaded (only files and folders)")
+            f, size = ws.open_file(rel)
+            return ws, kind, f, size
+        ws, kind, f, size = await locked(open_)
+        name = rel.rsplit("/", 1)[-1] or "work"
+        headers = {"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"}
+        if f is not None:
+            return StreamingResponse(_file_chunks(f), media_type="application/octet-stream",
+                                     headers={**headers, "Content-Disposition": _attachment(name), "Content-Length": str(size)})
+        return StreamingResponse(_piped(lambda out: ws.zip_dir(rel, out)), media_type="application/zip",
+                                 headers={**headers, "Content-Disposition": _attachment(name + ".zip")})
+
+    async def download_several(uid: str, rels: list[str]) -> Any:
+        """Several entries (the selection of the page) as one zip, each under its own name, named after their folder."""
+        def check() -> Workspace:
+            ws = Workspace(stores(uid))
+            for rel in rels:
+                try:
+                    kind = ws.kind(rel)
+                except WorkspaceError as e:
+                    raise missing(f"{rel}: no such file or directory") from e
+                if kind not in ("dir", "file") or not rel:
+                    raise bad(f"{rel or '/work'}: only files and folders of the workspace are downloaded together")
+            return ws
+        ws = await locked(check)
+        parents = {r.rpartition("/")[0] for r in rels}
+        name = (parents.pop().rsplit("/", 1)[-1] if len(parents) == 1 else "") or "work"
+        return StreamingResponse(_piped(lambda out: ws.zip_paths(rels, out)), media_type="application/zip",
+                                 headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
+                                          "Content-Disposition": _attachment(name + ".zip")})
+
+    @route("/files/move", ["POST"])
+    async def files_move(request: Request) -> Any:
+        uid = user(request)
+        d = await body(request)
+        if isinstance(d.get("from"), list):
+            srcs = [workspace_path(x) for x in d["from"]]
+            into = d.get("into")
+            if not isinstance(into, str):
+                raise bad("into: the folder to move them into ('' for the workspace itself)")
+            dest = into.strip().strip("/")[:1000]
+            return await locked(lambda: {"moved": [{"from": s, "path": p} for s, p in
+                                                   zip(srcs, Workspace(stores(uid)).move_into(srcs, dest))]})
+        src, dst = workspace_path(d.get("from")), workspace_path(d.get("to"))
+        return await locked(lambda: {"from": src, "path": Workspace(stores(uid)).move(src, dst)})
+
+    @route("/files/mkdir", ["POST"])
+    async def files_mkdir(request: Request) -> Any:
+        uid = user(request)
+        rel = workspace_path((await body(request)).get("path"))
+        return answer(await locked(lambda: {"path": Workspace(stores(uid)).mkdir(rel)}), 201)
+
+    @route("/files", ["DELETE"])
+    async def files_delete(request: Request) -> Any:
+        uid = user(request)
+        rels = [workspace_path(p) for p in request.query_params.getlist("path")] or [workspace_path("")]
+
+        def act() -> Any:
+            ws = Workspace(stores(uid))
+            for rel in rels:
+                ws.kind(rel)  # every one there before any goes
+            for rel in rels:
+                ws.remove(rel)
+            return {"deleted": rels[0] if len(rels) == 1 else rels}
+        return await locked(act)

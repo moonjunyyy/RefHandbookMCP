@@ -424,6 +424,35 @@ StateDirectory=<name>-handbook                 # the handbook's data; no Protect
 The unit uses kernel primitives and systemd only: no LSM profile, so it runs the same on WSL2 and on
 distributions without AppArmor.
 
+### Branches (agents/branches.py)
+
+A run works on a branch of its own in every git repository of its policy's read-write mounts, and the branch is merged
+when the run ends done — the person's checkout changes only then, and runs side by side work on branches side by side.
+
+- **Which repositories.** The mount itself when it holds a `.git` directory; otherwise the directories under it, down to
+  `RHB_RUN_BRANCH_DEPTH` levels (2), that hold one — not descending into a repository, a hidden directory or a symbolic
+  link. A mount that is part of a repository (its `.git` above the mount) is not branched, nor a repository whose `.git`
+  is a file (a submodule, another worktree). Files of a mount outside every repository are written in place, as before.
+- **Before the run's first command** each repository gets a worktree on `run/<hex>` (`RHB_RUN_BRANCH`), made from its
+  HEAD. The worktree is the runner's (`agents/<hex>/branches/<n>-<slug>`); an agent's command sees it bound over the
+  repository's place in the mount, and the repository's git directory at `/git/<slug>` (where the worktree's `.git`
+  points), so git works as in any worktree. A worktree holds what git tracks: untracked and ignored files (node_modules,
+  .venv, data) are not in it. The agents are told so in their brief. The person's own commands see the mount as it is.
+- **At the run's end** the crew hands the run to the runner, outside the store's lock: each worktree's changes are
+  committed on the branch (an agent may also commit there itself); a run that ended done has its branch merged into the
+  branch the repository has checked out (fast-forward when it can be). A merge that conflicts, or that would overwrite
+  changes the person has not committed, is undone (`git merge --abort`) and the branch is left for them; a run that ended
+  cancelled or failed keeps its work on the branch and merges nothing; a branch that gained nothing is deleted. The
+  worktrees and their registrations are removed. The run keeps what became of each repository (`branches` on the run:
+  merged · kept · unchanged · failed · lost, the number of files, what git said), and its page shows it.
+- **Every git command on a repository runs in the sandbox**, under the run's policy (its `sh` and `git`, its layers and
+  limits, no network, only the binds it needs): an agent can write a repository's config, attributes and hooks, and none
+  of that may run outside the sandbox (hooks are also turned off, `core.hooksPath=/dev/null`). The runner itself only
+  finds the repositories (reading directories, following no link), makes and removes its own directories, removes a
+  worktree's registration by opening each directory without following links, and reads what the sandboxed git printed.
+  Each bind carries the (device, inode) its source had when it was looked at, so a `.git` swapped for a link is refused.
+  A policy without `sh` and `git` gives no branches: the run works in place, and its page says why.
+
 ## 8. Threat model
 
 | threat | answer |
@@ -433,6 +462,7 @@ distributions without AppArmor.
 | A key leaks through the web process | It holds only the public key. |
 | Prompt injection raises authority | A model writes `proposed` only. It cannot write grants, slots or tickets, or the `occupies`/`consumes` edges. |
 | Cross-user access | A store and a run directory per uid. The runner opens a run's store by the uid in the run's path, and the launcher binds only that run's tree. |
+| An agent plants git config or hooks in a repository | Git runs on a repository only inside the sandbox (branches), with hooks off; the runner never runs git on a repository an agent could write. |
 | Runaway cost | Budget in the grant, enforced by the runner before every call, plus tickets. `ag-x-budget` forces wrap-up at 90 %. |
 | Runaway resources | cgroup limits per call, `cgroup.kill` on timeout, `disk_mb`. |
 | Data goes to a provider | Only to the providers the user registered and allowed in the grant. |
@@ -449,7 +479,8 @@ distributions without AppArmor.
   - `/agents/runs`: the runs, and a new run (goal and grant, approved as it is made);
   - `/agents/runs/<id>`: for a requested run, the grant form (routes, limits, pruning, sandbox
     policy, effort) prefilled from the suggestion, approve or reject; then the grant, the live tree
-    with usage, the shared notes, the result, and cancel. Every write is `user`, with the form token
+    with usage, the shared notes, the result, the run's branches (§7 "Branches": each repository merged,
+    left on the branch with what git said, or unchanged), and cancel. Every write is `user`, with the form token
     and same-origin check of the approval page.
   - `/agents/presets`: presets (a goal and a grant, checked as a grant when saved; 지금 실행; edit;
     delete) and their schedules (cron, five fields or @daily/@weekly…, the server's time; on, off,
@@ -457,7 +488,13 @@ distributions without AppArmor.
     run and writes its grant as the user. It skips a firing while the previous run it started is
     still going, and after a stop fires once, not once per missed time. `{date}`, `{time}`,
     `{datetime}` in a goal become the run's time. (`agents/presets.py`, `agents/cron.py`)
-  - `/agents/files`: the workspace (`/work`), read only, with where it is on the server.
+  - `/agents/files`: the workspace (`/work`) — the user's only way to the sandbox's files — a folder's
+    entries or a file's text, and each entry's menu (⋯, the right-click, Shift+F10): download (a folder as a
+    zip, streamed as it is packed), rename or move (to a folder/name path; nothing is overwritten, a folder
+    is not moved into itself), delete (a folder with what it holds); and a new folder. Every name is
+    resolved on descriptors with no symlink followed (`Workspace.kind/mkdir/move/open_file/zip_dir`): a
+    symlink is moved or deleted as itself, never downloaded through, and left out of a zip.
+    (`agents/api.py` `files*`)
   - The model sees presets with `agent_run(action="presets")` and asks for a run from one with
     `agent_run(action="request", preset=…)`: prefilled for the user's approval, never started.
 - **CLI:** `refhandbook runner` (jobs and runs), `refhandbook sandbox-check`, `refhandbook

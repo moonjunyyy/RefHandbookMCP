@@ -14,6 +14,7 @@ Opening a store runs its migrations once each, in order, and records the schema 
 | backup | the first open copies the store to `users/<uid>.db.pre-kernel` |
 | schema 1 | loads the cards and every ledger into `k_*`, and checks each ledger by round trip (the export rebuilt from the graph must equal the export). A ledger that does not round-trip is **quarantined**: its tools refuse with the reason, its rows stay intact in `rl_*` and export normally, and the other ledgers work. Stores migrated by 0.7.0 are recognised as schema 1. |
 | quarantine | belongs to the data, not the name. Every first projection of a ledger id (import, copy, rename, migration) is admitted only by round trip, so a copy or rename of quarantined data is refused; deleting the ledger lifts its quarantine. |
+| schema 2 | rows carry node ids: `rl_rows.nid` (`'n:'` + 128 random bits) names a row's node in the graph instead of `<ledger>:r:<id>`, so a ledger is not part of a row's identity (stage P0a of the entry-node migration). The store is copied to `users/<uid>.db.pre-nid` before the column is added; the rows are filled, and a ledger whose seal matched its rows is sealed again (the fill is not an outside edit). Recorded as schema 2, so older code refuses the store instead of failing a write. |
 | packages | every open compares the installed package rules with the code's: a rule still as installed (its last writer is the kernel) is replaced; a rule the user changed in any field or retired is kept, and if the package changed it too the conflict is logged (`package conflict: …` in `k_log`); a rule the package dropped is retired unless another rule still uses it. If the new rules cannot stand beside the store's own, the model's proposals are retired first; if the user's rules conflict, the upgrade is deferred and logged. The store always opens. |
 | newer schema | a store whose schema is newer than the code is refused before anything is written to it: upgrade the server instead |
 
@@ -231,9 +232,10 @@ handbook cards are another.
 A dep cell holds the rows a row rests on: `ref:ID` (or `ID`) in the same ledger, `ref:<ledger>/ID`
 in another ledger of the store. The projection makes one edge type of them, `dep_ref` (class
 `basis`): the basis checks and PENDING propagation follow every edge, and the older relation words
-(`req`, `sup`, `eq`, …) in stored cells are read as `ref`. A cross-ledger edge points at the other
-ledger's row node (`<ledger>:r:<id>`), or at a placeholder no ledger contains when that row is not
-in the graph; because a projection recreates a ledger's nodes, `migrate.relink_incoming` restores
+(`req`, `sup`, `eq`, …) in stored cells are read as `ref`. A row's node is named by its nid (schema
+2), found through its ledger's `contains` edges (`migrate.row_node`). A cross-ledger edge points at
+the other ledger's row node, or at a placeholder no ledger contains when that row is not in the
+graph (`<ledger>:r:<id>`: a reference to nothing keeps the ledger's name); because a projection recreates a ledger's nodes, `migrate.relink_incoming` restores
 the edges other ledgers hold into it after every projection (and after a delete, so citers of a
 gone ledger rest on missing rows). Rules report a target by `rs_target(X, Dn, Name)`: its id in the
 citing ledger, `<ledger>/<id>` beyond it (the node attr `xref`). A change that invalidates a row

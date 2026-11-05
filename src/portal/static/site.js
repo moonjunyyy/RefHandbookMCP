@@ -84,8 +84,9 @@ function t(text, values2) {
   const out = (current$1 === "ko" ? void 0 : CATALOGS[current$1]?.[text]) ?? text;
   return values2 ? out.replace(/\{(\w+)\}/g, (m, k) => k in values2 ? String(values2[k]) : m) : out;
 }
+const LOOK_KINDS = ["palette", "corner", "type", "size"];
 const THEMES = ["auto", "light", "dark"];
-const DEFAULTS = { lang: "auto", theme: "auto", start: "/", apps: [], home: [], seen: [] };
+const DEFAULTS = { lang: "auto", theme: "auto", start: "/", apps: [], home: [], seen: [], look: {} };
 const frame = {
   uid: null,
   title: "",
@@ -96,8 +97,35 @@ const frame = {
   frame: 0,
   cards: [],
   menu: [],
-  sizes: []
+  sizes: [],
+  look: { palette: [], corner: [], type: [], size: [], columns: [] }
 };
+const IMAGE = /^(https:\/\/|\/(?!\/))[^\s"'()\\<>;{}]{1,500}$/;
+const LOOK = "look";
+function lookTokens(look, p) {
+  const pick = (k) => look[k]?.find((c) => c.id === p[k]);
+  const pal = pick("palette");
+  const both = { ...pick("corner")?.tokens, ...pick("type")?.tokens, ...pick("size")?.tokens };
+  if (p.columns && look.columns.includes(p.columns)) both["home-grid"] = `repeat(${p.columns}, minmax(0, 1fr))`;
+  if (p.image && IMAGE.test(p.image)) both["page-image"] = `url("${p.image}")`;
+  return { light: { ...pal?.light }, dark: { ...pal?.dark }, both };
+}
+function applyLook() {
+  const t2 = lookTokens(frame.look, prefs.look ?? {});
+  try {
+    localStorage.setItem(LOOK, JSON.stringify(t2));
+  } catch {
+  }
+  putLook(t2);
+}
+function putLook(t2) {
+  const el = document.documentElement;
+  for (const name of Array.from(el.style)) if (name.startsWith("--")) el.style.removeProperty(name);
+  const set = el.getAttribute("data-theme");
+  const dark = set ? set === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+  for (const [k, v] of Object.entries({ ...dark ? t2.dark : t2.light, ...t2.both })) el.style.setProperty(`--${k}`, v);
+}
+let schemeWatched = false;
 function sizeOf(id) {
   return frame.sizes.find((s) => s.id === id) ?? frame.sizes[0] ?? { id: "1x1", cols: 1, rows: 1 };
 }
@@ -111,6 +139,11 @@ function applyTheme(theme) {
   else document.documentElement.setAttribute("data-theme", v);
   document.cookie = `theme=${v}; path=/; max-age=31536000; samesite=lax`;
   frame.theme = v;
+  applyLook();
+  if (!schemeWatched) {
+    schemeWatched = true;
+    matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => applyLook());
+  }
 }
 function fromStored(raw, cards) {
   const p = { ...DEFAULTS, ...raw, apps: [...DEFAULTS.apps] };
@@ -127,6 +160,7 @@ function fromStored(raw, cards) {
     p.apps = ids.filter((id) => !hidden.has(id)).sort((a, b) => rank(a) - rank(b));
   }
   if (!THEMES.includes(p.theme)) p.theme = "auto";
+  if (!p.look || typeof p.look !== "object" || Array.isArray(p.look)) p.look = {};
   return p;
 }
 function remember() {
@@ -143,9 +177,11 @@ async function load() {
     if (r.ok) Object.assign(frame, await r.json());
   } catch {
   }
-  frame.cards = (frame.cards ?? []).map((c) => ({ description: "", about: "", tags: [], code: "", icon: "", href: "", optional: true, default: false, links: [], widgets: [], ...c }));
+  frame.cards = (frame.cards ?? []).map((c) => ({ description: "", about: "", tags: [], code: [], icon: "", href: "", optional: true, default: false, links: [], widgets: [], ...c })).map((c) => typeof c.code === "string" ? { ...c, code: c.code ? [{ label: "", value: c.code }] : [] } : c);
   frame.menu ??= [];
   frame.sizes = Array.isArray(frame.sizes) && frame.sizes.length ? frame.sizes : [{ id: "1x1", cols: 1, rows: 1 }];
+  const given = frame.look ?? {};
+  frame.look = { palette: given.palette ?? [], corner: given.corner ?? [], type: given.type ?? [], size: given.size ?? [], columns: given.columns ?? [] };
   DEFAULTS.apps = frame.cards.filter((c) => c.default && c.optional).map((c) => c.id);
   let raw = {};
   try {
@@ -257,6 +293,33 @@ function current(href) {
   const h2 = href.replace(/\/$/, "") || "/";
   return h2 === "/" ? path === "/" : path === h2 || path.startsWith(h2 + "/");
 }
+function hoverMenu(d) {
+  let timer = 0;
+  const close = () => {
+    window.clearTimeout(timer);
+    timer = window.setTimeout(() => {
+      d.open = false;
+    }, 120);
+  };
+  const open = () => {
+    window.clearTimeout(timer);
+    for (const o of document.querySelectorAll("header nav details[open]")) if (o !== d) o.open = false;
+    d.open = true;
+  };
+  d.addEventListener("mouseenter", open);
+  d.addEventListener("mouseleave", close);
+  d.addEventListener("focusin", open);
+  d.addEventListener("focusout", (ev) => {
+    if (!d.contains(ev.relatedTarget)) close();
+  });
+  d.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape" && d.open) {
+      d.open = false;
+      d.querySelector("summary a, summary")?.focus();
+    }
+  });
+  return d;
+}
 function header() {
   const brand = document.getElementById("brand");
   if (brand) brand.textContent = frame.title;
@@ -266,13 +329,22 @@ function header() {
   replace(
     nav,
     frame.uid && [
-      onApps().map((c) => h(
-        "a",
-        { href: c.href, "aria-current": current(c.href) ? "page" : null },
-        c.icon && h("span", { class: "app-icon", "aria-hidden": "true" }, c.icon),
-        c.title
-      )),
-      h(
+      onApps().map((c) => {
+        const top = h(
+          "a",
+          { href: c.href, "aria-current": current(c.href) ? "page" : null },
+          c.icon && h("span", { class: "app-icon", "aria-hidden": "true" }, c.icon),
+          c.title
+        );
+        const pages = c.links.filter((l, i, all) => l.href && all.findIndex((x) => x.href === l.href) === i);
+        return pages.length > 1 && pages.some((l) => l.href !== c.href) ? hoverMenu(h(
+          "details",
+          { class: "nav-menu" },
+          h("summary", null, top),
+          h("div", null, pages.map((l) => h("a", { href: l.href, "aria-current": current(l.href) && location.pathname.replace(/\/$/, "") === l.href.replace(/\/$/, "") ? "page" : null }, l.label)))
+        )) : top;
+      }),
+      hoverMenu(h(
         "details",
         { class: "me" },
         h("summary", { title: t("내 메뉴") }, h("code", null, frame.uid)),
@@ -285,7 +357,7 @@ function header() {
           h("hr"),
           h("a", { href: `${frame.signin}/logout` }, t("로그아웃"))
         )
-      )
+      ))
     ],
     !frame.uid && [
       h("a", { href: "/apps" }, t("앱")),
@@ -295,8 +367,10 @@ function header() {
   if (!closing) {
     closing = true;
     document.addEventListener("click", (ev) => {
-      const me = nav.querySelector("details.me[open]");
-      if (me && !me.contains(ev.target)) me.removeAttribute("open");
+      for (const d of nav.querySelectorAll("details[open]")) if (!d.contains(ev.target)) d.removeAttribute("open");
+    });
+    document.addEventListener("keydown", (ev) => {
+      if (ev.key === "Escape") for (const d of nav.querySelectorAll("details[open]")) d.removeAttribute("open");
     });
   }
 }
@@ -489,7 +563,8 @@ let pageKeys = [];
 let keysInstalled = false;
 function typing(el) {
   const e = el;
-  return !!e && (["INPUT", "TEXTAREA", "SELECT"].includes(e.tagName) || e.isContentEditable);
+  if (e instanceof HTMLInputElement) return !["checkbox", "radio", "button", "submit", "reset"].includes(e.type);
+  return !!e && (["TEXTAREA", "SELECT"].includes(e.tagName) || e.isContentEditable);
 }
 function keys(list) {
   pageKeys = list;
@@ -657,18 +732,18 @@ function primaryLink(href, text) {
 const when = (ts) => ts ? new Date(ts * 1e3).toLocaleString(locale(), { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "-";
 const num = (n) => n ? n.toLocaleString(locale()) : "-";
 function launcher(c) {
+  const pages = c.links.filter((l, i, all) => l.href && all.findIndex((x) => x.href === l.href) === i);
+  const more = pages.length > 1 && pages.some((l) => l.href !== c.href);
   return h(
     "div",
-    { class: "launcher" },
+    { class: `launcher${more ? "" : " single"}` },
     h(
       "h2",
       null,
       c.icon && h("span", { class: "app-icon big", "aria-hidden": "true" }, c.icon),
       c.href ? h("a", { href: c.href }, c.title) : c.title
     ),
-    c.description && h("p", { class: "muted" }, c.description),
-    c.code && h("p", null, h("code", { class: "address" }, c.code)),
-    c.links.length > 1 && h("div", { class: "links" }, c.links.map((l) => h("a", { href: l.href }, l.label)))
+    more && h("div", { class: "links" }, pages.map((l) => h("a", { href: l.href }, l.label)))
   );
 }
 const LAUNCHER = "launcher";
@@ -713,14 +788,17 @@ const version = 1;
 export {
   ApiError,
   DEFAULTS,
+  IMAGE,
   LANGS,
   LAUNCHER,
+  LOOK_KINDS,
   THEMES,
   account,
   act,
   agents,
   api,
   append,
+  applyLook,
   applyTheme,
   button,
   choice,
@@ -742,6 +820,7 @@ export {
   link,
   load,
   locale,
+  lookTokens,
   main,
   menu,
   menuButton,

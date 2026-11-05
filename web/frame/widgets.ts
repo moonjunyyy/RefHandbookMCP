@@ -12,14 +12,15 @@ export interface WidgetContext { frame: typeof frame; prefs: typeof prefs; t: ty
                                  go: typeof go; api: typeof api; card: Card; widget: Widget }
 export type WidgetModule = { default: (host: HTMLElement, ctx: WidgetContext) => void | (() => void) | Promise<void | (() => void)> };
 
-/** The widget every app has: a launcher. */
+/** The widget every app has: a launcher — its mark and name, the way in; an app with more than one page lists
+ * them. What the app is and its address are the store's to say (/app/<id>), not the main page's. */
 export function launcher(c: Card): HTMLElement {
-  return h('div', { class: 'launcher' },
+  const pages = c.links.filter((l, i, all) => l.href && all.findIndex(x => x.href === l.href) === i);
+  const more = pages.length > 1 && pages.some(l => l.href !== c.href);
+  return h('div', { class: `launcher${more ? '' : ' single'}` },
     h('h2', null, c.icon && h('span', { class: 'app-icon big', 'aria-hidden': 'true' }, c.icon),
       c.href ? h('a', { href: c.href }, c.title) : c.title),
-    c.description && h('p', { class: 'muted' }, c.description),
-    c.code && h('p', null, h('code', { class: 'address' }, c.code)),
-    c.links.length > 1 && h('div', { class: 'links' }, c.links.map(l => h('a', { href: l.href }, l.label))));
+    more && h('div', { class: 'links' }, pages.map(l => h('a', { href: l.href }, l.label))));
 }
 
 export const LAUNCHER = 'launcher';

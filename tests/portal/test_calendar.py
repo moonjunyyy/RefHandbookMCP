@@ -308,6 +308,16 @@ def test_devices_and_the_caldav_round_trip(client, key):
     lab = next(c for c in cals if c["kind"] == "group")["id"]
     assert f"/calendar/dav/alice/{mine}/" in r.text and f"/calendar/dav/alice/{lab}/" in r.text
     assert "<C:calendar/>" in r.text and "<CS:getctag>0</CS:getctag>" in r.text and 'name="VEVENT"' in r.text
+    # a plain GET of the root or of the home answers as a collection (the macOS account setup looks with GET first, and
+    # stops at a 404); someone else's home and a path that is no calendar stay 404, and the challenge stays
+    for p in ("/calendar/dav/", "/calendar/dav/alice/", "/calendar/dav/alice"):
+        r = client.get(p, headers=b)
+        assert r.status_code == 200 and r.headers["content-type"].startswith("text/plain"), (p, r.status_code)
+        assert f"/calendar/dav/alice/{mine}/" in r.text and f"/calendar/dav/alice/{lab}/" in r.text
+    assert client.head("/calendar/dav/", headers=b).status_code == 200
+    assert client.get("/calendar/dav/").status_code == 401
+    assert client.get("/calendar/dav/bob/", headers=b).status_code == 404
+    assert client.get("/calendar/dav/alice/calendars", headers=b).status_code == 404
     # PUT a new event from a phone: the resource name becomes the id, the UID is kept, Seoul becomes UTC
     r = client.request("PUT", f"/calendar/dav/alice/{mine}/abc-123.ics", headers={**b, "Content-Type": "text/calendar", "If-None-Match": "*"}, content=VEVENT)
     assert r.status_code == 201 and r.headers["etag"] == '"0"'

@@ -164,6 +164,50 @@ def test_metadata_and_401(client):
     assert client.get("/healthz").text == "ok"
 
 
+def test_every_authorization_response_names_this_server(client):
+    """RFC 9207: the metadata says so, and the code, a denial and the SDK's own error redirects all carry
+    `iss` equal to the metadata's issuer string (exact comparison: a client keys its callback on it)."""
+    asm = client.get("/.well-known/oauth-authorization-server").json()
+    prm = client.get("/.well-known/oauth-protected-resource/mcp").json()
+    assert asm["authorization_response_iss_parameter_supported"] is True
+    iss = asm["issuer"]
+    assert prm["authorization_servers"] == [iss]
+    q = lambda loc: parse_qs(urlparse(loc).query)  # noqa: E731
+    # the code
+    cid = register(client).json()["client_id"]
+    r = allow(client, start(client, cid, pkce()[1]))
+    assert r.status_code == 303 and q(r.headers["location"])["iss"] == [iss] and "code" in q(r.headers["location"])
+    # a denial
+    d = client.post("/login", data={"req": start(client, cid, pkce()[1]), "action": "deny"}, follow_redirects=False)
+    assert q(d.headers["location"])["error"] == ["access_denied"] and q(d.headers["location"])["iss"] == [iss]
+    # an error the SDK's /authorize sends back itself (a scope the client may not have), and one the
+    # provider raises there (a resource that is not this server)
+    base = {"response_type": "code", "client_id": cid, "redirect_uri": CALLBACK, "state": "s",
+            "code_challenge": pkce()[1], "code_challenge_method": "S256"}
+    for extra in ({"scope": "other"}, {"scope": "refhandbook", "resource": "https://other.example/mcp"}):
+        e = client.get("/authorize", params={**base, **extra}, follow_redirects=False)
+        assert e.status_code == 302, e.text
+        assert "error" in q(e.headers["location"]) and q(e.headers["location"])["iss"] == [iss], e.headers["location"]
+        assert q(e.headers["location"])["state"] == ["s"]
+    # /authorize's step to this server's own /login is not an authorization response: no iss
+    ok = client.get("/authorize", params={**base, "scope": "refhandbook", "resource": BASE + "/mcp"}, follow_redirects=False)
+    assert urlparse(ok.headers["location"]).path == "/login" and "iss" not in q(ok.headers["location"])
+
+
+def test_the_issuer_is_the_metadata_string_whatever_the_origin_looks_like(tmp_path, accounts, key):
+    """`iss` is taken from the metadata as served, not rebuilt from the setting, so the two cannot drift."""
+    for origin in ("https://www.example.org", "http://localhost:8765"):
+        cfg = remote.Config(public_url=origin, data_dir=tmp_path / origin.split("//")[1].replace(":", "_"),
+                            sso_public_key_file="(given)", sso_issuer=ISS, extra_hosts=(urlparse(origin).netloc,))
+        m = remote.build(cfg, accounts, remote.SsoTokens(cfg, key.public_key()))
+        try:
+            with TestClient(m.http_app(), base_url=origin) as c:
+                assert m.provider.issuer == c.get("/.well-known/oauth-authorization-server").json()["issuer"]
+        finally:
+            server._user_store = None
+            research_api.use_resolver(None)
+
+
 def test_registration_refuses_foreign_redirects(client):
     assert register(client, "https://evil.example/cb").status_code == 400
     assert register(client, "http://localhost:53682/callback").status_code == 201  # Claude Code's loopback

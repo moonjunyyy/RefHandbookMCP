@@ -27,7 +27,7 @@
   <section class="card service">
     <h2>{{ a.text('title', lang()) }}</h2>
     {% if a.description %}<p class="muted">{{ a.text('description', lang()) }}</p>{% endif %}
-    {% if a.code %}<p><code class="address">{{ a.code }}</code></p>{% endif %}
+    {% for c in a.code %}<p>{% if c.label %}<span class="muted small">{{ c.label_in(lang()) }}</span> {% endif %}<code class="address">{{ c.value }}</code></p>{% endfor %}
     {% if a.links %}<div class="links">{% for ln in a.links %}<a href="{{ ln.href }}">{{ ln.label_in(lang()) }}</a>{% endfor %}</div>{% endif %}
   </section>
   {% endfor %}

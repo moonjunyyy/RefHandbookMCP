@@ -3,12 +3,16 @@
 and write a person's calendars — mounted on the calendar service (portal/calendar.py) under
 /calendar/dav/, behind HTTP Basic with a *device password* the person makes on the calendar page.
 
-    /calendar/dav/                      PROPFIND: current-user-principal → /calendar/dav/<uid>/
-    /calendar/dav/<uid>/                the principal and the calendar home (depth 1: the calendars)
+    /calendar/dav/                      PROPFIND: current-user-principal → /calendar/dav/<uid>/ · GET: a collection
+    /calendar/dav/<uid>/                the principal and the calendar home (depth 1: the calendars) · GET: a collection
     /calendar/dav/<uid>/<cid>/          a calendar collection (getctag, sync-token; depth 1: the events)
     /calendar/dav/<uid>/<cid>/<id>.ics  one event: GET · PUT (If-None-Match: * | If-Match) · DELETE
     REPORT on a calendar: calendar-query (time-range) · calendar-multiget · sync-collection
     /.well-known/caldav                 nginx: 301 → /calendar/dav/ (deploy/site.toml)
+
+A plain GET of the root or of the caller's home answers as a collection does (200, where the calendars are):
+a client may look with GET before it asks with PROPFIND — the macOS account setup does, and gives up on a
+404 (11-04, the site's nginx log: GET /calendar/dav/ 401 → 404, nothing after).
 
 The resource name a client chooses becomes the event's id (so a later GET finds it), and the VEVENT's
 UID is kept as it came (`ical_uid`). A calendar's `version` grows with every change under it: it is the
@@ -290,6 +294,12 @@ def mount(app: FastAPI, store, visible, projects_of) -> None:  # noqa: ANN001
     def calendars_of(uid: str) -> dict:
         return {c.id: c for c in visible(uid)}
 
+    def collection(uid: str) -> Response:
+        """What a plain GET of the root or of the home shows: the calendars and where they are."""
+        lines = [t("{uid} 의 캘린더 (CalDAV)", uid=uid)] + [f"{PREFIX}/{uid}/{c.id}/  {c.name}" for c in visible(uid)]
+        return Response("\n".join(lines) + "\n", media_type="text/plain; charset=utf-8",
+                        headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "no-store"})
+
     def principal_props(uid: str, want: list[str] | None) -> tuple[dict, list]:
         all_props = {
             "D:resourcetype": "<D:collection/><D:principal/>",
@@ -481,8 +491,11 @@ def mount(app: FastAPI, store, visible, projects_of) -> None:  # noqa: ANN001
     async def get(request: Request, path: str):
         uid = await gate(request)
         puid, cid, res = parse_path(path)
-        own(uid, puid)
-        if not cid or cid not in calendars_of(uid):
+        if puid:
+            own(uid, puid)
+        if not cid:  # the root, or the caller's home: collections, answered as one (a client may look before it asks)
+            return collection(uid)
+        if cid not in calendars_of(uid):
             raise DavError(404)
         domain = request.headers.get("host", "calendar").split(":")[0]
         if not res:  # the whole calendar, as a feed (a convenience: a client may GET a collection)

@@ -1,15 +1,15 @@
-// The main page (/): the person's widgets — the pieces the apps they turned on offer (docs/frame.md §4),
+// The main page (/): the person's widgets — the pieces the apps they added offer (docs/frame.md §4),
 // in the order and the sizes they arranged them. The first thing on the page is the grid, handled in place
 // (docs/apps-vault-calendar.md §8.1, R10·R15): a widget is moved by dragging its head (a launcher: the cell)
 // onto another cell, resized by dragging its corner grip (it snaps to one of the sizes the site declares),
 // and every cell's ⋯ (right-click, Shift+F10) offers the sizes, forward, back and taking it off; by keyboard a
-// focused cell moves with Alt+←/→ and leaves with Delete. "위젯 고르기" is the one tool in the grid's head: a
-// sheet of the apps that are on, a row per widget — a switch, what it shows, its size — with the widget
+// focused cell moves with Alt+←/→ and leaves with Delete. The grid's last cell, "위젯 고르기" (key w), is the
+// one tool, with no row of tools above the grid: a sheet of the apps added, a row per widget — a switch, what it shows, its size — with the widget
 // itself drawn beside the list as the row is pointed at (the preview is the module, not a picture). With no
 // app on, the page is one action — add apps — which goes to the store (/apps); the main page itself is never
 // the store. Right after signing in it opens the person's start page.
 
-import { button, dialog, frame, h, help, keys, main, menuButton, mount, onApps, onMenu, prefs, primaryLink, replace, savePrefs, sizeOf, spanStyle,
+import { dialog, frame, h, keys, main, menuButton, mount, onApps, onMenu, prefs, primaryLink, replace, savePrefs, sizeOf, spanStyle,
          tag, title, toggle, widgetsOf, LAUNCHER } from '/auth/static/site.js';
 import type { Card, MenuSection, Placement, Size, Widget } from '/auth/static/site.js';
 import { t } from '../lib/i18n';
@@ -58,7 +58,6 @@ export async function home(): Promise<void> {
     return;
   }
   const grid = h('div', { class: 'widgets' });
-  const head = h('div', { class: 'section-head' }, h('span'), h('span'));
 
   function cell(c: Card, w: Widget, i = -1, p?: Placement): HTMLElement {
     const size = sizeOf(p?.size ?? w.size);
@@ -175,18 +174,17 @@ export async function home(): Promise<void> {
     await dialog(t('위젯 고르기'), h('div', { class: 'pick-wrap' }, h('div', { class: 'pick-list' }, rows), preview), { justClose: true });
   }
 
+  // the grid's last cell is the way to more widgets: no row of tools above the grid (what the cells do is in their ⋯)
+  const more = h('button', { type: 'button', class: 'add-widget', 'aria-keyshortcuts': 'w', onclick: () => void pick() },
+    h('span', { class: 'add-mark', 'aria-hidden': 'true' }, '+'), t('위젯 고르기'));
+
   function draw(): void {
     const list = placements();
-    replace(grid, list.map((p, i) => { const r = resolve(p); return r && cell(r[0], r[1], i, p); }));
-    replace(head,
-      h('span'),
-      h('span', { class: 'actions' },
-        button(t('위젯 고르기'), pick, 'secondary'),
-        help(t('머리를 잡아 끌면 자리가, 모서리를 끌면 크기가 바뀝니다. ⋯ 와 우클릭에 같은 일이 있고, 초점 둔 칸은 Alt+←→ 와 Delete 를 받습니다.'))));
+    replace(grid, list.map((p, i) => { const r = resolve(p); return r && cell(r[0], r[1], i, p); }), more);
   }
 
   keys([{ key: 'w', label: t('위젯 고르기'), run: pick }]);
-  replace(main(), head, grid);
+  replace(main(), grid);
   draw();
 }
 
