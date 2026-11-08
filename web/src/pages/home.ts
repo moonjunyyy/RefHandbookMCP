@@ -9,7 +9,7 @@
 // app on, the page is one action — add apps — which goes to the store (/apps); the main page itself is never
 // the store. Right after signing in it opens the person's start page.
 
-import { dialog, frame, h, keys, main, menuButton, mount, onApps, onMenu, prefs, primaryLink, replace, savePrefs, sizeOf, spanStyle,
+import { act, dialog, frame, h, keys, main, menuButton, mount, onApps, onMenu, prefs, primaryLink, replace, savePrefs, sizeOf, spanStyle,
          tag, title, toggle, widgetsOf, LAUNCHER } from '/auth/static/site.js';
 import type { Card, MenuSection, Placement, Size, Widget } from '/auth/static/site.js';
 import { t } from '../lib/i18n';
@@ -18,7 +18,7 @@ import { t } from '../lib/i18n';
 function placements(): Placement[] {
   const on = onApps();
   const own = prefs.home.filter(p => on.some(c => c.id === p.app) && widgetsOf(on.find(c => c.id === p.app)!).some(w => w.id === p.widget));
-  return own.length ? own : on.map(c => ({ app: c.id, widget: LAUNCHER }));
+  return prefs.homeCustomized || prefs.home.length ? own : on.map(c => ({ app: c.id, widget: LAUNCHER }));
 }
 
 function resolve(p: Placement): [Card, Widget] | null {
@@ -47,8 +47,7 @@ export async function home(): Promise<void> {
   if (!frame.uid) {
     replace(main(),
       h('div', { class: 'page-head' }, h('h1', null, frame.title)),
-      h('p', { class: 'actions' }, primaryLink(`${frame.signin}/login?next=/`, t('로그인'))),
-      frame.cards.length > 0 && h('div', { class: 'widgets' }, frame.cards.map(c => cell(c, widgetsOf(c)[0]))));
+      h('p', { class: 'actions' }, primaryLink(`${frame.signin}/login?next=/`, t('로그인'))));  // signed out: the way in, nothing else
     keys([]);
     return;
   }
@@ -63,7 +62,7 @@ export async function home(): Promise<void> {
     const size = sizeOf(p?.size ?? w.size);
     const el = h('article', { class: 'widget card', style: spanStyle(size.id), 'data-app': c.id, 'data-widget': w.id, 'data-size': size.id,
                               tabindex: i >= 0 ? 0 : null, 'aria-label': `${c.title} · ${w.title}` });
-    void mount(el, c, w);
+    void mount(el, c, w, size);  // the module draws as much as the cell's size holds
     if (i < 0) return el;
     const sections = (): MenuSection[] => [
       { title: `${c.title} · ${w.title}`, items: frame.sizes.map(s => ({ label: sizeWord(s), detail: s.id === size.id ? t('지금') : undefined, disabled: s.id === size.id,
@@ -84,13 +83,13 @@ export async function home(): Promise<void> {
       ev.preventDefault();
       el.classList.remove('over');
       const from = Number(ev.dataTransfer?.getData('text/plain'));
-      if (!Number.isNaN(from) && from !== i) void move(from, i);
+      if (!Number.isNaN(from) && from !== i) void act(null, () => move(from, i));
     });
     el.addEventListener('keydown', ev => {
       if (ev.target !== el) return;  // a key inside the widget's own content is its own
-      if (ev.altKey && ev.key === 'ArrowLeft') { ev.preventDefault(); void move(i, i - 1); }
-      if (ev.altKey && ev.key === 'ArrowRight') { ev.preventDefault(); void move(i, i + 1); }
-      if (ev.key === 'Delete' || ev.key === 'Backspace') { ev.preventDefault(); void remove(i); }
+      if (ev.altKey && ev.key === 'ArrowLeft') { ev.preventDefault(); void act(null, () => move(i, i - 1)); }
+      if (ev.altKey && ev.key === 'ArrowRight') { ev.preventDefault(); void act(null, () => move(i, i + 1)); }
+      if (ev.key === 'Delete' || ev.key === 'Backspace') { ev.preventDefault(); void act(null, () => remove(i)); }
     });
     onMenu(el, sections);
     el.appendChild(h('div', { class: 'widget-tools' }, menuButton(sections)));
@@ -111,10 +110,14 @@ export async function home(): Promise<void> {
         return nearest(Math.min(cols, Math.max(...frame.sizes.map(s => s.cols))), Math.min(rows, Math.max(...frame.sizes.map(s => s.rows))));
       };
       const onMove = (e: PointerEvent) => { want = at(e); el.setAttribute('style', spanStyle(want.id)); el.dataset.size = want.id; el.classList.add('resizing'); };
-      const onUp = () => {
+      const onUp = (e: PointerEvent) => {
         grip.removeEventListener('pointermove', onMove); grip.removeEventListener('pointerup', onUp); grip.removeEventListener('pointercancel', onUp);
         el.classList.remove('resizing');
-        if (want.id !== size.id) void resize(i, want); else el.setAttribute('style', spanStyle(size.id));
+        if (e.type !== 'pointercancel' && want.id !== size.id) void act(null, async () => {
+          try { await resize(i, want); }
+          finally { el.setAttribute('style', spanStyle(size.id)); el.dataset.size = size.id; }
+        });
+        else { el.setAttribute('style', spanStyle(size.id)); el.dataset.size = size.id; }
       };
       grip.addEventListener('pointermove', onMove); grip.addEventListener('pointerup', onUp); grip.addEventListener('pointercancel', onUp);
     });
@@ -122,8 +125,8 @@ export async function home(): Promise<void> {
     return el;
   }
 
-  async function keep(next: Placement[], focus?: number): Promise<void> {
-    await savePrefs({ home: next });
+  async function keep(next: Placement[] | (() => Placement[]), focus?: number): Promise<void> {
+    await savePrefs(() => ({ home: typeof next === 'function' ? next() : next, homeCustomized: true }));
     draw();
     if (focus !== undefined) (grid.children[Math.min(focus, grid.children.length - 1)] as HTMLElement | undefined)?.focus();
   }
@@ -163,7 +166,7 @@ export async function home(): Promise<void> {
       widgetsOf(c).map(w => {
         const row = h('div', { class: 'pick-row', 'data-app': c.id, 'data-widget': w.id,
                                onmouseenter: () => show(c, w), onfocusin: () => show(c, w) },
-          toggle('', isOn(c, w), on => keep(on ? [...placements(), { app: c.id, widget: w.id }]
+          toggle('', isOn(c, w), on => keep(() => on ? [...placements(), { app: c.id, widget: w.id }]
             : placements().filter(p => !(p.app === c.id && p.widget === w.id))), { 'aria-label': `${c.title} · ${w.title}` }),
           h('div', { class: 'pick-text' },
             h('span', { class: 'pick-title' }, w.id === LAUNCHER ? t('바로가기') : w.title),

@@ -5,37 +5,55 @@
    another look redeclares a token in its own stylesheet: the cascade does the rest.
    Warm paper, stone ink, an amber accent and serif headings, after 글타래 (the first hosted app). */
 :root {
-  --bg: #fbf9f5; --card: #fff; --soft: #f5f2eb; --text: #1c1917; --muted: #78716c; --line: #e7e5e4;
-  --accent: #92400e; --accent-hover: #78350f; --accent-text: #fffbeb; --accent-soft: #fef3c7;
-  --ok: #15803d; --bad: #b91c1c; --bad-text: #fff; --warn: #b45309;
+  --light-bg: #fbf9f5; --light-card: #fff; --light-soft: #f5f2eb;
+  --light-text: #1c1917; --light-muted: #78716c; --light-line: #e7e5e4;
+  --light-ok: #15803d; --light-warn: #b45309; --light-bad: #b91c1c;
+  --dark-bg: #1a1714; --dark-card: #24201c; --dark-soft: #2c2722;
+  --dark-text: #f5f0e8; --dark-muted: #a8a29e; --dark-line: #3a342e;
+  --dark-ok: #4ade80; --dark-warn: #fbbf24; --dark-bad: #f87171;
+  --bg: var(--light-bg); --card: var(--light-card); --soft: var(--light-soft); --text: var(--light-text); --muted: var(--light-muted); --line: var(--light-line);
+  --light-accent: #92400e; --dark-accent: #f59e0b; --accent: var(--light-accent); --accent-hover: #78350f; --accent-text: #fffbeb; --accent-soft: #fef3c7;
+  --ok: var(--light-ok); --bad: var(--light-bad); --bad-text: #fff; --warn: var(--light-warn);
   --shadow: 0 1px 2px rgb(28 25 23 / .05); --shadow-pop: 0 8px 24px rgb(28 25 23 / .16); --scrim: rgb(28 25 23 / .35);
   --radius: 10px; --radius-s: 6px;
   /* the person's look (docs/frame.md §1.3) may redeclare these too: the root size every rem follows, the main
      page's columns, and an image under the page */
-  --root-size: 100%; --home-grid: repeat(auto-fill, minmax(240px, 1fr)); --page-image: none;
+  --root-size: 100%; --home-grid: repeat(auto-fill, minmax(min(100%, 240px), 1fr)); --page-image: none; --page-blur: 0px; --page-dim: 0%; --page-surface: transparent;
   /* the scale of space (docs/frame.md §5 R14): every padding, gap and margin of the parts is one of these */
   --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px;
   --pad: 16px; --pad-s: 10px; --gap: 10px; --cell: 110px;
+  --cell-items: 4;  /* the list rows a widget shows per row of its cell (web/frame/widgets.ts fit()) */
   /* an app's mark: inline (the header, a widget's head) and big (a launcher, a card) */
   --icon: 1.5em; --icon-big: 36px;
-  --serif: "Gowun Batang", "Noto Serif KR", "Nanum Myeongjo", "AppleMyungjo", "Source Serif 4", Georgia, serif;
-  --sans: "Plus Jakarta Sans", -apple-system, "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR",
-          "Malgun Gothic", system-ui, sans-serif;
-  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  /* the fonts: each role's first family, then its fallback (theme.css's own: --*-default) — a look's font choice
+     (docs/frame.md §1.3) redeclares --sans, --serif or --mono with its own family and the same fallback */
+  --serif-fallback: "Noto Serif KR", "Nanum Myeongjo", "AppleMyungjo", "Source Serif 4", Georgia, serif;
+  --sans-fallback: -apple-system, "Apple SD Gothic Neo", "Pretendard", "Noto Sans KR", "Malgun Gothic", system-ui, sans-serif;
+  --mono-fallback: ui-monospace, "SF Mono", Menlo, monospace;
+  --serif-default: "Gowun Batang", var(--serif-fallback);
+  --sans-default: "Plus Jakarta Sans", var(--sans-fallback);
+  --mono-default: "JetBrains Mono", var(--mono-fallback);
+  --serif: var(--serif-default); --sans: var(--sans-default); --mono: var(--mono-default);
   color-scheme: light;
 }
 /* the dark theme: chosen (data-theme), or the OS's when nothing is chosen */
 :root[data-theme="dark"] {
-  --bg: #1a1714; --card: #24201c; --soft: #2c2722; --text: #f5f0e8; --muted: #a8a29e; --line: #3a342e;
-  --accent: #f59e0b; --accent-hover: #fbbf24; --accent-text: #1c1917; --accent-soft: #3b2a12;
-  --ok: #4ade80; --bad: #f87171; --bad-text: #1c1917; --warn: #fbbf24; --shadow: none; --shadow-pop: 0 8px 24px rgb(0 0 0 / .5); --scrim: rgb(0 0 0 / .55);
+  --bg: var(--dark-bg); --card: var(--dark-card); --soft: var(--dark-soft); --text: var(--dark-text); --muted: var(--dark-muted); --line: var(--dark-line);
+  --accent: var(--dark-accent); --accent-hover: #fbbf24; --accent-text: #1c1917; --accent-soft: #3b2a12;
+  --ok: var(--dark-ok); --bad: var(--dark-bad); --bad-text: #1c1917; --warn: var(--dark-warn); --shadow: none; --shadow-pop: 0 8px 24px rgb(0 0 0 / .5); --scrim: rgb(0 0 0 / .55);
   color-scheme: dark;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #1a1714; --card: #24201c; --soft: #2c2722; --text: #f5f0e8; --muted: #a8a29e; --line: #3a342e;
-    --accent: #f59e0b; --accent-hover: #fbbf24; --accent-text: #1c1917; --accent-soft: #3b2a12;
-    --ok: #4ade80; --bad: #f87171; --bad-text: #1c1917; --warn: #fbbf24; --shadow: none; --shadow-pop: 0 8px 24px rgb(0 0 0 / .5); --scrim: rgb(0 0 0 / .55);
+    --bg: var(--dark-bg); --card: var(--dark-card); --soft: var(--dark-soft); --text: var(--dark-text); --muted: var(--dark-muted); --line: var(--dark-line);
+    --accent: var(--dark-accent); --accent-hover: #fbbf24; --accent-text: #1c1917; --accent-soft: #3b2a12;
+    --ok: var(--dark-ok); --bad: var(--dark-bad); --bad-text: #1c1917; --warn: var(--dark-warn); --shadow: none; --shadow-pop: 0 8px 24px rgb(0 0 0 / .5); --scrim: rgb(0 0 0 / .55);
     color-scheme: dark;
   }
+}
+
+:root, .look-preview, .palette-preview {
+  --panel-radius: clamp(0px, var(--radius), 24px);
+  --control-radius: clamp(0px, var(--radius-s), 12px);
+  --grid-radius: clamp(0px, var(--radius-s), 8px);
 }

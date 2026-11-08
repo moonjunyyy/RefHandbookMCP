@@ -12,7 +12,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
-from . import agents_api, cap_api, render, research_api
+from . import agents_api, cap_api, entry_api, render, research_api
 from .store import Handbook, HandbookError
 
 INSTRUCTIONS = """\
@@ -262,3 +262,8 @@ for _fn in research_api.WRITE_TOOLS:
     tool(LEDGER_WRITE)(_fn)
 for _fn in research_api.DELETE_TOOLS:
     tool(DELETE)(_fn)
+# entry nodes and their refs (docs/entry-graph.md): reading any node, and the write path
+for _fn in entry_api.READ_TOOLS:
+    tool(READ)(_fn)
+for _fn in entry_api.WRITE_TOOLS:
+    tool(LEDGER_WRITE)(_fn)

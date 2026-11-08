@@ -48,11 +48,13 @@
 [site]
 aliases = ["m00nny.kr"]
 portal_root = "/account"
+smb_passwords = "1"
 
 # The person's look (docs/frame.md §1.3): what the settings page offers over theme.css's tokens. A choice
 # redeclares tokens (a palette: for the light theme and the dark one); the first of each kind is theme.css's own.
 [look]
 columns = [0, 2, 3, 4, 5, 6]  # the main page's columns; 0 = as many as fit
+fonts = "/apps/site/fonts/"  # where the pages app serves the open fonts (web/fonts.json, built by web/scripts/fonts.mjs)
   [[look.palette]]
   id = "amber"
   label = "호박"
@@ -81,6 +83,60 @@ columns = [0, 2, 3, 4, 5, 6]  # the main page's columns; 0 = as many as fit
   tr = { en = "Ink" }
   light = { accent = "#334155", accent-hover = "#1e293b", accent-text = "#f8fafc", accent-soft = "#e2e8f0" }
   dark = { accent = "#cbd5e1", accent-hover = "#e2e8f0", accent-text = "#0f172a", accent-soft = "#273244" }
+  [[look.palette]]
+  id = "ruby"
+  label = "루비"
+  tr = { en = "Ruby" }
+  light = { accent = "#991b1b", accent-hover = "#7f1d1d", accent-text = "#ffffff", accent-soft = "#fee2e2", bg = "#fff5f5", card = "#fffafa", soft = "#fce8e8", muted = "#4c3336" }
+  dark = { accent = "#fca5a5", accent-hover = "#fecaca", accent-text = "#161312", accent-soft = "#40171a", bg = "#241116", card = "#2e181d", soft = "#3a2026", muted = "#d6b8bf" }
+  [[look.palette]]
+  id = "rose"
+  label = "장미"
+  tr = { en = "Rose" }
+  light = { accent = "#9d174d", accent-hover = "#831843", accent-text = "#ffffff", accent-soft = "#fce7f3" }
+  dark = { accent = "#f9a8d4", accent-hover = "#fbcfe8", accent-text = "#161312", accent-soft = "#43132a" }
+  [[look.palette]]
+  id = "copper"
+  label = "구리"
+  tr = { en = "Copper" }
+  light = { accent = "#9a3412", accent-hover = "#7c2d12", accent-text = "#ffffff", accent-soft = "#ffedd5" }
+  dark = { accent = "#fdba74", accent-hover = "#fed7aa", accent-text = "#161312", accent-soft = "#411e12" }
+  [[look.palette]]
+  id = "olive"
+  label = "올리브"
+  tr = { en = "Olive" }
+  light = { accent = "#3f6212", accent-hover = "#365314", accent-text = "#ffffff", accent-soft = "#ecfccb" }
+  dark = { accent = "#bef264", accent-hover = "#d9f99d", accent-text = "#161312", accent-soft = "#293711" }
+  [[look.palette]]
+  id = "jade"
+  label = "비취"
+  tr = { en = "Jade" }
+  light = { accent = "#115e59", accent-hover = "#134e4a", accent-text = "#ffffff", accent-soft = "#ccfbf1" }
+  dark = { accent = "#5eead4", accent-hover = "#99f6e4", accent-text = "#161312", accent-soft = "#123532" }
+  [[look.palette]]
+  id = "ice"
+  label = "빙하"
+  tr = { en = "Glacier" }
+  light = { accent = "#155e75", accent-hover = "#164e63", accent-text = "#ffffff", accent-soft = "#cffafe", bg = "#eff9fb", card = "#f9fdff", soft = "#e4f1f5", muted = "#36515c" }
+  dark = { accent = "#67e8f9", accent-hover = "#a5f3fc", accent-text = "#161312", accent-soft = "#12313e", bg = "#101f2b", card = "#142939", soft = "#193244", muted = "#a9c3d5" }
+  [[look.palette]]
+  id = "cobalt"
+  label = "코발트"
+  tr = { en = "Cobalt" }
+  light = { accent = "#3730a3", accent-hover = "#312e81", accent-text = "#ffffff", accent-soft = "#e0e7ff", bg = "#f1f4ff", card = "#fafbff", soft = "#e9edfc", muted = "#414d70" }
+  dark = { accent = "#a5b4fc", accent-hover = "#c7d2fe", accent-text = "#161312", accent-soft = "#252448", bg = "#15182b", card = "#1d213b", soft = "#292e49", muted = "#b9c0df" }
+  [[look.palette]]
+  id = "orchid"
+  label = "난초"
+  tr = { en = "Orchid" }
+  light = { accent = "#86198f", accent-hover = "#701a75", accent-text = "#ffffff", accent-soft = "#fae8ff" }
+  dark = { accent = "#f0abfc", accent-hover = "#f5d0fe", accent-text = "#161312", accent-soft = "#3f1945" }
+  [[look.palette]]
+  id = "stone"
+  label = "돌"
+  tr = { en = "Stone" }
+  light = { accent = "#44403c", accent-hover = "#292524", accent-text = "#ffffff", accent-soft = "#e7e5e4", bg = "#f3f1ee", card = "#fcfaf8", soft = "#ebe8e3", muted = "#4c4741" }
+  dark = { accent = "#d6d3d1", accent-hover = "#e7e5e4", accent-text = "#161312", accent-soft = "#332e2b", bg = "#1c1a18", card = "#272421", soft = "#34302c", muted = "#c5beb4" }
   [[look.corner]]
   id = "soft"
   label = "둥글게"
@@ -95,20 +151,316 @@ columns = [0, 2, 3, 4, 5, 6]  # the main page's columns; 0 = as many as fit
   label = "더 둥글게"
   tr = { en = "Round" }
   tokens = { radius = "16px", radius-s = "10px" }
+  # The fonts (docs/frame.md §1.3): the body's (type → --sans), the headings' (heading → --serif) and the code's
+  # (mono → --mono). A choice names the open fonts it needs (ids of web/fonts.json, which the pages app builds
+  # and serves at [look] fonts) — a page loads them only when the person chose it — and keeps the tokens'
+  # fallback after its family. group: where the settings page lists it (sans, serif, hand, display, mono).
   [[look.type]]
   id = "sans"
-  label = "고딕"
-  tr = { en = "Sans" }
+  label = "기본 고딕"
+  tr = { en = "Default sans" }
+  group = "sans"
   [[look.type]]
-  id = "serif"
-  label = "명조"
-  tr = { en = "Serif" }
-  tokens = { sans = 'var(--serif)' }
+  id = "pretendard"
+  label = "프리텐다드"
+  tr = { en = "Pretendard" }
+  group = "sans"
+  fonts = ["pretendard"]
+  tokens = { sans = '"Pretendard Variable", var(--sans-fallback)' }
+  [[look.type]]
+  id = "wanted-sans"
+  label = "원티드 산스"
+  tr = { en = "Wanted Sans" }
+  group = "sans"
+  fonts = ["wanted-sans"]
+  tokens = { sans = '"Wanted Sans Variable", var(--sans-fallback)' }
+  [[look.type]]
+  id = "suit"
+  label = "수트"
+  tr = { en = "SUIT" }
+  group = "sans"
+  fonts = ["suit"]
+  tokens = { sans = '"SUIT Variable", var(--sans-fallback)' }
+  [[look.type]]
+  id = "spoqa"
+  label = "스포카 한 산스 네오"
+  tr = { en = "Spoqa Han Sans Neo" }
+  group = "sans"
+  fonts = ["spoqa-han-sans-neo"]
+  tokens = { sans = '"Spoqa Han Sans Neo", var(--sans-fallback)' }
+  [[look.type]]
+  id = "noto-sans"
+  label = "본고딕 (Noto Sans KR)"
+  tr = { en = "Noto Sans KR" }
+  group = "sans"
+  fonts = ["noto-sans-kr"]
+  tokens = { sans = '"Noto Sans KR Variable", var(--sans-fallback)' }
+  [[look.type]]
+  id = "ibm-plex-sans"
+  label = "IBM Plex Sans KR"
+  group = "sans"
+  fonts = ["ibm-plex-sans-kr"]
+  tokens = { sans = '"IBM Plex Sans KR", var(--sans-fallback)' }
+  [[look.type]]
+  id = "nanum-gothic"
+  label = "나눔고딕"
+  tr = { en = "Nanum Gothic" }
+  group = "sans"
+  fonts = ["nanum-gothic"]
+  tokens = { sans = '"Nanum Gothic", var(--sans-fallback)' }
+  [[look.type]]
+  id = "gothic-a1"
+  label = "고딕 A1"
+  tr = { en = "Gothic A1" }
+  group = "sans"
+  fonts = ["gothic-a1"]
+  tokens = { sans = '"Gothic A1", var(--sans-fallback)' }
+  [[look.type]]
+  id = "gowun-dodum"
+  label = "고운돋움"
+  tr = { en = "Gowun Dodum" }
+  group = "sans"
+  fonts = ["gowun-dodum"]
+  tokens = { sans = '"Gowun Dodum", var(--sans-fallback)' }
+  [[look.type]]
+  id = "sunflower"
+  label = "Sunflower"
+  group = "sans"
+  fonts = ["sunflower"]
+  tokens = { sans = 'Sunflower, var(--sans-fallback)' }
+  [[look.type]]
+  id = "inter"
+  label = "Inter + 프리텐다드"
+  tr = { en = "Inter + Pretendard" }
+  group = "sans"
+  fonts = ["inter", "pretendard"]
+  tokens = { sans = '"Inter Variable", "Pretendard Variable", var(--sans-fallback)' }
   [[look.type]]
   id = "system"
   label = "기기 글꼴"
   tr = { en = "The device's" }
+  group = "sans"
   tokens = { sans = "system-ui, sans-serif" }
+  [[look.type]]
+  id = "humanist"
+  label = "Segoe UI / Noto Sans"
+  group = "sans"
+  tokens = { sans = '"Segoe UI", "Noto Sans KR", "Malgun Gothic", sans-serif' }
+  [[look.type]]
+  id = "serif"
+  label = "기본 명조"
+  tr = { en = "Default serif" }
+  group = "serif"
+  tokens = { sans = 'var(--serif-default)' }
+  [[look.type]]
+  id = "noto-serif"
+  label = "본명조 (Noto Serif KR)"
+  tr = { en = "Noto Serif KR" }
+  group = "serif"
+  fonts = ["noto-serif-kr"]
+  tokens = { sans = '"Noto Serif KR Variable", var(--serif-fallback)' }
+  [[look.type]]
+  id = "nanum-myeongjo"
+  label = "나눔명조"
+  tr = { en = "Nanum Myeongjo" }
+  group = "serif"
+  fonts = ["nanum-myeongjo"]
+  tokens = { sans = '"Nanum Myeongjo", var(--serif-fallback)' }
+  [[look.type]]
+  id = "gowun-batang"
+  label = "고운바탕"
+  tr = { en = "Gowun Batang" }
+  group = "serif"
+  fonts = ["gowun-batang"]
+  tokens = { sans = '"Gowun Batang", var(--serif-fallback)' }
+  [[look.type]]
+  id = "hahmlet"
+  label = "함렛"
+  tr = { en = "Hahmlet" }
+  group = "serif"
+  fonts = ["hahmlet"]
+  tokens = { sans = '"Hahmlet Variable", var(--serif-fallback)' }
+  [[look.type]]
+  id = "source-serif"
+  label = "Source Serif + 본명조"
+  tr = { en = "Source Serif + Noto Serif KR" }
+  group = "serif"
+  fonts = ["source-serif-4", "noto-serif-kr"]
+  tokens = { sans = '"Source Serif 4 Variable", "Noto Serif KR Variable", var(--serif-fallback)' }
+  [[look.type]]
+  id = "book"
+  label = "Georgia / Noto Serif"
+  group = "serif"
+  tokens = { sans = 'Georgia, "Noto Serif KR", "Nanum Myeongjo", serif', serif = 'Georgia, "Noto Serif KR", "Nanum Myeongjo", serif' }
+  [[look.type]]
+  id = "gaegu"
+  label = "개구"
+  tr = { en = "Gaegu" }
+  group = "hand"
+  fonts = ["gaegu"]
+  tokens = { sans = 'Gaegu, var(--sans-fallback)' }
+  [[look.type]]
+  id = "hi-melody"
+  label = "하이멜로디"
+  tr = { en = "Hi Melody" }
+  group = "hand"
+  fonts = ["hi-melody"]
+  tokens = { sans = '"Hi Melody", var(--sans-fallback)' }
+  [[look.type]]
+  id = "mono"
+  label = "코드 글꼴로"
+  tr = { en = "The code font" }
+  group = "mono"
+  tokens = { sans = 'var(--mono)', serif = 'var(--mono)' }
+  [[look.heading]]
+  id = "serif"
+  label = "기본 명조"
+  tr = { en = "Default serif" }
+  group = "serif"
+  [[look.heading]]
+  id = "body"
+  label = "본문과 같게"
+  tr = { en = "As the body" }
+  group = "sans"
+  tokens = { serif = 'var(--sans)' }
+  [[look.heading]]
+  id = "pretendard"
+  label = "프리텐다드"
+  tr = { en = "Pretendard" }
+  group = "sans"
+  fonts = ["pretendard"]
+  tokens = { serif = '"Pretendard Variable", var(--sans-fallback)' }
+  [[look.heading]]
+  id = "noto-serif"
+  label = "본명조 (Noto Serif KR)"
+  tr = { en = "Noto Serif KR" }
+  group = "serif"
+  fonts = ["noto-serif-kr"]
+  tokens = { serif = '"Noto Serif KR Variable", var(--serif-fallback)' }
+  [[look.heading]]
+  id = "nanum-myeongjo"
+  label = "나눔명조"
+  tr = { en = "Nanum Myeongjo" }
+  group = "serif"
+  fonts = ["nanum-myeongjo"]
+  tokens = { serif = '"Nanum Myeongjo", var(--serif-fallback)' }
+  [[look.heading]]
+  id = "gowun-batang"
+  label = "고운바탕"
+  tr = { en = "Gowun Batang" }
+  group = "serif"
+  fonts = ["gowun-batang"]
+  tokens = { serif = '"Gowun Batang", var(--serif-fallback)' }
+  [[look.heading]]
+  id = "hahmlet"
+  label = "함렛"
+  tr = { en = "Hahmlet" }
+  group = "serif"
+  fonts = ["hahmlet"]
+  tokens = { serif = '"Hahmlet Variable", var(--serif-fallback)' }
+  [[look.heading]]
+  id = "song-myung"
+  label = "송명"
+  tr = { en = "Song Myung" }
+  group = "serif"
+  fonts = ["song-myung"]
+  tokens = { serif = '"Song Myung", var(--serif-fallback)' }
+  [[look.heading]]
+  id = "do-hyeon"
+  label = "도현"
+  tr = { en = "Do Hyeon" }
+  group = "display"
+  fonts = ["do-hyeon"]
+  tokens = { serif = '"Do Hyeon", var(--sans-fallback)' }
+  [[look.heading]]
+  id = "black-han-sans"
+  label = "검은고딕"
+  tr = { en = "Black Han Sans" }
+  group = "display"
+  fonts = ["black-han-sans"]
+  tokens = { serif = '"Black Han Sans", var(--sans-fallback)' }
+  [[look.heading]]
+  id = "jua"
+  label = "주아"
+  tr = { en = "Jua" }
+  group = "display"
+  fonts = ["jua"]
+  tokens = { serif = 'Jua, var(--sans-fallback)' }
+  [[look.heading]]
+  id = "orbit"
+  label = "Orbit"
+  group = "display"
+  fonts = ["orbit"]
+  tokens = { serif = 'Orbit, var(--sans-fallback)' }
+  [[look.heading]]
+  id = "gaegu"
+  label = "개구"
+  tr = { en = "Gaegu" }
+  group = "hand"
+  fonts = ["gaegu"]
+  tokens = { serif = 'Gaegu, var(--sans-fallback)' }
+  [[look.heading]]
+  id = "nanum-pen"
+  label = "나눔손글씨 펜"
+  tr = { en = "Nanum Pen Script" }
+  group = "hand"
+  fonts = ["nanum-pen-script"]
+  tokens = { serif = '"Nanum Pen Script", var(--sans-fallback)' }
+  [[look.heading]]
+  id = "hi-melody"
+  label = "하이멜로디"
+  tr = { en = "Hi Melody" }
+  group = "hand"
+  fonts = ["hi-melody"]
+  tokens = { serif = '"Hi Melody", var(--sans-fallback)' }
+  [[look.mono]]
+  id = "default"
+  label = "기본 고정폭"
+  tr = { en = "Default monospace" }
+  group = "mono"
+  [[look.mono]]
+  id = "jetbrains-mono"
+  label = "JetBrains Mono + D2Coding"
+  group = "mono"
+  fonts = ["jetbrains-mono", "d2coding"]
+  tokens = { mono = '"JetBrains Mono Variable", D2Coding, var(--mono-fallback)' }
+  [[look.mono]]
+  id = "d2coding"
+  label = "D2Coding"
+  group = "mono"
+  fonts = ["d2coding"]
+  tokens = { mono = 'D2Coding, var(--mono-fallback)' }
+  [[look.mono]]
+  id = "fira-code"
+  label = "Fira Code + D2Coding"
+  group = "mono"
+  fonts = ["fira-code", "d2coding"]
+  tokens = { mono = '"Fira Code Variable", D2Coding, var(--mono-fallback)' }
+  [[look.mono]]
+  id = "source-code-pro"
+  label = "Source Code Pro + D2Coding"
+  group = "mono"
+  fonts = ["source-code-pro", "d2coding"]
+  tokens = { mono = '"Source Code Pro Variable", D2Coding, var(--mono-fallback)' }
+  [[look.mono]]
+  id = "ibm-plex-mono"
+  label = "IBM Plex Mono + D2Coding"
+  group = "mono"
+  fonts = ["ibm-plex-mono", "d2coding"]
+  tokens = { mono = '"IBM Plex Mono", D2Coding, var(--mono-fallback)' }
+  [[look.mono]]
+  id = "nanum-gothic-coding"
+  label = "나눔고딕코딩"
+  tr = { en = "Nanum Gothic Coding" }
+  group = "mono"
+  fonts = ["nanum-gothic-coding"]
+  tokens = { mono = '"Nanum Gothic Coding", var(--mono-fallback)' }
+  [[look.mono]]
+  id = "system"
+  label = "기기 고정폭"
+  tr = { en = "The device's monospace" }
+  group = "mono"
+  tokens = { mono = 'ui-monospace, monospace' }
   [[look.size]]
   id = "normal"
   label = "보통"
@@ -208,9 +560,9 @@ link = [{ label = "프로젝트", href = "/projects", tr = { en = "Projects" } }
   [[app.widget]]
   id = "mine"
   title = "내 프로젝트"
-  description = "내가 속한 프로젝트와 그 저장소로 가는 링크"
+  description = "내가 속한 프로젝트 — 몇 개인지, 구성원과 내 역할"
   module = "/apps/site/widgets/projects.js"
-  tr.en = { title = "My projects", description = "The projects you belong to, with a link to each" }
+  tr.en = { title = "My projects", description = "The projects you belong to — how many, their members and your role" }
 
 [[app]]
 id = "calendar"
@@ -228,22 +580,29 @@ link = [{ label = "캘린더", href = "/calendar", tr = { en = "Calendar" } }]
   [[app.widget]]
   id = "today"
   title = "오늘"
-  description = "오늘의 일정과 마감인 할 일 — 넓은 칸"
+  description = "오늘의 일정을 시간순으로, 지금과 다음을 짚고 마감인 할 일은 바로 체크 — 넓은 칸"
   module = "/apps/site/widgets/calendar.js"
   size = "2x1"
-  tr.en = { title = "Today", description = "Today's events and the tasks due today — a wide cell" }
+  tr.en = { title = "Today", description = "Today's events in time order, now and next pointed out, the tasks due checked off in place — a wide cell" }
   [[app.widget]]
   id = "upcoming"
   title = "다가오는 일"
-  description = "앞으로 일주일의 일정, 날짜순"
+  description = "앞으로 7일 — 날마다 얼마나 찼는지와 그 일정"
   module = "/apps/site/widgets/calendar.js"
-  tr.en = { title = "Coming up", description = "The next seven days' events, in order" }
+  tr.en = { title = "Coming up", description = "The next seven days — how full each is, and its events" }
+  [[app.widget]]
+  id = "month"
+  title = "이번 달"
+  description = "한 달을 한눈에 — 날마다 얼마나 찼는지, 고른 날의 일정 — 큰 칸"
+  module = "/apps/site/widgets/calendar.js"
+  size = "2x2"
+  tr.en = { title = "This month", description = "The month at a glance — how full each day is, the events of the day you pick — a big cell" }
   [[app.widget]]
   id = "tasks"
   title = "할 일"
-  description = "체크리스트 — 홈에서 바로 적고, 끝나면 체크"
+  description = "체크리스트 — 마감별로 묶고 얼마나 끝냈는지, 홈에서 바로 적고 체크"
   module = "/apps/site/widgets/calendar.js"
-  tr.en = { title = "Tasks", description = "A checklist — write it on the main page, tick it when done" }
+  tr.en = { title = "Tasks", description = "A checklist — grouped by when it is due, how much is done, written and ticked on the main page" }
   [[app.route]]
   path = "/calendar/api/"
   limit = "api"
@@ -288,9 +647,15 @@ link = [{ label = "노트", href = "/vault", tr = { en = "Notes" } }]
   [[app.widget]]
   id = "recent"
   title = "최근 노트"
-  description = "최근에 고친 노트 다섯"
+  description = "7일 동안 고친 노트 수와 2주의 흐름, 최근에 고친 노트"
   module = "/apps/site/widgets/vault.js"
-  tr.en = { title = "Recent notes", description = "The five notes changed most recently" }
+  tr.en = { title = "Recent notes", description = "How many notes changed in 7 days, two weeks of it, the notes changed last" }
+  [[app.widget]]
+  id = "tags"
+  title = "태그"
+  description = "볼트의 태그를 노트 수만큼의 막대로 — 누르면 그 태그로 찾기"
+  module = "/apps/site/widgets/vault.js"
+  tr.en = { title = "Tags", description = "The vault's tags as bars by their notes — open one to search for it" }
   [[app.widget]]
   id = "home"
   title = "Home"

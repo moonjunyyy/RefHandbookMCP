@@ -247,3 +247,26 @@ def test_an_agents_command_sees_the_worktree_and_the_run_end_merges_it(ws, tmp_p
     bare = runner._spec({**job, "attrs": {**job["attrs"], "policy": "bare", "agent": "agent:2"}}, tmp_path / "j3")
     assert bare.binds_rw == [(os.path.realpath(m), "/Workspace")]
     assert "offers no git" in runner.end_branches("run:eeeeeeee", "bare", "done", "x")["why"]
+
+
+@pytest.mark.parametrize("failure", ["stage", "launch", "detached"])
+def test_finalization_failure_preserves_the_uncommitted_work(tmp_path, mount, failure):
+    b, _, _ = made(tmp_path, mount)
+    (r,) = b.load().repos
+    wt = Path(r.worktree)
+    (wt / "only.txt").write_text("only copy")
+    finalize = launch
+    if failure == "stage":
+        (wt / "nested").mkdir()
+        git(wt / "nested", "init", "-q")
+    elif failure == "detached":
+        git(wt, "checkout", "-q", "--detach")
+    else:
+        def finalize(*args):
+            raise B.BranchError("sandbox refused")
+
+    got = b.finish("done", "work", finalize)["repos"][0]
+    assert got["state"] == "failed" and "worktree preserved" in got["why"]
+    assert (wt / "only.txt").read_text() == "only copy"
+    assert (mount / "a" / ".git" / "worktrees" / r.name).is_dir()
+    assert git(mount / "a", "rev-parse", "run/0123abcd") == r.base

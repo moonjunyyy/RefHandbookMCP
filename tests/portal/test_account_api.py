@@ -5,7 +5,7 @@ import re
 
 from fastapi.testclient import TestClient
 
-from .test_app import FakeKerberos, env, login  # noqa: F401 — fixture
+from .test_app import FakeKerberos, csrf, env, login  # noqa: F401 — fixture
 from .test_sso import ISS, key, sign_in  # noqa: F401 — fixture
 
 V1 = "/api/v1"
@@ -77,6 +77,36 @@ def test_requests_and_invitations(env):
     assert api(c, s, "POST", f"/invites/{iid}/revoke").json() == {"revoked": True}
 
 
+def test_unlock_lifts_the_sites_own_lock_and_says_when_the_kdc_refuses(env):
+    from portal.kerberos import KerberosError
+
+    s, d, k, ka, app, _ = env
+    c, _ = login(app, "alice", "alice-password-1")
+    wrong = {"old": "wrong", "new": "a-new-password-1", "confirm": "a-new-password-1"}
+    right = {"old": "alice-password-1", "new": "a-new-password-1", "confirm": "a-new-password-1"}
+    assert [api(c, s, "POST", "/me/password", wrong).status_code for _ in range(5)] == [400] * 5
+    assert api(c, s, "POST", "/me/password", right).status_code == 403  # the site's own lock
+    admin, _ = login(app, "moon", "moon-password-1")
+    r = api(admin, s, "POST", "/users/alice/unlock")
+    assert r.status_code == 200 and "warning" not in r.json()
+    assert not [x for x in ka.calls if x[0] == "unlock"]  # the KDC counts no failures: nothing to lift there
+    assert api(c, s, "POST", "/me/password", right).json()["changed"] is True
+
+    d.users["alice"].failed_logins = 3  # the KDC counts failures: lifted there too
+    assert api(admin, s, "POST", "/users/alice/unlock").status_code == 200
+    assert ("unlock", "alice/user@M00NNY.KR") in ka.calls
+    for _ in range(5):
+        api(c, s, "POST", "/me/password", wrong)
+    ka.fail_unlock = KerberosError("modify_principal: Operation requires ``get'' privilege while getting x.")
+    r = api(admin, s, "POST", "/users/alice/unlock")  # refused by the KDC: the site's lock goes all the same
+    assert r.status_code == 200 and "kadmin.local" in r.json()["warning"] and "alice/user@M00NNY.KR" in r.json()["warning"]
+    ok = {"old": "a-new-password-1", "new": "a-third-password-1", "confirm": "a-third-password-1"}
+    assert api(c, s, "POST", "/me/password", ok).json()["changed"] is True
+    page = admin.post("/admin/users/alice/unlock", data={"csrf": csrf(admin, "/")})  # the server pages too
+    assert page.status_code == 200 and "kadmin.local" in page.text
+    assert api(admin, s, "POST", "/users/moon/unlock").status_code == 200  # an admin may lift their own
+
+
 def test_a_backend_failure_is_a_reference(env):
     s, d, k, ka, app, _ = env
     ka.fail = True
@@ -97,7 +127,7 @@ def test_the_frame_knows_who_and_what_they_may_see(tmp_path, key, monkeypatch):
                  audit_log=str(tmp_path / "a.log"), sso_issuer=ISS, site_file=str(SITE))
     app = create_app(s, FakeKerberos(), key)
     anon = TestClient(app).get("/auth/api/v1/me").json()
-    assert anon["uid"] is None and anon["title"] == "M00NNY.KR" and anon["cards"]
+    assert anon["uid"] is None and anon["title"] == "M00NNY.KR" and anon["cards"] == []  # nothing of the apps, signed out
     c, r = sign_in(app, uid="moon", pw="moon-password-1")
     assert r.headers["location"] == "/?start"  # to the main page, which opens their start page if they chose one
     assert sign_in(app, uid="moon", pw="moon-password-1", nxt="/agents/")[1].headers["location"] == "/agents/"

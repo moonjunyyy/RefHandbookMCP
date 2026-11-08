@@ -24,7 +24,7 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .i18n import N_, t
+from .i18n import N_, catalog, t
 
 NAME = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 # A widget's cells on the main page's grid, columns x rows (docs/frame.md §4): the one declaration — the
@@ -49,7 +49,12 @@ class SiteError(ValueError):
 # site file ([look]) and carried to the frame (/auth/api/v1/me `look`). A choice redeclares tokens — a palette
 # for the light and the dark theme, the others once — and the first choice of a kind is theme.css's own. The
 # frame writes nothing but these tokens; the parts take them (parts.css), as they take every token.
-LOOK_KINDS = ("palette", "corner", "type", "size")
+LOOK_KINDS = ("palette", "corner", "type", "heading", "mono", "size")
+# the look's fonts (docs/frame.md §1.3): the body's (--sans), the headings' (--serif) and the code's (--mono). A choice
+# of these may name the open fonts it needs (ids of web/fonts.json, served at [look] fonts) and the group it is listed under.
+FONT_KINDS = ("type", "heading", "mono")
+FONT_GROUPS = {"sans": N_("고딕"), "serif": N_("명조"), "hand": N_("손글씨"), "display": N_("제목용"), "mono": N_("고정폭")}
+FONTS_AT = re.compile(r"^/(?!/)[A-Za-z0-9._~/-]*/$")  # where the fonts are served: an address of this site, a folder
 TOKEN = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 TOKEN_VALUE = re.compile(r"^[^;{}<>\\\n]{1,200}$")  # a value inside a declaration: it cannot close one or open another
 
@@ -64,16 +69,17 @@ def _tokens(where: str, d: object) -> dict[str, str]:
 
 
 def _look(data: dict) -> dict:
-    """[look] of the site file, checked: {kind: [{id, label, tr, tokens | light+dark}], columns: [..]}."""
+    """[look] of the site file, checked: {kind: [{id, label, tr, tokens | light+dark, fonts+group}], columns: [..],
+    fonts: the address the open fonts are served at}."""
     look = data.get("look") or {}
-    bad = set(look) - set(LOOK_KINDS) - {"columns"}
+    bad = set(look) - set(LOOK_KINDS) - {"columns", "fonts"}
     if bad:
-        raise SiteError(f"look: unknown kinds {sorted(bad)} (the kinds are {LOOK_KINDS} and columns)")
+        raise SiteError(f"look: unknown kinds {sorted(bad)} (the kinds are {LOOK_KINDS}, columns and fonts)")
     out: dict = {}
     for kind in LOOK_KINDS:
         seen, choices = set(), []
         for c in look.get(kind, []):
-            known = {"id", "label", "tr"} | ({"light", "dark"} if kind == "palette" else {"tokens"})
+            known = {"id", "label", "tr"} | ({"light", "dark"} if kind == "palette" else {"tokens"}) | ({"fonts", "group"} if kind in FONT_KINDS else set())
             if set(c) - known or not NAME.match(str(c.get("id", ""))) or not c.get("label"):
                 raise SiteError(f"look.{kind}: a choice has an id (lowercase, -), a label and {sorted(known - {'id', 'label', 'tr'})}")
             if c["id"] in seen:
@@ -87,8 +93,21 @@ def _look(data: dict) -> dict:
                 choice |= {"light": light, "dark": dark}
             else:
                 choice["tokens"] = _tokens(f"look.{kind}.{c['id']}.tokens", c.get("tokens", {}))
+            if kind in FONT_KINDS:
+                if c.get("group") not in FONT_GROUPS:
+                    raise SiteError(f"look.{kind}.{c['id']}: group is one of {sorted(FONT_GROUPS)}")
+                fonts = c.get("fonts", [])
+                if not isinstance(fonts, list) or any(not isinstance(f, str) or not NAME.match(f) for f in fonts):
+                    raise SiteError(f"look.{kind}.{c['id']}: fonts are ids of the open fonts (lowercase, -)")
+                choice |= {"group": c["group"], "fonts": list(fonts)}
             choices.append(choice)
         out[kind] = choices
+    at = look.get("fonts", "")
+    if not isinstance(at, str) or (at and not FONTS_AT.match(at)):
+        raise SiteError("look.fonts: where the open fonts are served — an address of this site ending in /")
+    if not at and any(c["fonts"] for k in FONT_KINDS for c in out[k]):
+        raise SiteError("look.fonts: a choice names open fonts — say where they are served")
+    out["fonts"] = at
     cols = look.get("columns", [])
     if not isinstance(cols, list) or any(not isinstance(n, int) or n < 0 or n > 12 for n in cols):
         raise SiteError("look.columns: numbers of the main page's columns (0 = as many as fit, up to 12)")
@@ -220,10 +239,12 @@ class Site:
     look: dict = field(default_factory=dict, compare=False, hash=False)  # [look], checked (_look)
 
     def look_in(self, lang: str) -> dict:
-        """The look's choices for the frame, their labels in `lang`."""
-        return {k: ([{**{x: v for x, v in c.items() if x not in ("tr",)}, "label": c["tr"].get(lang) or c["label"]}
-                     for c in self.look.get(k, [])] if k != "columns" else list(self.look.get(k, [])))
-                for k in (*LOOK_KINDS, "columns")}
+        """The look's choices for the frame, their labels in `lang`; where the fonts are; the fonts' group words."""
+        words = catalog(lang)
+        return {**{k: ([{**{x: v for x, v in c.items() if x not in ("tr",)}, "label": c["tr"].get(lang) or c["label"]}
+                        for c in self.look.get(k, [])] if k != "columns" else list(self.look.get(k, [])))
+                   for k in (*LOOK_KINDS, "columns")},
+                "fonts": self.look.get("fonts", ""), "groups": {g: words.get(w, w) for g, w in FONT_GROUPS.items()}}
 
     @property
     def audiences(self) -> tuple[str, ...]:

@@ -22,6 +22,9 @@ class FakeDirectory:
         self.groups = {"user": {"moon", "alice", "helen"}, "admin": {"moon"}, "helpdesk": {"helen"}}
         self.projects = {}  # cn -> {gid, members, description}: the groups under the projects' OU
         self.fail_projects = None  # a DirectoryError every project write raises (the OU missing, say)
+        self.smb = {}  # uid -> (who wrote it: "portal" | "self", the password): the SMB passwords (docs/smb.md)
+        self.smb_disabled = set()
+        self.fail_smb = None  # a DirectoryError every SMB write raises (no domain entry, say)
         for i, uid in enumerate(["moon", "alice", "helen"]):
             self.users[uid] = User(uid=uid, dn=s.user_dn(uid), display_name=uid.title(), uid_number=10001 + i,
                                    gid_number=10001 + i, login_shell="/bin/bash", principals=[s.principal(uid)])
@@ -100,6 +103,24 @@ class FakeDirectory:
     def set_project_description(self, cn, description):
         self.projects[cn]["description"] = description
 
+    # ---- SMB (docs/smb.md) ----
+
+    def _smb_write(self):
+        if self.fail_smb:
+            raise self.fail_smb
+
+    def set_smb_password(self, uid, password):
+        self._smb_write()
+        self.smb[uid] = ("portal", password)
+
+    def set_own_smb_password(self, uid, password):
+        self._smb_write()
+        self.smb[uid] = ("self", password)
+
+    def set_smb_enabled(self, uid, enabled):
+        self._smb_write()
+        (self.smb_disabled.discard if enabled else self.smb_disabled.add)(uid)
+
 
 class FakeKerberos:
     def __init__(self):
@@ -141,6 +162,8 @@ class FakeKAdmin:
 
     def unlock(self, principal):
         self.calls.append(("unlock", principal))
+        if getattr(self, "fail_unlock", None):  # the KDC refusing the portal (kadm5.acl: an admin's principal)
+            raise self.fail_unlock
 
     def set_enabled(self, principal, enabled):
         self.calls.append(("enabled", principal, enabled))

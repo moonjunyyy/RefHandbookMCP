@@ -7,10 +7,15 @@ render the result and the API returns it as JSON; neither repeats any of this.
 Refusals: Forbidden (not allowed, or nothing there), ValidationError (a value the person can fix).
 A failure of a backend (DirectoryError, KerberosError) propagates as it is: the caller shows a
 reference and the audit log keeps the words.
+
+SMB (docs/smb.md): when the site keeps SMB passwords, a password it sets in Kerberos becomes the
+account's SMB password too, and disabling an account disables it there. That step comes after Kerberos
+has taken the change, so it never undoes it: a failure is recorded and comes back as a warning.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -21,9 +26,15 @@ from .invites import InviteError, InviteStore
 from .kerberos import KerberosError
 from .rbac import Actor, can, roles_for
 from .requests import RequestStore
-from .security import Throttle
-from .i18n import t
+from .security import Throttle, password_key, user_key
+from .i18n import N_, t
 from .validators import ValidationError
+
+# what a person reads when Kerberos took a change and the SMB side could not follow
+SMB_WARNINGS = {"smb_password": N_("비밀번호는 바뀌었지만 SMB 비밀번호는 바꾸지 못했습니다: {reason}"),
+                "smb_enable": N_("계정 상태는 바뀌었지만 SMB 계정에는 반영하지 못했습니다: {reason}")}
+# the site's lock is lifted; the KDC refused the portal its side (kadm5.acl keeps it off the admins' principals)
+UNLOCK_KDC = N_("이 사이트의 잠금은 풀었지만 Kerberos(KDC)의 잠금은 풀지 못했습니다: {reason} — KDC에서 kadmin.local -q \"modprinc -unlock {principal}\"로 풉니다.")  # noqa: E501
 
 
 class Forbidden(Exception):
@@ -79,9 +90,10 @@ class Accounts:
         audit.record(actor.uid, "update_profile", actor.uid, True, ip, ",".join(changes))
         return self.directory.get_user(actor.uid)
 
-    def change_password(self, actor: Actor, old: str, new: str, confirm: str, ip: str) -> None:
-        """Raises Forbidden while throttled, ValidationError or KerberosError with the reason."""
-        key = f"pw:{actor.uid}"
+    def change_password(self, actor: Actor, old: str, new: str, confirm: str, ip: str) -> str | None:
+        """Raises Forbidden while throttled, ValidationError or KerberosError with the reason. Returns a
+        warning when the SMB password could not follow."""
+        key = password_key(actor.uid)
         if self.throttle.blocked(key):
             raise Forbidden(t("실패가 너무 많습니다. 15분 뒤 다시 시도하세요."))
         try:
@@ -92,12 +104,33 @@ class Accounts:
             audit.record(actor.uid, "change_password", actor.uid, False, ip, str(e))
             raise
         audit.record(actor.uid, "change_password", actor.uid, True, ip)
+        return self.smb_password(actor.uid, actor.uid, pw, ip)
+
+    # ── SMB (docs/smb.md) ────────────────────────────────────────────────
+
+    def _smb(self, by: str, uid: str, ip: str, action: str, step: Callable[[], None]) -> str | None:
+        """The SMB side of what Kerberos has just taken, when the site keeps SMB passwords: `step` writes
+        it. A failure is recorded and returned as a warning; the Kerberos change stands."""
+        if not self.s.smb_passwords:
+            return None
+        try:
+            step()
+        except DirectoryError as e:
+            audit.record(by, action, uid, False, ip, str(e))
+            return t(SMB_WARNINGS[action], reason=e)
+        audit.record(by, action, uid, True, ip)
+        return None
+
+    def smb_password(self, by: str, uid: str, password: str, ip: str) -> str | None:
+        """`password`, which the site has just set in Kerberos, as the account's SMB password."""
+        return self._smb(by, uid, ip, "smb_password", lambda: self.directory.set_smb_password(uid, password))
 
     # ── accounts ─────────────────────────────────────────────────────────
 
     def make_account(self, by: str, uid: str, name: str, mail: str, shell: str, password: str, needchange: bool,
-                     ip: str, detail: str = "") -> User:
-        """The directory entry, then the Kerberos principal; the entry is rolled back if that fails."""
+                     ip: str, detail: str = "") -> tuple[User, str | None]:
+        """The directory entry, then the Kerberos principal; the entry is rolled back if that fails. Then
+        the SMB password; returns the account and a warning when that could not follow."""
         user = self.directory.create_user(uid, name, mail, shell)
         try:
             self.kadmin.create_principal(self.s.principal(uid), user.dn, password, self.s.principal_alias(uid),
@@ -107,17 +140,19 @@ class Accounts:
             audit.record(by, "create_user", uid, False, ip, str(e))
             raise
         audit.record(by, "create_user", uid, True, ip, f"uidNumber={user.uid_number}" + (f" {detail}" if detail else ""))
-        return user
+        return user, self.smb_password(by, uid, password, ip)
 
-    def create(self, actor: Actor, values: dict[str, Any], ip: str, detail: str = "") -> tuple[User, str]:
-        """An account made by an admin, with a one-time password (returned once, never kept)."""
+    def create(self, actor: Actor, values: dict[str, Any], ip: str, detail: str = "") -> tuple[User, str, str | None]:
+        """An account made by an admin, with a one-time password (returned once, never kept), and a warning
+        when its SMB password could not be set."""
         self.require(actor, "create_user")
         uid = validators.new_uid(str(values.get("uid", "")))
         name = validators.optional_name(str(values.get("name", "")), t("이름"))
         mail = validators.email(str(values.get("mail", "")))
         shell = validators.shell(str(values.get("loginShell", "")), self.s.allowed_shells)
         password = validators.temp_password()
-        return self.make_account(actor.uid, uid, name, mail, shell, password, True, ip, detail), password
+        user, warning = self.make_account(actor.uid, uid, name, mail, shell, password, True, ip, detail)
+        return user, password, warning
 
     def users(self, actor: Actor, q: str = "") -> list[User]:
         self.require(actor, "view_users")
@@ -131,27 +166,43 @@ class Accounts:
         self.require(actor, "view_users")
         return self.directory.list_groups()
 
-    def reset_password(self, actor: Actor, uid: str, ip: str) -> tuple[User, str]:
+    def reset_password(self, actor: Actor, uid: str, ip: str) -> tuple[User, str, str | None]:
         target = self.target(uid)
         self.require(actor, "reset_password", target)
         password = validators.temp_password()
         self.kadmin.reset_password(self.s.principal(target.uid), password)
         audit.record(actor.uid, "reset_password", target.uid, True, ip)
-        return target, password
+        return target, password, self.smb_password(actor.uid, target.uid, password, ip)
 
-    def unlock(self, actor: Actor, uid: str, ip: str) -> User:
+    def unlock(self, actor: Actor, uid: str, ip: str) -> tuple[User, str | None]:
+        """Lift what stops the account after failed passwords: this site's own count (password changes on the
+        account page, sign-ins on the portal's own pages), then the KDC's lockout when the directory shows
+        the KDC counting failures for it. The KDC may refuse the portal an account (kadm5.acl keeps it off
+        the admins' principals): the site's lock is lifted all the same, and the warning says how to lift
+        the KDC's. The site sign-in counts in its own process; its lock lapses after its window."""
         target = self.target(uid)
         self.require(actor, "unlock", target)
-        self.kadmin.unlock(self.s.principal(target.uid))
-        audit.record(actor.uid, "unlock", target.uid, True, ip)
-        return target
+        self.throttle.reset(password_key(target.uid), user_key(target.uid))
+        audit.record(actor.uid, "unlock", target.uid, True, ip, "site")
+        if not target.failed_logins:
+            return target, None
+        principal = self.s.principal(target.uid)
+        try:
+            self.kadmin.unlock(principal)
+        except KerberosError as e:
+            audit.record(actor.uid, "unlock_kdc", target.uid, False, ip, str(e))
+            return target, t(UNLOCK_KDC, reason=e, principal=principal)
+        audit.record(actor.uid, "unlock_kdc", target.uid, True, ip)
+        return self.directory.get_user(target.uid), None
 
-    def set_enabled(self, actor: Actor, uid: str, enabled: bool, ip: str) -> User:
+    def set_enabled(self, actor: Actor, uid: str, enabled: bool, ip: str) -> tuple[User, str | None]:
         target = self.target(uid)
         self.require(actor, "set_enabled", target)
         self.kadmin.set_enabled(self.s.principal(target.uid), enabled)
         audit.record(actor.uid, "enable" if enabled else "disable", target.uid, True, ip)
-        return self.directory.get_user(target.uid)
+        warning = self._smb(actor.uid, target.uid, ip, "smb_enable",
+                            lambda: self.directory.set_smb_enabled(target.uid, enabled))
+        return self.directory.get_user(target.uid), warning
 
     def set_group(self, actor: Actor, uid: str, group: str, member: bool, ip: str) -> User:
         target = self.target(uid)
@@ -201,7 +252,7 @@ class Accounts:
             raise Forbidden(t("그 신청은 더 이상 없습니다 (승인·거절되었거나 기한이 지났습니다)."))
         return r
 
-    def approve_request(self, actor: Actor, rid: str, shell: str, ip: str) -> tuple[User, str]:
+    def approve_request(self, actor: Actor, rid: str, shell: str, ip: str) -> tuple[User, str, str | None]:
         self.require(actor, "review_requests")
         self.require(actor, "create_user")
         r = self._pending(rid)
@@ -211,9 +262,9 @@ class Accounts:
         except ValidationError as e:
             raise Forbidden(str(e)) from e
         password = validators.temp_password()
-        user = self.make_account(actor.uid, uid, r.name, r.mail, shell, password, True, ip, detail="from request")
+        user, warning = self.make_account(actor.uid, uid, r.name, r.mail, shell, password, True, ip, detail="from request")
         self._requests().delete(r.id)  # the request's copy of the personal data goes now
-        return user, password
+        return user, password, warning
 
     def reject_request(self, actor: Actor, rid: str, ip: str) -> str:
         self.require(actor, "review_requests")

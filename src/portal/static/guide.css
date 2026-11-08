@@ -1,0 +1,10 @@
+/* First-visit guide shared by the site parts and apps with their own component system. */
+.site-guide { color: var(--text); background: var(--card); border: 1px solid var(--line); border-radius: var(--panel-radius); padding: var(--s5); width: min(34rem, calc(100% - 2 * var(--s4))); max-height: calc(100dvh - 2 * var(--s4)); overflow: auto; }
+.site-guide::backdrop { background: var(--scrim); }
+.site-guide h2 { font: 700 1.2rem var(--serif); margin-bottom: var(--s3); }
+.site-guide p { margin-bottom: var(--s3); }
+.site-guide .actions { display: flex; gap: var(--s2); justify-content: end; flex-wrap: wrap; }
+.site-guide button { padding: var(--s2) var(--s3); border: 1px solid var(--line); border-radius: var(--control-radius); color: var(--text); background: var(--soft); cursor: pointer; }
+.site-guide button:disabled { opacity: .5; }
+.site-guide .guide-error { color: var(--bad); }
+.guide-target { outline: 2px solid var(--accent); outline-offset: 2px; }

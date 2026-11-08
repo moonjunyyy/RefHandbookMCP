@@ -1,0 +1,31 @@
+# @@generated@@
+# Samba's side of the directory (docs/smb.md), made once by the directory's admin, in this order.
+#
+# 1. Samba's schema (the samba package ships it), and indexes on what Samba searches by:
+#      ldapadd -Q -Y EXTERNAL -H ldapi:/// -f /usr/share/doc/samba/examples/LDAP/samba.ldif
+#      ldapmodify -Q -Y EXTERNAL -H ldapi:/// <<'EOF'
+#      dn: <the database of @@base_dn@@, e.g. olcDatabase={1}mdb,cn=config>
+#      changetype: modify
+#      add: olcDbIndex
+#      olcDbIndex: sambaSID eq
+#      olcDbIndex: sambaPrimaryGroupSID eq
+#      olcDbIndex: sambaDomainName eq
+#      EOF
+# 2. The rules: slapd-acl.ldif beside this file (its SMB rules name the Samba DN below).
+# 3. The Samba DN, with a password only Samba keeps:
+#      SECRET=$(openssl rand -base64 33)
+#      printf 'dn: @@samba_dn@@\nobjectClass: account\nobjectClass: simpleSecurityObject\nuid: @@samba_uid@@\nuserPassword: %s\n' \
+#        "$(slappasswd -s "$SECRET")" | ldapadd -Q -Y GSSAPI -H @@ldap_uri@@
+#    and, on the Samba host: smbpasswd -w "$SECRET"
+# 4. This file: Samba's domain entry, named after its workgroup, with the Samba host's own SID
+#    (`net getlocalsid`) and its algorithmic RID base:
+#      ldapadd -Q -Y GSSAPI -H @@ldap_uri@@ -f /etc/@@name@@/directory/samba.ldif
+# 5. smb-passdb.conf beside this file into smb.conf on the Samba host.
+# 6. smb_passwords = "1" in [site] of the site file (the portal and the sign-in both read it), and run the
+#    installer again. From then on every password the site sets is the SMB password too; an account
+#    gets its SMB side the first time the site sets its password.
+dn: @@samba_domain_dn@@
+objectClass: sambaDomain
+sambaDomainName: @@workgroup@@
+sambaSID: @@samba_sid@@
+sambaAlgorithmicRidBase: @@samba_rid_base@@

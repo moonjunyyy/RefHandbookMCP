@@ -266,6 +266,17 @@ _libc.umount2.argtypes = [ctypes.c_char_p, ctypes.c_int]
 _libc.prctl.argtypes = [ctypes.c_int, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong]
 
 
+def rename_noreplace(src: str, dst: str, src_fd: int, dst_fd: int) -> None:
+    """Atomically rename between directory descriptors, refusing an existing destination."""
+    renameat2 = getattr(_libc, "renameat2", None)
+    if renameat2 is None:
+        raise OSError(errno.ENOSYS, os.strerror(errno.ENOSYS))
+    rename_noreplace_flag = 1  # Linux RENAME_NOREPLACE
+    if renameat2(src_fd, os.fsencode(src), dst_fd, os.fsencode(dst), rename_noreplace_flag) != 0:
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error))
+
+
 def _arch() -> str:
     m = platform.machine()
     if m not in _SYSCALLS:

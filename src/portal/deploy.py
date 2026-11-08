@@ -15,7 +15,8 @@ rendered from deploy/templates: nothing on the host is named by hand. Run it aga
                with a `router` in [site], plain HTTP for it, and /etc/<name>/router/<domain>.conf:
                the router's side, for its admin to merge
     directory  /etc/<name>/directory/{kadm5.acl,slapd-acl.ldif}: the KDC's and slapd's side, rendered with
-               this site's realm, DNs and current admins, for the directory's admin to merge
+               this site's realm, DNs and current admins, for the directory's admin to merge; and
+               {samba.ldif,smb-passdb.conf}: Samba's side of the SMB passwords (docs/smb.md)
     once       /etc/<unit>/<role>.env (secrets and local overrides; never overwritten), the SSO's token
                key pair, the handbook's agent key pair
     then       nginx -t, daemon-reload, enable, restart, the sandbox check; and what only an admin can
@@ -72,6 +73,12 @@ Run = Callable[[list[str]], int]
 HELPERS = ("mounts.service", "mounts.timer", "mounts.path", "vault-mounts.service", "vault-mounts.timer", "vault-mounts.path")
 LISTENING = [r for r, port in ROLES.items() if port]  # the roles that serve HTTP (the runner does not)
 
+# Samba's side (docs/smb.md). smb.conf's `algorithmic rid base` when this host cannot say (its documented
+# default: docs-xml/smbdotconf/security/algorithmicridbase.xml), and where Samba reaches the directory
+# unless [site] samba_ldap_uri says otherwise: the local socket, as the KDC does.
+SAMBA_RID_BASE = "1000"
+SAMBA_LDAP_URI = "ldapi:///"
+
 # [site] keys the router's side takes (site.local.toml: they are this host's); unset, a placeholder
 ROUTER_KEYS = {"router_address": "<this host's address as the router reaches it>",
                "router_cert": "<the certificate's fullchain.pem on the router>",
@@ -118,6 +125,7 @@ def rendered(f: Facts, site_file: Path, root: Path = Path("/")) -> dict[str, tup
                                        '        proxy_set_header X-Auth-Token "";\n'
                                        f"        proxy_pass {f.upstream('sso')};\n    }}\n")}
     extra |= {k: f.extra.get(k, default) for k, default in ROUTER_KEYS.items()}
+    extra |= _samba(f)
 
     def t(name: str) -> str:
         return f.substitute((TEMPLATES / name).read_text(), extra)
@@ -140,6 +148,8 @@ def rendered(f: Facts, site_file: Path, root: Path = Path("/")) -> dict[str, tup
         f"/etc/{f.name}/directory/kadm5.acl": (t("kadm5.acl"), 0o644),
         f"/etc/{f.name}/directory/slapd-acl.ldif": (t("slapd-acl.ldif"), 0o644),
         f"/etc/{f.name}/directory/projects.ldif": (t("projects.ldif"), 0o644),
+        f"/etc/{f.name}/directory/samba.ldif": (t("samba.ldif"), 0o644),
+        f"/etc/{f.name}/directory/smb-passdb.conf": (t("smb-passdb.conf"), 0o644),
     }
     if f.router:
         out[f"/etc/{f.name}/router/{f.domain}.conf"] = (t("router.conf"), 0o644)
@@ -178,6 +188,44 @@ def _front(f: Facts) -> dict[str, str]:
     listen = [f"    listen {f.listen};", *[f"    set_real_ip_from {net};" for net in f.router],
               "    real_ip_header X-Forwarded-For;", f"    if ({var} = 0) {{ return 403; }}"]
     return {"front": "\n".join(front) + "\n", "listen": "\n".join(listen)}
+
+
+def _samba(f: Facts) -> dict[str, str]:
+    """The placeholders of Samba's side (docs/smb.md): its DN (as the other service DNs of slapd-acl.ldif,
+    unless [site] samba_dn), its domain entry, and what only the Samba host knows (its SID, its RID base),
+    read here when this is that host."""
+    dn = f.extra.get("samba_dn", f"uid=samba,ou=Services,{f.base_dn}")
+    return {"samba_dn": dn, "samba_uid": dn.split(",", 1)[0].partition("=")[2],
+            "samba_domain_dn": f"sambaDomainName={f.workgroup},{f.base_dn}",
+            "samba_ldap_uri": f.extra.get("samba_ldap_uri", SAMBA_LDAP_URI),
+            "samba_sid": _net_sid() or "<the SID `net getlocalsid` prints on the Samba host>",
+            "samba_rid_base": _samba_param("algorithmic rid base") or SAMBA_RID_BASE,
+            # smb.conf's ldap user and group suffixes are relative to the ldap suffix
+            "users_rdn": _relative(f.users_ou, f.base_dn), "groups_rdn": _relative(f.groups_ou, f.base_dn)}
+
+
+def _relative(dn: str, base: str) -> str:
+    return dn[:-len(base) - 1] if dn.lower().endswith("," + base.lower()) else dn
+
+
+def _out(cmd: list[str]) -> str:
+    if not shutil.which(cmd[0]):
+        return ""
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return r.stdout if r.returncode == 0 else ""
+
+
+def _net_sid() -> str:
+    """The Samba host's own SID ('SID for domain M00NNY is: S-1-5-21-…'), when this is that host."""
+    words = _out(["net", "getlocalsid"]).split()
+    return words[-1] if words and words[-1].startswith("S-1-") else ""
+
+
+def _samba_param(name: str) -> str:
+    return _out(["testparm", "-s", "--parameter-name", name]).strip()
 
 
 def _admins(group: str) -> list[str]:
@@ -471,7 +519,9 @@ def install(site_file: Path, root: Path = Path("/"), sh: Run = _run, src: Path =
     print(f"\nThe directory's side, for its admin to merge (on the KDC, and the LDAP server):\n"
           f"  /etc/{f.name}/directory/kadm5.acl       into /etc/krb5kdc/kadm5.acl, then restart krb5-admin-server\n"
           f"  /etc/{f.name}/directory/slapd-acl.ldif  merge with the current olcAccess (instructions inside)\n"
-          f"  /etc/{f.name}/directory/projects.ldif   ldapadd once: the projects' OU (docs/projects.md)")
+          f"  /etc/{f.name}/directory/projects.ldif   ldapadd once: the projects' OU (docs/projects.md)\n"
+          f"  /etc/{f.name}/directory/samba.ldif      Samba's side of SMB passwords, step by step (docs/smb.md)\n"
+          f"  /etc/{f.name}/directory/smb-passdb.conf into [global] of smb.conf on the Samba host")
     if f.router:
         print(f"\nThe router's side, for its admin to merge (TLS ends there; this host serves plain HTTP on "
               f":{f.listen} to {', '.join(f.router)} only):\n  /etc/{f.name}/router/{f.domain}.conf")

@@ -6,19 +6,23 @@
 // added. The app's page says more — what it does, the widgets it offers the main page, its links — and its one
 // action is 추가, or 열기 with 빼기 beside it. Seeing the store marks every app seen (its "new" tag goes).
 
-import { button, choice, flash, frame, go, h, link, main, menuButton, onApps, onMenu, pageHead, prefs, primaryLink, replace, savePrefs, section, sizeOf, tag, title, widgetsOf } from '/auth/static/site.js';
+import { button, choice, frame, go, h, link, main, menuButton, onApps, onMenu, pageHead, prefs, primaryLink, replace, savePrefs, section, sizeOf, tag, title, widgetsOf } from '/auth/static/site.js';
 import type { Address, Card, MenuSection } from '/auth/static/site.js';
 import { t } from '../lib/i18n';
+import { copyText } from '../lib/clipboard';
 
 const ALL = '';
 
 /** Add an app or take it out: it enters (leaves) the person's apps and, when they arranged their main page by
  * hand, its launcher enters (its widgets leave) that arrangement. */
 export async function setOn(c: Card, on: boolean): Promise<void> {
-  const apps = on ? [...prefs.apps.filter(x => x !== c.id), c.id] : prefs.apps.filter(x => x !== c.id);
-  let home = prefs.home;
-  if (home.length) home = on ? [...home, { app: c.id, widget: 'launcher' }] : home.filter(p => p.app !== c.id);
-  await savePrefs({ apps, home });
+  await savePrefs(() => {
+    const apps = on ? [...prefs.apps.filter(x => x !== c.id), c.id] : prefs.apps.filter(x => x !== c.id);
+    let home = prefs.home;
+    if (home.length || prefs.homeCustomized) home = on ? [...home.filter(p => p.app !== c.id || p.widget !== 'launcher'), { app: c.id, widget: 'launcher' }]
+      : home.filter(p => p.app !== c.id);
+    return { apps, home };
+  });
 }
 
 const fresh = (c: Card) => prefs.seen.length > 0 && !prefs.seen.includes(c.id);
@@ -125,7 +129,7 @@ export async function app(id: string): Promise<void> {
         c!.description && h('p', { class: 'desc' }, c!.description), c!.tags.length > 0 && h('p', { class: 'tags' }, c!.tags.map(x => tag(x)))));
     replace(acts,
       !frame.uid ? primaryLink(`${frame.signin}/login?next=/app/${c!.id}`, t('로그인'))
-      : added(c!) ? [c!.href && primaryLink(c!.href, t('열기')), button(t('빼기'), async () => { await setOn(c!, false); draw(); }, 'secondary')]
+      : added(c!) ? [c!.href && c!.href.replace(/\/$/, '') !== `/app/${c!.id}` && primaryLink(c!.href, t('열기')), button(t('빼기'), async () => { await setOn(c!, false); draw(); }, 'secondary')]
       : button(t('추가'), async () => { await setOn(c!, true); draw(); }, 'primary'));
   }
   draw();
@@ -146,5 +150,5 @@ function address(a: Address): HTMLElement {
   const code = h('code', { class: 'address' }, value);
   return h('li', null, a.label && [h('span', { class: 'muted small' }, a.label), ' '],
     uri ? h('a', { href: value }, code) : code, ' ',
-    button(t('복사'), async () => { await navigator.clipboard?.writeText(value); flash('ok', t('복사했습니다.')); }, 'secondary'));
+    button(t('복사'), () => copyText(value), 'secondary'));
 }

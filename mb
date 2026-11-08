@@ -1,0 +1,1000 @@
+2026-11-06T16:41:13.710987+09:00 wslsrv slapd[864]: conn=1030 op=1054 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:41:13.711018+09:00 wslsrv slapd[864]: conn=1030 op=1054 SEARCH RESULT tag=101 err=0 qtime=0.000029 etime=0.000238 nentries=1 text=
+2026-11-06T16:41:13.711487+09:00 wslsrv slapd[864]: conn=1030 op=1055 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=moonjunyyy))"
+2026-11-06T16:41:13.711546+09:00 wslsrv slapd[864]: conn=1030 op=1055 SRCH attr=uid uidNumber
+2026-11-06T16:41:13.711587+09:00 wslsrv slapd[864]: conn=1030 op=1055 SEARCH RESULT tag=101 err=0 qtime=0.000037 etime=0.000159 nentries=1 text=
+2026-11-06T16:41:13.711790+09:00 wslsrv slapd[864]: conn=1030 op=1056 SRCH base="dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixGroup)(memberUid=moonjunyyy))"
+2026-11-06T16:41:13.711858+09:00 wslsrv slapd[864]: conn=1030 op=1056 SRCH attr=dn
+2026-11-06T16:41:13.711918+09:00 wslsrv slapd[864]: conn=1030 op=1056 SEARCH RESULT tag=101 err=0 qtime=0.000032 etime=0.000184 nentries=3 text=
+2026-11-06T16:41:13.712099+09:00 wslsrv slapd[864]: conn=1030 op=1057 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:41:13.712163+09:00 wslsrv slapd[864]: conn=1030 op=1057 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:41:13.712230+09:00 wslsrv slapd[864]: conn=1030 op=1057 SEARCH RESULT tag=101 err=0 qtime=0.000025 etime=0.000175 nentries=1 text=
+2026-11-06T16:41:13.712373+09:00 wslsrv slapd[864]: conn=1030 op=1058 ABANDON msg=1058
+2026-11-06T16:41:14.837340+09:00 wslsrv slapd[864]: conn=1030 op=1059 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=systemd-coredump))"
+2026-11-06T16:41:14.837458+09:00 wslsrv slapd[864]: conn=1030 op=1059 SRCH attr=uidNumber cn gecos uid objectClass homeDirectory gidNumber loginShell
+2026-11-06T16:41:14.837513+09:00 wslsrv slapd[864]: conn=1030 op=1059 SEARCH RESULT tag=101 err=0 qtime=0.000029 etime=0.000196 nentries=0 text=
+2026-11-06T16:41:19.326517+09:00 wslsrv kernel: weston[25883]: segfault at 218 ip 000075cc74127ffb sp 00007ffde3cbe5c0 error 4 in rdp-backend.so[1cffb,75cc74111000+18000] likely on CPU 4 (core 2, socket 0)
+2026-11-06T16:41:19.326552+09:00 wslsrv kernel: Code: 00 00 48 8d 3d 59 71 00 00 e8 b1 94 fe ff 90 41 55 41 54 49 89 d4 55 48 89 f5 53 48 89 fb 48 83 ec 08 48 8b 07 bf ba 00 00 00 <44> 8b a8 18 02 00 00 31 c0 e8 57 90 fe ff 41 39 c5 75 2d 48 8b 7b
+2026-11-06T16:41:19.326555+09:00 wslsrv kernel: weston: weston: potentially unexpected fatal signal 11.
+2026-11-06T16:41:19.326556+09:00 wslsrv kernel: CPU: 4 UID: 1000 PID: 25883 Comm: weston Tainted: G        W           6.18.35.2-WSL-ZFS-2.4.3-Integrated+ #6 PREEMPT(none) 
+2026-11-06T16:41:19.326557+09:00 wslsrv kernel: Tainted: [W]=WARN
+2026-11-06T16:41:19.326558+09:00 wslsrv kernel: RIP: 0033:0x75cc74127ffb
+2026-11-06T16:41:19.326558+09:00 wslsrv kernel: Code: 00 00 48 8d 3d 59 71 00 00 e8 b1 94 fe ff 90 41 55 41 54 49 89 d4 55 48 89 f5 53 48 89 fb 48 83 ec 08 48 8b 07 bf ba 00 00 00 <44> 8b a8 18 02 00 00 31 c0 e8 57 90 fe ff 41 39 c5 75 2d 48 8b 7b
+2026-11-06T16:41:19.326559+09:00 wslsrv kernel: RSP: 002b:00007ffde3cbe5c0 EFLAGS: 00010206
+2026-11-06T16:41:19.326560+09:00 wslsrv kernel: RAX: 0000000000000000 RBX: 000064505a4e9670 RCX: 000075cc77b7fa2d
+2026-11-06T16:41:19.326560+09:00 wslsrv kernel: RDX: 0000000000000000 RSI: 000075cc74120580 RDI: 00000000000000ba
+2026-11-06T16:41:19.326561+09:00 wslsrv kernel: RBP: 000075cc74120580 R08: 0000000000000003 R09: 000064505a4e90c0
+2026-11-06T16:41:19.326561+09:00 wslsrv kernel: R10: 0000000000000004 R11: 0000000000000246 R12: 0000000000000000
+2026-11-06T16:41:19.326562+09:00 wslsrv kernel: R13: 0000000000000000 R14: 000064505a4e9670 R15: 000064505a4e9af0
+2026-11-06T16:41:19.326563+09:00 wslsrv kernel: FS:  000075cc74639d80 GS:  0000000000000000
+2026-11-06T16:41:27.903640+09:00 wslsrv slapd[864]: conn=3621 op=5 UNBIND
+2026-11-06T16:41:27.903837+09:00 wslsrv slapd[864]: conn=3621 fd=34 closed
+2026-11-06T16:41:27.906143+09:00 wslsrv systemd[1]: Starting m00nny-mounts.service - m00nny sandbox mounts, idmapped for the handbook's user...
+2026-11-06T16:41:27.907019+09:00 wslsrv systemd[1]: Starting m00nny-vault-mounts.service - m00nny vault mounts, idmapped for the vault's user...
+2026-11-06T16:41:27.975084+09:00 wslsrv slapd[864]: conn=1030 op=1060 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=testuser01))"
+2026-11-06T16:41:27.975186+09:00 wslsrv slapd[864]: conn=1030 op=1060 SRCH attr=uidNumber cn gecos uid objectClass homeDirectory gidNumber loginShell
+2026-11-06T16:41:27.975248+09:00 wslsrv slapd[864]: conn=1030 op=1060 SEARCH RESULT tag=101 err=0 qtime=0.000030 etime=0.000196 nentries=0 text=
+2026-11-06T16:41:27.976305+09:00 wslsrv refhandbook[890206]: skipped testuser01: no such account
+2026-11-06T16:41:27.980672+09:00 wslsrv systemd[1]: m00nny-vault-mounts.service: Deactivated successfully.
+2026-11-06T16:41:27.981019+09:00 wslsrv systemd[1]: Finished m00nny-vault-mounts.service - m00nny vault mounts, idmapped for the vault's user.
+2026-11-06T16:41:27.984120+09:00 wslsrv systemd[1]: m00nny-mounts.service: Deactivated successfully.
+2026-11-06T16:41:27.984503+09:00 wslsrv systemd[1]: Finished m00nny-mounts.service - m00nny sandbox mounts, idmapped for the handbook's user.
+2026-11-06T16:41:29.884321+09:00 wslsrv slapd[864]: conn=1030 op=1061 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:41:29.884456+09:00 wslsrv slapd[864]: conn=1030 op=1061 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:41:29.884598+09:00 wslsrv slapd[864]: conn=1030 op=1061 SEARCH RESULT tag=101 err=0 qtime=0.000026 etime=0.000244 nentries=1 text=
+2026-11-06T16:41:29.884905+09:00 wslsrv slapd[864]: conn=1030 op=1062 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=moonjunyyy))"
+2026-11-06T16:41:29.884975+09:00 wslsrv slapd[864]: conn=1030 op=1062 SRCH attr=uid uidNumber
+2026-11-06T16:41:29.885038+09:00 wslsrv slapd[864]: conn=1030 op=1062 SEARCH RESULT tag=101 err=0 qtime=0.000022 etime=0.000146 nentries=1 text=
+2026-11-06T16:41:29.885243+09:00 wslsrv slapd[864]: conn=1030 op=1063 SRCH base="dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixGroup)(memberUid=moonjunyyy))"
+2026-11-06T16:41:29.885311+09:00 wslsrv slapd[864]: conn=1030 op=1063 SRCH attr=dn
+2026-11-06T16:41:29.885379+09:00 wslsrv slapd[864]: conn=1030 op=1063 SEARCH RESULT tag=101 err=0 qtime=0.000023 etime=0.000172 nentries=3 text=
+2026-11-06T16:41:29.885520+09:00 wslsrv slapd[864]: conn=1030 op=1064 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:41:29.885603+09:00 wslsrv slapd[864]: conn=1030 op=1064 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:41:29.885670+09:00 wslsrv slapd[864]: conn=1030 op=1064 SEARCH RESULT tag=101 err=0 qtime=0.000025 etime=0.000159 nentries=1 text=
+2026-11-06T16:41:29.885813+09:00 wslsrv slapd[864]: conn=1030 op=1065 ABANDON msg=1065
+2026-11-06T16:41:32.748363+09:00 wslsrv slapd[864]: conn=1033 op=768 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:41:32.748470+09:00 wslsrv slapd[864]: conn=1033 op=768 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:41:32.748535+09:00 wslsrv slapd[864]: conn=1033 op=768 SEARCH RESULT tag=101 err=0 qtime=0.000029 etime=0.000240 nentries=1 text=
+2026-11-06T16:41:32.749047+09:00 wslsrv slapd[864]: conn=1030 op=1066 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=moonjunyyy))"
+2026-11-06T16:41:32.749104+09:00 wslsrv slapd[864]: conn=1030 op=1066 SRCH attr=uid uidNumber
+2026-11-06T16:41:32.749137+09:00 wslsrv slapd[864]: conn=1030 op=1066 SEARCH RESULT tag=101 err=0 qtime=0.000025 etime=0.000159 nentries=1 text=
+2026-11-06T16:41:32.749358+09:00 wslsrv slapd[864]: conn=1030 op=1067 SRCH base="dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixGroup)(memberUid=moonjunyyy))"
+2026-11-06T16:41:32.749431+09:00 wslsrv slapd[864]: conn=1030 op=1067 SRCH attr=dn
+2026-11-06T16:41:32.749502+09:00 wslsrv slapd[864]: conn=1030 op=1067 SEARCH RESULT tag=101 err=0 qtime=0.000028 etime=0.000176 nentries=3 text=
+2026-11-06T16:41:32.749645+09:00 wslsrv slapd[864]: conn=1030 op=1068 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:41:32.749703+09:00 wslsrv slapd[864]: conn=1030 op=1068 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:41:32.749734+09:00 wslsrv slapd[864]: conn=1030 op=1068 SEARCH RESULT tag=101 err=0 qtime=0.000025 etime=0.000167 nentries=1 text=
+2026-11-06T16:41:32.750155+09:00 wslsrv slapd[864]: conn=1030 op=1069 ABANDON msg=1069
+2026-11-06T16:41:53.297573+09:00 wslsrv slapd[864]: conn=1030 op=1070 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:41:53.297760+09:00 wslsrv slapd[864]: conn=1030 op=1070 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:41:53.297835+09:00 wslsrv slapd[864]: conn=1030 op=1070 SEARCH RESULT tag=101 err=0 qtime=0.000032 etime=0.000261 nentries=1 text=
+2026-11-06T16:41:53.298323+09:00 wslsrv slapd[864]: conn=1030 op=1071 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=moonjunyyy))"
+2026-11-06T16:41:53.298403+09:00 wslsrv slapd[864]: conn=1030 op=1071 SRCH attr=uid uidNumber
+2026-11-06T16:41:53.298507+09:00 wslsrv slapd[864]: conn=1030 op=1071 SEARCH RESULT tag=101 err=0 qtime=0.000025 etime=0.000154 nentries=1 text=
+2026-11-06T16:41:53.298694+09:00 wslsrv slapd[864]: conn=1030 op=1072 SRCH base="dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixGroup)(memberUid=moonjunyyy))"
+2026-11-06T16:41:53.298764+09:00 wslsrv slapd[864]: conn=1030 op=1072 SRCH attr=dn
+2026-11-06T16:41:53.298824+09:00 wslsrv slapd[864]: conn=1030 op=1072 SEARCH RESULT tag=101 err=0 qtime=0.000025 etime=0.000194 nentries=3 text=
+2026-11-06T16:41:53.298980+09:00 wslsrv slapd[864]: conn=1030 op=1073 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:41:53.299040+09:00 wslsrv slapd[864]: conn=1030 op=1073 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:41:53.299101+09:00 wslsrv slapd[864]: conn=1030 op=1073 SEARCH RESULT tag=101 err=0 qtime=0.000022 etime=0.000161 nentries=1 text=
+2026-11-06T16:41:53.299268+09:00 wslsrv slapd[864]: conn=1030 op=1074 ABANDON msg=1074
+2026-11-06T16:41:56.923198+09:00 wslsrv slapd[864]: conn=1036 op=1099 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:41:56.923304+09:00 wslsrv slapd[864]: conn=1036 op=1099 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:41:56.923363+09:00 wslsrv slapd[864]: conn=1036 op=1099 SEARCH RESULT tag=101 err=0 qtime=0.000028 etime=0.000230 nentries=1 text=
+2026-11-06T16:41:56.923839+09:00 wslsrv slapd[864]: conn=1036 op=1100 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=moonjunyyy))"
+2026-11-06T16:41:56.923914+09:00 wslsrv slapd[864]: conn=1036 op=1100 SRCH attr=uid uidNumber
+2026-11-06T16:41:56.923989+09:00 wslsrv slapd[864]: conn=1036 op=1100 SEARCH RESULT tag=101 err=0 qtime=0.000020 etime=0.000141 nentries=1 text=
+2026-11-06T16:41:56.924143+09:00 wslsrv slapd[864]: conn=1036 op=1101 SRCH base="dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixGroup)(memberUid=moonjunyyy))"
+2026-11-06T16:41:56.924201+09:00 wslsrv slapd[864]: conn=1036 op=1101 SRCH attr=dn
+2026-11-06T16:41:56.924300+09:00 wslsrv slapd[864]: conn=1036 op=1101 SEARCH RESULT tag=101 err=0 qtime=0.000028 etime=0.000197 nentries=3 text=
+2026-11-06T16:41:56.924439+09:00 wslsrv slapd[864]: conn=1036 op=1102 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:41:56.924495+09:00 wslsrv slapd[864]: conn=1036 op=1102 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:41:56.924531+09:00 wslsrv slapd[864]: conn=1036 op=1102 SEARCH RESULT tag=101 err=0 qtime=0.000026 etime=0.000177 nentries=1 text=
+2026-11-06T16:41:56.924698+09:00 wslsrv slapd[864]: conn=1036 op=1103 ABANDON msg=1103
+2026-11-06T16:41:56.931320+09:00 wslsrv systemd[1]: Reload requested from client PID 890463 ('systemctl') (unit user@10001.service)...
+2026-11-06T16:41:56.931438+09:00 wslsrv systemd[1]: Reloading...
+2026-11-06T16:41:57.018498+09:00 wslsrv kernel: systemd-sysv-generator[890538]: SysV service '/etc/init.d/gdm3' lacks a native systemd unit file, automatically generating a unit file for compatibility.
+2026-11-06T16:41:57.018530+09:00 wslsrv kernel: systemd-sysv-generator[890538]: Please update package to include a native systemd unit file.
+2026-11-06T16:41:57.018533+09:00 wslsrv kernel: systemd-sysv-generator[890538]: ! This compatibility logic is deprecated, expect removal soon. !
+2026-11-06T16:41:57.022507+09:00 wslsrv kernel: systemd-sysv-generator[890538]: SysV service '/etc/init.d/lightdm' lacks a native systemd unit file, automatically generating a unit file for compatibility.
+2026-11-06T16:41:57.022546+09:00 wslsrv kernel: systemd-sysv-generator[890538]: Please update package to include a native systemd unit file.
+2026-11-06T16:41:57.022549+09:00 wslsrv kernel: systemd-sysv-generator[890538]: ! This compatibility logic is deprecated, expect removal soon. !
+2026-11-06T16:41:57.130497+09:00 wslsrv systemd[1]: /usr/lib/systemd/system/saslauthd.service:8: PIDFile= references a path below legacy directory /var/run/, updating /var/run/saslauthd/saslauthd.pid → /run/saslauthd/saslauthd.pid; please update the unit file accordingly.
+2026-11-06T16:41:57.206330+09:00 wslsrv systemd[1]: Reloading finished in 274 ms.
+2026-11-06T16:41:57.297916+09:00 wslsrv slapd[864]: conn=1030 op=1075 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:41:57.297985+09:00 wslsrv slapd[864]: conn=1030 op=1075 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:41:57.298021+09:00 wslsrv slapd[864]: conn=1030 op=1075 SEARCH RESULT tag=101 err=0 qtime=0.000026 etime=0.000212 nentries=1 text=
+2026-11-06T16:41:57.298952+09:00 wslsrv slapd[864]: conn=1036 op=1104 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=moonjunyyy))"
+2026-11-06T16:41:57.299058+09:00 wslsrv slapd[864]: conn=1036 op=1104 SRCH attr=uid uidNumber
+2026-11-06T16:41:57.299125+09:00 wslsrv slapd[864]: conn=1036 op=1104 SEARCH RESULT tag=101 err=0 qtime=0.000027 etime=0.000207 nentries=1 text=
+2026-11-06T16:41:57.299252+09:00 wslsrv slapd[864]: conn=1036 op=1105 SRCH base="dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixGroup)(memberUid=moonjunyyy))"
+2026-11-06T16:41:57.299325+09:00 wslsrv slapd[864]: conn=1036 op=1105 SRCH attr=dn
+2026-11-06T16:41:57.299386+09:00 wslsrv slapd[864]: conn=1036 op=1105 SEARCH RESULT tag=101 err=0 qtime=0.000025 etime=0.000191 nentries=3 text=
+2026-11-06T16:41:57.299538+09:00 wslsrv slapd[864]: conn=1036 op=1106 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:41:57.299605+09:00 wslsrv slapd[864]: conn=1036 op=1106 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:41:57.299670+09:00 wslsrv slapd[864]: conn=1036 op=1106 SEARCH RESULT tag=101 err=0 qtime=0.000023 etime=0.000152 nentries=1 text=
+2026-11-06T16:41:57.299808+09:00 wslsrv slapd[864]: conn=1036 op=1107 ABANDON msg=1107
+2026-11-06T16:41:59.863230+09:00 wslsrv slapd[864]: conn=1036 op=1108 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:41:59.863570+09:00 wslsrv slapd[864]: conn=1036 op=1108 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:41:59.863634+09:00 wslsrv slapd[864]: conn=1036 op=1108 SEARCH RESULT tag=101 err=0 qtime=0.000023 etime=0.000204 nentries=1 text=
+2026-11-06T16:41:59.863852+09:00 wslsrv slapd[864]: conn=1036 op=1109 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=moonjunyyy))"
+2026-11-06T16:41:59.863913+09:00 wslsrv slapd[864]: conn=1036 op=1109 SRCH attr=uid uidNumber
+2026-11-06T16:41:59.863963+09:00 wslsrv slapd[864]: conn=1036 op=1109 SEARCH RESULT tag=101 err=0 qtime=0.000024 etime=0.000171 nentries=1 text=
+2026-11-06T16:41:59.864163+09:00 wslsrv slapd[864]: conn=1036 op=1110 SRCH base="dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixGroup)(memberUid=moonjunyyy))"
+2026-11-06T16:41:59.864215+09:00 wslsrv slapd[864]: conn=1036 op=1110 SRCH attr=dn
+2026-11-06T16:41:59.864325+09:00 wslsrv slapd[864]: conn=1036 op=1110 SEARCH RESULT tag=101 err=0 qtime=0.000025 etime=0.000195 nentries=3 text=
+2026-11-06T16:41:59.864446+09:00 wslsrv slapd[864]: conn=1036 op=1111 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:41:59.864511+09:00 wslsrv slapd[864]: conn=1036 op=1111 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:41:59.864544+09:00 wslsrv slapd[864]: conn=1036 op=1111 SEARCH RESULT tag=101 err=0 qtime=0.000025 etime=0.000170 nentries=1 text=
+2026-11-06T16:41:59.864735+09:00 wslsrv slapd[864]: conn=1036 op=1112 ABANDON msg=1112
+2026-11-06T16:41:59.871036+09:00 wslsrv systemd[1]: zfs-share.service: Deactivated successfully.
+2026-11-06T16:41:59.871128+09:00 wslsrv systemd[1]: Stopped zfs-share.service - ZFS file system shares.
+2026-11-06T16:41:59.871209+09:00 wslsrv systemd[1]: Stopping zfs-share.service - ZFS file system shares...
+2026-11-06T16:41:59.872490+09:00 wslsrv systemd[1]: Starting smbd.service - Samba SMB Daemon...
+2026-11-06T16:41:59.953589+09:00 wslsrv smbd[890627]: [2026/11/06 16:41:59.953326,  0] source3/passdb/secrets.c:398(fetch_ldap_pw)
+2026-11-06T16:41:59.953732+09:00 wslsrv smbd[890627]:   fetch_ldap_pw: No valid password for 
+2026-11-06T16:41:59.953809+09:00 wslsrv smbd[890627]: [2026/11/06 16:41:59.953383,  0] source3/passdb/pdb_ldap.c:6619(pdb_init_ldapsam_common)
+2026-11-06T16:41:59.953882+09:00 wslsrv smbd[890627]:   pdb_init_ldapsam_common: Failed to retrieve LDAP password from secrets.tdb
+2026-11-06T16:41:59.953952+09:00 wslsrv smbd[890627]: [2026/11/06 16:41:59.953405,  0] source3/passdb/pdb_interface.c:182(make_pdb_method_name)
+2026-11-06T16:41:59.954033+09:00 wslsrv smbd[890627]:   pdb backend ldapsam:"ldaps://ldap.m00nny.kr/" did not correctly init (error was NT_STATUS_NO_MEMORY)
+2026-11-06T16:41:59.955102+09:00 wslsrv systemd[1]: smbd.service: Main process exited, code=exited, status=1/FAILURE
+2026-11-06T16:41:59.955219+09:00 wslsrv systemd[1]: smbd.service: Failed with result 'exit-code'.
+2026-11-06T16:41:59.955628+09:00 wslsrv systemd[1]: Failed to start smbd.service - Samba SMB Daemon.
+2026-11-06T16:41:59.957371+09:00 wslsrv systemd[1]: Starting zfs-share.service - ZFS file system shares...
+2026-11-06T16:41:59.968195+09:00 wslsrv systemd[1]: Finished zfs-share.service - ZFS file system shares.
+2026-11-06T16:41:59.982208+09:00 wslsrv slapd[864]: conn=1033 op=769 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:41:59.982314+09:00 wslsrv slapd[864]: conn=1033 op=769 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:41:59.982383+09:00 wslsrv slapd[864]: conn=1033 op=769 SEARCH RESULT tag=101 err=0 qtime=0.000032 etime=0.000248 nentries=1 text=
+2026-11-06T16:41:59.983214+09:00 wslsrv slapd[864]: conn=1032 op=934 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=moonjunyyy))"
+2026-11-06T16:41:59.983303+09:00 wslsrv slapd[864]: conn=1032 op=934 SRCH attr=uid uidNumber
+2026-11-06T16:41:59.983362+09:00 wslsrv slapd[864]: conn=1032 op=934 SEARCH RESULT tag=101 err=0 qtime=0.000024 etime=0.000154 nentries=1 text=
+2026-11-06T16:41:59.983533+09:00 wslsrv slapd[864]: conn=1032 op=935 SRCH base="dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixGroup)(memberUid=moonjunyyy))"
+2026-11-06T16:41:59.983598+09:00 wslsrv slapd[864]: conn=1032 op=935 SRCH attr=dn
+2026-11-06T16:41:59.983754+09:00 wslsrv slapd[864]: conn=1032 op=935 SEARCH RESULT tag=101 err=0 qtime=0.000034 etime=0.000264 nentries=3 text=
+2026-11-06T16:41:59.983824+09:00 wslsrv slapd[864]: conn=1032 op=936 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:41:59.983885+09:00 wslsrv slapd[864]: conn=1032 op=936 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:41:59.983991+09:00 wslsrv slapd[864]: conn=1032 op=936 SEARCH RESULT tag=101 err=0 qtime=0.000031 etime=0.000184 nentries=1 text=
+2026-11-06T16:41:59.984126+09:00 wslsrv slapd[864]: conn=1032 op=937 ABANDON msg=937
+2026-11-06T16:42:05.600646+09:00 wslsrv slapd[864]: conn=1036 op=1113 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:42:05.600770+09:00 wslsrv slapd[864]: conn=1036 op=1113 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:42:05.600838+09:00 wslsrv slapd[864]: conn=1036 op=1113 SEARCH RESULT tag=101 err=0 qtime=0.000024 etime=0.000207 nentries=1 text=
+2026-11-06T16:42:05.601225+09:00 wslsrv slapd[864]: conn=1032 op=938 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=moonjunyyy))"
+2026-11-06T16:42:05.601291+09:00 wslsrv slapd[864]: conn=1032 op=938 SRCH attr=uid uidNumber
+2026-11-06T16:42:05.601354+09:00 wslsrv slapd[864]: conn=1032 op=938 SEARCH RESULT tag=101 err=0 qtime=0.000025 etime=0.000165 nentries=1 text=
+2026-11-06T16:42:05.601529+09:00 wslsrv slapd[864]: conn=1032 op=939 SRCH base="dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixGroup)(memberUid=moonjunyyy))"
+2026-11-06T16:42:05.601604+09:00 wslsrv slapd[864]: conn=1032 op=939 SRCH attr=dn
+2026-11-06T16:42:05.601670+09:00 wslsrv slapd[864]: conn=1032 op=939 SEARCH RESULT tag=101 err=0 qtime=0.000029 etime=0.000174 nentries=3 text=
+2026-11-06T16:42:05.601799+09:00 wslsrv slapd[864]: conn=1032 op=940 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:42:05.601870+09:00 wslsrv slapd[864]: conn=1032 op=940 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:42:05.601937+09:00 wslsrv slapd[864]: conn=1032 op=940 SEARCH RESULT tag=101 err=0 qtime=0.000020 etime=0.000135 nentries=1 text=
+2026-11-06T16:42:05.602059+09:00 wslsrv slapd[864]: conn=1032 op=941 ABANDON msg=941
+2026-11-06T16:42:05.610909+09:00 wslsrv slapd[864]: conn=1032 op=942 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=systemd-coredump))"
+2026-11-06T16:42:05.610982+09:00 wslsrv slapd[864]: conn=1032 op=942 SRCH attr=uidNumber cn gecos uid objectClass homeDirectory gidNumber loginShell
+2026-11-06T16:42:05.611049+09:00 wslsrv slapd[864]: conn=1032 op=942 SEARCH RESULT tag=101 err=0 qtime=0.000021 etime=0.000110 nentries=0 text=
+2026-11-06T16:42:21.810940+09:00 wslsrv slapd[864]: conn=1036 op=1114 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:42:21.811038+09:00 wslsrv slapd[864]: conn=1036 op=1114 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:42:21.811108+09:00 wslsrv slapd[864]: conn=1036 op=1114 SEARCH RESULT tag=101 err=0 qtime=0.000026 etime=0.000229 nentries=1 text=
+2026-11-06T16:42:21.811659+09:00 wslsrv slapd[864]: conn=1030 op=1076 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=moonjunyyy))"
+2026-11-06T16:42:21.811738+09:00 wslsrv slapd[864]: conn=1030 op=1076 SRCH attr=uid uidNumber
+2026-11-06T16:42:21.811808+09:00 wslsrv slapd[864]: conn=1030 op=1076 SEARCH RESULT tag=101 err=0 qtime=0.000023 etime=0.000171 nentries=1 text=
+2026-11-06T16:42:21.811959+09:00 wslsrv slapd[864]: conn=1030 op=1077 SRCH base="dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixGroup)(memberUid=moonjunyyy))"
+2026-11-06T16:42:21.812036+09:00 wslsrv slapd[864]: conn=1030 op=1077 SRCH attr=dn
+2026-11-06T16:42:21.812111+09:00 wslsrv slapd[864]: conn=1030 op=1077 SEARCH RESULT tag=101 err=0 qtime=0.000022 etime=0.000183 nentries=3 text=
+2026-11-06T16:42:21.812288+09:00 wslsrv slapd[864]: conn=1030 op=1078 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:42:21.812360+09:00 wslsrv slapd[864]: conn=1030 op=1078 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:42:21.812424+09:00 wslsrv slapd[864]: conn=1030 op=1078 SEARCH RESULT tag=101 err=0 qtime=0.000027 etime=0.000200 nentries=1 text=
+2026-11-06T16:42:21.812568+09:00 wslsrv slapd[864]: conn=1030 op=1079 ABANDON msg=1079
+2026-11-06T16:42:24.249853+09:00 wslsrv slapd[864]: conn=1036 op=1115 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:42:24.249961+09:00 wslsrv slapd[864]: conn=1036 op=1115 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:42:24.250023+09:00 wslsrv slapd[864]: conn=1036 op=1115 SEARCH RESULT tag=101 err=0 qtime=0.000025 etime=0.000194 nentries=1 text=
+2026-11-06T16:42:24.250348+09:00 wslsrv slapd[864]: conn=1036 op=1116 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=moonjunyyy))"
+2026-11-06T16:42:24.250406+09:00 wslsrv slapd[864]: conn=1036 op=1116 SRCH attr=uid uidNumber
+2026-11-06T16:42:24.250503+09:00 wslsrv slapd[864]: conn=1036 op=1116 SEARCH RESULT tag=101 err=0 qtime=0.000030 etime=0.000200 nentries=1 text=
+2026-11-06T16:42:24.250700+09:00 wslsrv slapd[864]: conn=1036 op=1117 SRCH base="dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixGroup)(memberUid=moonjunyyy))"
+2026-11-06T16:42:24.250778+09:00 wslsrv slapd[864]: conn=1036 op=1117 SRCH attr=dn
+2026-11-06T16:42:24.250846+09:00 wslsrv slapd[864]: conn=1036 op=1117 SEARCH RESULT tag=101 err=0 qtime=0.000034 etime=0.000197 nentries=3 text=
+2026-11-06T16:42:24.250989+09:00 wslsrv slapd[864]: conn=1036 op=1118 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:42:24.251055+09:00 wslsrv slapd[864]: conn=1036 op=1118 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:42:24.251119+09:00 wslsrv slapd[864]: conn=1036 op=1118 SEARCH RESULT tag=101 err=0 qtime=0.000020 etime=0.000145 nentries=1 text=
+2026-11-06T16:42:24.251275+09:00 wslsrv slapd[864]: conn=1036 op=1119 ABANDON msg=1119
+2026-11-06T16:42:36.368787+09:00 wslsrv systemd[1]: Starting m00nny-mounts.service - m00nny sandbox mounts, idmapped for the handbook's user...
+2026-11-06T16:42:36.369441+09:00 wslsrv systemd[1]: Starting m00nny-vault-mounts.service - m00nny vault mounts, idmapped for the vault's user...
+2026-11-06T16:42:36.434473+09:00 wslsrv slapd[864]: conn=1036 op=1120 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=testuser01))"
+2026-11-06T16:42:36.434615+09:00 wslsrv slapd[864]: conn=1036 op=1120 SRCH attr=uidNumber cn gecos uid objectClass homeDirectory gidNumber loginShell
+2026-11-06T16:42:36.434678+09:00 wslsrv slapd[864]: conn=1036 op=1120 SEARCH RESULT tag=101 err=0 qtime=0.000030 etime=0.000199 nentries=0 text=
+2026-11-06T16:42:36.435445+09:00 wslsrv refhandbook[890918]: skipped testuser01: no such account
+2026-11-06T16:42:36.441136+09:00 wslsrv systemd[1]: m00nny-vault-mounts.service: Deactivated successfully.
+2026-11-06T16:42:36.441531+09:00 wslsrv systemd[1]: Finished m00nny-vault-mounts.service - m00nny vault mounts, idmapped for the vault's user.
+2026-11-06T16:42:36.443060+09:00 wslsrv systemd[1]: m00nny-mounts.service: Deactivated successfully.
+2026-11-06T16:42:36.443346+09:00 wslsrv systemd[1]: Finished m00nny-mounts.service - m00nny sandbox mounts, idmapped for the handbook's user.
+2026-11-06T16:42:38.823795+09:00 wslsrv slapd[864]: conn=3622 fd=34 ACCEPT from IP=172.16.200.101:60962 (IP=0.0.0.0:389)
+2026-11-06T16:42:38.823907+09:00 wslsrv slapd[864]: conn=3622 op=0 SRCH base="ou=NFSv4Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=NFSv4RemotePerson)(uidNumber=10001))"
+2026-11-06T16:42:38.823965+09:00 wslsrv slapd[864]: conn=3622 op=0 SRCH attr=NFSv4Name
+2026-11-06T16:42:38.824028+09:00 wslsrv slapd[864]: conn=3622 op=0 SEARCH RESULT tag=101 err=0 qtime=0.000018 etime=0.000252 nentries=1 text=
+2026-11-06T16:42:38.824092+09:00 wslsrv slapd[864]: conn=3622 op=1 UNBIND
+2026-11-06T16:42:38.824149+09:00 wslsrv slapd[864]: conn=3622 fd=34 closed
+2026-11-06T16:42:38.824206+09:00 wslsrv slapd[864]: conn=3623 fd=34 ACCEPT from IP=172.16.200.101:60964 (IP=0.0.0.0:389)
+2026-11-06T16:42:38.824266+09:00 wslsrv slapd[864]: conn=3623 op=0 SRCH base="ou=NFSv4Groups,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=NFSv4RemoteGroup)(gidNumber=10001))"
+2026-11-06T16:42:38.824320+09:00 wslsrv slapd[864]: conn=3623 op=0 SRCH attr=NFSv4Name
+2026-11-06T16:42:38.824415+09:00 wslsrv slapd[864]: conn=3623 op=0 SEARCH RESULT tag=101 err=0 qtime=0.000026 etime=0.000286 nentries=1 text=
+2026-11-06T16:42:38.824519+09:00 wslsrv slapd[864]: conn=3623 op=1 UNBIND
+2026-11-06T16:42:38.824606+09:00 wslsrv slapd[864]: conn=3623 fd=34 closed
+2026-11-06T16:42:55.612765+09:00 wslsrv slapd[864]: conn=1036 op=1121 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uidNumber=10001))"
+2026-11-06T16:42:55.612883+09:00 wslsrv slapd[864]: conn=1036 op=1121 SRCH attr=uidNumber cn gecos uid objectClass homeDirectory gidNumber loginShell
+2026-11-06T16:42:55.612941+09:00 wslsrv slapd[864]: conn=1036 op=1121 SEARCH RESULT tag=101 err=0 qtime=0.000028 etime=0.000236 nentries=1 text=
+2026-11-06T16:43:02.850510+09:00 wslsrv kernel: weston[26789]: segfault at 218 ip 0000742f80536ffb sp 00007fff629a8dc0 error 4 in rdp-backend.so[1cffb,742f80520000+18000] likely on CPU 1 (core 0, socket 0)
+2026-11-06T16:43:02.850546+09:00 wslsrv kernel: Code: 00 00 48 8d 3d 59 71 00 00 e8 b1 94 fe ff 90 41 55 41 54 49 89 d4 55 48 89 f5 53 48 89 fb 48 83 ec 08 48 8b 07 bf ba 00 00 00 <44> 8b a8 18 02 00 00 31 c0 e8 57 90 fe ff 41 39 c5 75 2d 48 8b 7b
+2026-11-06T16:43:02.850549+09:00 wslsrv kernel: weston: weston: potentially unexpected fatal signal 11.
+2026-11-06T16:43:02.850550+09:00 wslsrv kernel: CPU: 1 UID: 1000 PID: 26789 Comm: weston Tainted: G        W           6.18.35.2-WSL-ZFS-2.4.3-Integrated+ #6 PREEMPT(none) 
+2026-11-06T16:43:02.850550+09:00 wslsrv kernel: Tainted: [W]=WARN
+2026-11-06T16:43:02.850552+09:00 wslsrv kernel: RIP: 0033:0x742f80536ffb
+2026-11-06T16:43:02.850552+09:00 wslsrv kernel: Code: 00 00 48 8d 3d 59 71 00 00 e8 b1 94 fe ff 90 41 55 41 54 49 89 d4 55 48 89 f5 53 48 89 fb 48 83 ec 08 48 8b 07 bf ba 00 00 00 <44> 8b a8 18 02 00 00 31 c0 e8 57 90 fe ff 41 39 c5 75 2d 48 8b 7b
+2026-11-06T16:43:02.850553+09:00 wslsrv kernel: RSP: 002b:00007fff629a8dc0 EFLAGS: 00010206
+2026-11-06T16:43:02.850553+09:00 wslsrv kernel: RAX: 0000000000000000 RBX: 00006441a0812670 RCX: 0000742f83f8ea2d
+2026-11-06T16:43:02.850554+09:00 wslsrv kernel: RDX: 0000000000000000 RSI: 0000742f8052f580 RDI: 00000000000000ba
+2026-11-06T16:43:02.850555+09:00 wslsrv kernel: RBP: 0000742f8052f580 R08: 0000000000000003 R09: 00006441a08120c0
+2026-11-06T16:43:02.850556+09:00 wslsrv kernel: R10: 0000000000000004 R11: 0000000000000246 R12: 0000000000000000
+2026-11-06T16:43:02.850556+09:00 wslsrv kernel: R13: 0000000000000000 R14: 00006441a0812670 R15: 00006441a0812af0
+2026-11-06T16:43:02.850557+09:00 wslsrv kernel: FS:  0000742f80a48d80 GS:  0000000000000000
+2026-11-06T16:43:04.008251+09:00 wslsrv kernel: [UFW BLOCK] IN=eth0 OUT= MAC=d8:bb:c1:60:9b:a3:b0:38:6c:2a:8c:a2:08:00 SRC=45.133.173.229 DST=172.16.200.101 LEN=40 TOS=0x08 PREC=0x00 TTL=43 ID=0 PROTO=TCP SPT=51143 DPT=6000 WINDOW=65535 RES=0x00 SYN URGP=0 
+2026-11-06T16:43:46.163862+09:00 wslsrv systemd[1]: Starting m00nny-mounts.service - m00nny sandbox mounts, idmapped for the handbook's user...
+2026-11-06T16:43:46.164627+09:00 wslsrv systemd[1]: Starting m00nny-vault-mounts.service - m00nny vault mounts, idmapped for the vault's user...
+2026-11-06T16:43:46.236839+09:00 wslsrv slapd[864]: conn=1032 op=943 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=testuser01))"
+2026-11-06T16:43:46.236979+09:00 wslsrv slapd[864]: conn=1032 op=943 SRCH attr=uidNumber cn gecos uid objectClass homeDirectory gidNumber loginShell
+2026-11-06T16:43:46.237045+09:00 wslsrv slapd[864]: conn=1032 op=943 SEARCH RESULT tag=101 err=0 qtime=0.000030 etime=0.000195 nentries=0 text=
+2026-11-06T16:43:46.237909+09:00 wslsrv refhandbook[891194]: skipped testuser01: no such account
+2026-11-06T16:43:46.242227+09:00 wslsrv systemd[1]: m00nny-vault-mounts.service: Deactivated successfully.
+2026-11-06T16:43:46.242669+09:00 wslsrv systemd[1]: Finished m00nny-vault-mounts.service - m00nny vault mounts, idmapped for the vault's user.
+2026-11-06T16:43:46.246813+09:00 wslsrv systemd[1]: m00nny-mounts.service: Deactivated successfully.
+2026-11-06T16:43:46.247081+09:00 wslsrv systemd[1]: Finished m00nny-mounts.service - m00nny sandbox mounts, idmapped for the handbook's user.
+2026-11-06T16:43:48.614938+09:00 wslsrv slapd[864]: conn=1033 op=770 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=shs2243))"
+2026-11-06T16:43:48.615051+09:00 wslsrv slapd[864]: conn=1033 op=770 SRCH attr=uidNumber cn gecos uid objectClass homeDirectory gidNumber loginShell
+2026-11-06T16:43:48.615116+09:00 wslsrv slapd[864]: conn=1033 op=770 SEARCH RESULT tag=101 err=0 qtime=0.000038 etime=0.000250 nentries=1 text=
+2026-11-06T16:44:05.795389+09:00 wslsrv slapd[864]: conn=3624 fd=34 ACCEPT from IP=172.16.0.192:64355 (IP=0.0.0.0:636)
+2026-11-06T16:44:05.797096+09:00 wslsrv slapd[864]: conn=3624 fd=34 closed (TLS negotiation failure)
+2026-11-06T16:44:05.802007+09:00 wslsrv slapd[864]: conn=3625 fd=34 ACCEPT from IP=172.16.0.192:64356 (IP=0.0.0.0:636)
+2026-11-06T16:44:05.811703+09:00 wslsrv slapd[864]: conn=3625 fd=34 TLS established tls_ssf=256 ssf=256 tls_proto=TLSv1.2 tls_cipher=ECDHE-RSA-AES256-GCM-SHA384
+2026-11-06T16:44:05.815189+09:00 wslsrv slapd[864]: conn=3625 op=0 SRCH base="" scope=0 deref=0 filter="(objectClass=*)"
+2026-11-06T16:44:05.815277+09:00 wslsrv slapd[864]: conn=3625 op=0 SRCH attr=supportedSASLMechanisms defaultNamingContext namingContexts schemaNamingContext saslRealm
+2026-11-06T16:44:05.815360+09:00 wslsrv slapd[864]: conn=3625 op=0 SEARCH RESULT tag=101 err=0 qtime=0.000028 etime=0.000155 nentries=1 text=
+2026-11-06T16:44:05.820262+09:00 wslsrv slapd[864]: conn=3625 op=1 BIND dn="" method=163
+2026-11-06T16:44:05.820689+09:00 wslsrv slapd[864]: conn=3625 op=1 RESULT tag=97 err=14 qtime=0.000028 etime=0.000460 text=SASL(0): successful result: 
+2026-11-06T16:44:05.823730+09:00 wslsrv slapd[864]: conn=3625 op=2 BIND dn="" method=163
+2026-11-06T16:44:05.823814+09:00 wslsrv slapd[864]: conn=3625 op=2 RESULT tag=97 err=14 qtime=0.000027 etime=0.000093 text=SASL(0): successful result: 
+2026-11-06T16:44:05.826564+09:00 wslsrv slapd[864]: conn=3625 op=3 BIND dn="" method=163
+2026-11-06T16:44:05.826828+09:00 wslsrv slapd[864]: conn=3625 op=3 BIND authcid="moonjunyyy@M00NNY.KR" authzid="moonjunyyy@M00NNY.KR"
+2026-11-06T16:44:05.826905+09:00 wslsrv slapd[864]: conn=3625 op=3 BIND dn="uid=moonjunyyy,ou=users,dc=m00nny,dc=kr" mech=GSSAPI bind_ssf=0 ssf=256
+2026-11-06T16:44:05.826962+09:00 wslsrv slapd[864]: conn=3625 op=3 RESULT tag=97 err=0 qtime=0.000073 etime=0.000416 text=
+2026-11-06T16:44:05.829665+09:00 wslsrv slapd[864]: conn=3625 op=4 SRCH base="dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=inetOrgPerson)(objectClass=shadowAccount))(uid=root))"
+2026-11-06T16:44:05.829737+09:00 wslsrv slapd[864]: conn=3625 op=4 SEARCH RESULT tag=101 err=0 qtime=0.000027 etime=0.000151 nentries=0 text=
+2026-11-06T16:44:46.670539+09:00 wslsrv kernel: weston[27685]: segfault at 218 ip 00007b9141dddffb sp 00007ffedb7e1630 error 4 in rdp-backend.so[1cffb,7b9141dc7000+18000] likely on CPU 8 (core 4, socket 0)
+2026-11-06T16:44:46.670599+09:00 wslsrv kernel: Code: 00 00 48 8d 3d 59 71 00 00 e8 b1 94 fe ff 90 41 55 41 54 49 89 d4 55 48 89 f5 53 48 89 fb 48 83 ec 08 48 8b 07 bf ba 00 00 00 <44> 8b a8 18 02 00 00 31 c0 e8 57 90 fe ff 41 39 c5 75 2d 48 8b 7b
+2026-11-06T16:44:46.670602+09:00 wslsrv kernel: weston: weston: potentially unexpected fatal signal 11.
+2026-11-06T16:44:46.670603+09:00 wslsrv kernel: CPU: 8 UID: 1000 PID: 27685 Comm: weston Tainted: G        W           6.18.35.2-WSL-ZFS-2.4.3-Integrated+ #6 PREEMPT(none) 
+2026-11-06T16:44:46.670604+09:00 wslsrv kernel: Tainted: [W]=WARN
+2026-11-06T16:44:46.670604+09:00 wslsrv kernel: RIP: 0033:0x7b9141dddffb
+2026-11-06T16:44:46.670605+09:00 wslsrv kernel: Code: 00 00 48 8d 3d 59 71 00 00 e8 b1 94 fe ff 90 41 55 41 54 49 89 d4 55 48 89 f5 53 48 89 fb 48 83 ec 08 48 8b 07 bf ba 00 00 00 <44> 8b a8 18 02 00 00 31 c0 e8 57 90 fe ff 41 39 c5 75 2d 48 8b 7b
+2026-11-06T16:44:46.670605+09:00 wslsrv kernel: RSP: 002b:00007ffedb7e1630 EFLAGS: 00010206
+2026-11-06T16:44:46.670606+09:00 wslsrv kernel: RAX: 0000000000000000 RBX: 000058e68774e670 RCX: 00007b9145835a2d
+2026-11-06T16:44:46.670607+09:00 wslsrv kernel: RDX: 0000000000000000 RSI: 00007b9141dd6580 RDI: 00000000000000ba
+2026-11-06T16:44:46.670607+09:00 wslsrv kernel: RBP: 00007b9141dd6580 R08: 0000000000000003 R09: 000058e68774e0c0
+2026-11-06T16:44:46.670608+09:00 wslsrv kernel: R10: 0000000000000004 R11: 0000000000000246 R12: 0000000000000000
+2026-11-06T16:44:46.670609+09:00 wslsrv kernel: R13: 0000000000000000 R14: 000058e68774e670 R15: 000058e68774eaf0
+2026-11-06T16:44:46.670609+09:00 wslsrv kernel: FS:  00007b91422efd80 GS:  0000000000000000
+2026-11-06T16:45:05.839445+09:00 wslsrv slapd[864]: conn=3625 op=5 UNBIND
+2026-11-06T16:45:05.839894+09:00 wslsrv slapd[864]: conn=3625 fd=34 closed
+2026-11-06T16:45:13.037155+09:00 wslsrv systemd[1]: Starting m00nny-mounts.service - m00nny sandbox mounts, idmapped for the handbook's user...
+2026-11-06T16:45:13.040455+09:00 wslsrv systemd[1]: Starting m00nny-vault-mounts.service - m00nny vault mounts, idmapped for the vault's user...
+2026-11-06T16:45:13.042101+09:00 wslsrv slapd[864]: conn=1036 op=1122 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:45:13.042222+09:00 wslsrv slapd[864]: conn=1036 op=1122 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:45:13.042294+09:00 wslsrv slapd[864]: conn=1036 op=1122 SEARCH RESULT tag=101 err=0 qtime=0.000027 etime=0.000250 nentries=1 text=
+2026-11-06T16:45:13.042874+09:00 wslsrv slapd[864]: conn=1036 op=1123 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=moonjunyyy))"
+2026-11-06T16:45:13.042975+09:00 wslsrv slapd[864]: conn=1036 op=1123 SRCH attr=uid uidNumber
+2026-11-06T16:45:13.043044+09:00 wslsrv slapd[864]: conn=1036 op=1123 SEARCH RESULT tag=101 err=0 qtime=0.000028 etime=0.000210 nentries=1 text=
+2026-11-06T16:45:13.043186+09:00 wslsrv slapd[864]: conn=1036 op=1124 SRCH base="dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixGroup)(memberUid=moonjunyyy))"
+2026-11-06T16:45:13.043263+09:00 wslsrv slapd[864]: conn=1036 op=1124 SRCH attr=dn
+2026-11-06T16:45:13.043341+09:00 wslsrv slapd[864]: conn=1036 op=1124 SEARCH RESULT tag=101 err=0 qtime=0.000027 etime=0.000226 nentries=3 text=
+2026-11-06T16:45:13.043490+09:00 wslsrv slapd[864]: conn=1036 op=1125 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:45:13.043570+09:00 wslsrv slapd[864]: conn=1036 op=1125 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:45:13.043648+09:00 wslsrv slapd[864]: conn=1036 op=1125 SEARCH RESULT tag=101 err=0 qtime=0.000022 etime=0.000169 nentries=1 text=
+2026-11-06T16:45:13.043762+09:00 wslsrv slapd[864]: conn=1036 op=1126 ABANDON msg=1126
+2026-11-06T16:45:13.122104+09:00 wslsrv slapd[864]: conn=1032 op=944 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=testuser01))"
+2026-11-06T16:45:13.122201+09:00 wslsrv slapd[864]: conn=1032 op=944 SRCH attr=uidNumber cn gecos uid objectClass homeDirectory gidNumber loginShell
+2026-11-06T16:45:13.122271+09:00 wslsrv slapd[864]: conn=1032 op=944 SEARCH RESULT tag=101 err=0 qtime=0.000025 etime=0.000175 nentries=0 text=
+2026-11-06T16:45:13.123383+09:00 wslsrv refhandbook[891539]: skipped testuser01: no such account
+2026-11-06T16:45:13.129077+09:00 wslsrv systemd[1]: m00nny-vault-mounts.service: Deactivated successfully.
+2026-11-06T16:45:13.129414+09:00 wslsrv systemd[1]: Finished m00nny-vault-mounts.service - m00nny vault mounts, idmapped for the vault's user.
+2026-11-06T16:45:13.131748+09:00 wslsrv systemd[1]: m00nny-mounts.service: Deactivated successfully.
+2026-11-06T16:45:13.132036+09:00 wslsrv systemd[1]: Finished m00nny-mounts.service - m00nny sandbox mounts, idmapped for the handbook's user.
+2026-11-06T16:45:15.082051+09:00 wslsrv zed: eid=642 class=config_sync pool='mainpool'
+2026-11-06T16:45:20.138418+09:00 wslsrv slapd[864]: conn=1032 op=945 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:45:20.138634+09:00 wslsrv slapd[864]: conn=1032 op=945 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:45:20.138733+09:00 wslsrv slapd[864]: conn=1032 op=945 SEARCH RESULT tag=101 err=0 qtime=0.000024 etime=0.000200 nentries=1 text=
+2026-11-06T16:45:20.139051+09:00 wslsrv slapd[864]: conn=1032 op=946 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=moonjunyyy))"
+2026-11-06T16:45:20.139115+09:00 wslsrv slapd[864]: conn=1032 op=946 SRCH attr=uid uidNumber
+2026-11-06T16:45:20.139171+09:00 wslsrv slapd[864]: conn=1032 op=946 SEARCH RESULT tag=101 err=0 qtime=0.000020 etime=0.000144 nentries=1 text=
+2026-11-06T16:45:20.139307+09:00 wslsrv slapd[864]: conn=1032 op=947 SRCH base="dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixGroup)(memberUid=moonjunyyy))"
+2026-11-06T16:45:20.139367+09:00 wslsrv slapd[864]: conn=1032 op=947 SRCH attr=dn
+2026-11-06T16:45:20.139424+09:00 wslsrv slapd[864]: conn=1032 op=947 SEARCH RESULT tag=101 err=0 qtime=0.000021 etime=0.000175 nentries=3 text=
+2026-11-06T16:45:20.139587+09:00 wslsrv slapd[864]: conn=1032 op=948 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:45:20.139638+09:00 wslsrv slapd[864]: conn=1032 op=948 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:45:20.139698+09:00 wslsrv slapd[864]: conn=1032 op=948 SEARCH RESULT tag=101 err=0 qtime=0.000029 etime=0.000151 nentries=1 text=
+2026-11-06T16:45:20.139836+09:00 wslsrv slapd[864]: conn=1032 op=949 ABANDON msg=949
+2026-11-06T16:45:20.175806+09:00 wslsrv slapd[864]: conn=1032 op=950 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=systemd-coredump))"
+2026-11-06T16:45:20.175880+09:00 wslsrv slapd[864]: conn=1032 op=950 SRCH attr=uidNumber cn gecos uid objectClass homeDirectory gidNumber loginShell
+2026-11-06T16:45:20.175936+09:00 wslsrv slapd[864]: conn=1032 op=950 SEARCH RESULT tag=101 err=0 qtime=0.000026 etime=0.000149 nentries=0 text=
+2026-11-06T16:45:20.385758+09:00 wslsrv slapd[864]: conn=1030 op=1080 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:45:20.385888+09:00 wslsrv slapd[864]: conn=1030 op=1080 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:45:20.385982+09:00 wslsrv slapd[864]: conn=1030 op=1080 SEARCH RESULT tag=101 err=0 qtime=0.000029 etime=0.000234 nentries=1 text=
+2026-11-06T16:45:20.386627+09:00 wslsrv slapd[864]: conn=1036 op=1127 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=moonjunyyy))"
+2026-11-06T16:45:20.386718+09:00 wslsrv slapd[864]: conn=1036 op=1127 SRCH attr=uid uidNumber
+2026-11-06T16:45:20.386779+09:00 wslsrv slapd[864]: conn=1036 op=1127 SEARCH RESULT tag=101 err=0 qtime=0.000031 etime=0.000228 nentries=1 text=
+2026-11-06T16:45:20.386972+09:00 wslsrv slapd[864]: conn=1036 op=1128 SRCH base="dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixGroup)(memberUid=moonjunyyy))"
+2026-11-06T16:45:20.387051+09:00 wslsrv slapd[864]: conn=1036 op=1128 SRCH attr=dn
+2026-11-06T16:45:20.387108+09:00 wslsrv slapd[864]: conn=1036 op=1128 SEARCH RESULT tag=101 err=0 qtime=0.000024 etime=0.000211 nentries=3 text=
+2026-11-06T16:45:20.387254+09:00 wslsrv slapd[864]: conn=1036 op=1129 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:45:20.387324+09:00 wslsrv slapd[864]: conn=1036 op=1129 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:45:20.387358+09:00 wslsrv slapd[864]: conn=1036 op=1129 SEARCH RESULT tag=101 err=0 qtime=0.000023 etime=0.000164 nentries=1 text=
+2026-11-06T16:45:20.387573+09:00 wslsrv slapd[864]: conn=1036 op=1130 ABANDON msg=1130
+2026-11-06T16:45:27.794886+09:00 wslsrv slapd[864]: conn=1036 op=1131 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:45:27.795011+09:00 wslsrv slapd[864]: conn=1036 op=1131 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:45:27.795078+09:00 wslsrv slapd[864]: conn=1036 op=1131 SEARCH RESULT tag=101 err=0 qtime=0.000031 etime=0.000251 nentries=1 text=
+2026-11-06T16:45:27.795660+09:00 wslsrv slapd[864]: conn=1036 op=1132 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=moonjunyyy))"
+2026-11-06T16:45:27.795756+09:00 wslsrv slapd[864]: conn=1036 op=1132 SRCH attr=uid uidNumber
+2026-11-06T16:45:27.795819+09:00 wslsrv slapd[864]: conn=1036 op=1132 SEARCH RESULT tag=101 err=0 qtime=0.000027 etime=0.000226 nentries=1 text=
+2026-11-06T16:45:27.795985+09:00 wslsrv slapd[864]: conn=1036 op=1133 SRCH base="dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixGroup)(memberUid=moonjunyyy))"
+2026-11-06T16:45:27.796054+09:00 wslsrv slapd[864]: conn=1036 op=1133 SRCH attr=dn
+2026-11-06T16:45:27.796114+09:00 wslsrv slapd[864]: conn=1036 op=1133 SEARCH RESULT tag=101 err=0 qtime=0.000025 etime=0.000179 nentries=3 text=
+2026-11-06T16:45:27.796285+09:00 wslsrv slapd[864]: conn=1036 op=1134 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:45:27.796348+09:00 wslsrv slapd[864]: conn=1036 op=1134 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:45:27.796408+09:00 wslsrv slapd[864]: conn=1036 op=1134 SEARCH RESULT tag=101 err=0 qtime=0.000025 etime=0.000160 nentries=1 text=
+2026-11-06T16:45:27.796561+09:00 wslsrv slapd[864]: conn=1036 op=1135 ABANDON msg=1135
+2026-11-06T16:45:42.866863+09:00 wslsrv slapd[864]: conn=1036 op=1136 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:45:42.867236+09:00 wslsrv slapd[864]: conn=1036 op=1136 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:45:42.867301+09:00 wslsrv slapd[864]: conn=1036 op=1136 SEARCH RESULT tag=101 err=0 qtime=0.000033 etime=0.000217 nentries=1 text=
+2026-11-06T16:45:42.867480+09:00 wslsrv slapd[864]: conn=1036 op=1137 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=moonjunyyy))"
+2026-11-06T16:45:42.867575+09:00 wslsrv slapd[864]: conn=1036 op=1137 SRCH attr=uid uidNumber
+2026-11-06T16:45:42.867644+09:00 wslsrv slapd[864]: conn=1036 op=1137 SEARCH RESULT tag=101 err=0 qtime=0.000030 etime=0.000242 nentries=1 text=
+2026-11-06T16:45:42.867810+09:00 wslsrv slapd[864]: conn=1036 op=1138 SRCH base="dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixGroup)(memberUid=moonjunyyy))"
+2026-11-06T16:45:42.867878+09:00 wslsrv slapd[864]: conn=1036 op=1138 SRCH attr=dn
+2026-11-06T16:45:42.867947+09:00 wslsrv slapd[864]: conn=1036 op=1138 SEARCH RESULT tag=101 err=0 qtime=0.000024 etime=0.000174 nentries=3 text=
+2026-11-06T16:45:42.868112+09:00 wslsrv slapd[864]: conn=1036 op=1139 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:45:42.868181+09:00 wslsrv slapd[864]: conn=1036 op=1139 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:45:42.868248+09:00 wslsrv slapd[864]: conn=1036 op=1139 SEARCH RESULT tag=101 err=0 qtime=0.000025 etime=0.000161 nentries=1 text=
+2026-11-06T16:45:42.868365+09:00 wslsrv slapd[864]: conn=1036 op=1140 ABANDON msg=1140
+2026-11-06T16:45:54.219476+09:00 wslsrv slapd[864]: conn=1030 op=1081 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:45:54.219711+09:00 wslsrv slapd[864]: conn=1030 op=1081 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:45:54.219777+09:00 wslsrv slapd[864]: conn=1030 op=1081 SEARCH RESULT tag=101 err=0 qtime=0.000025 etime=0.000226 nentries=1 text=
+2026-11-06T16:45:54.220112+09:00 wslsrv slapd[864]: conn=1030 op=1082 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=moonjunyyy))"
+2026-11-06T16:45:54.220218+09:00 wslsrv slapd[864]: conn=1030 op=1082 SRCH attr=uid uidNumber
+2026-11-06T16:45:54.220284+09:00 wslsrv slapd[864]: conn=1030 op=1082 SEARCH RESULT tag=101 err=0 qtime=0.000031 etime=0.000218 nentries=1 text=
+2026-11-06T16:45:54.220436+09:00 wslsrv slapd[864]: conn=1030 op=1083 SRCH base="dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixGroup)(memberUid=moonjunyyy))"
+2026-11-06T16:45:54.220505+09:00 wslsrv slapd[864]: conn=1030 op=1083 SRCH attr=dn
+2026-11-06T16:45:54.220639+09:00 wslsrv slapd[864]: conn=1030 op=1083 SEARCH RESULT tag=101 err=0 qtime=0.000029 etime=0.000244 nentries=3 text=
+2026-11-06T16:45:54.220712+09:00 wslsrv slapd[864]: conn=1030 op=1084 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:45:54.220791+09:00 wslsrv slapd[864]: conn=1030 op=1084 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:45:54.220852+09:00 wslsrv slapd[864]: conn=1030 op=1084 SEARCH RESULT tag=101 err=0 qtime=0.000029 etime=0.000144 nentries=1 text=
+2026-11-06T16:45:54.221014+09:00 wslsrv slapd[864]: conn=1030 op=1085 ABANDON msg=1085
+2026-11-06T16:45:56.708236+09:00 wslsrv slapd[864]: conn=1030 op=1086 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:45:56.708350+09:00 wslsrv slapd[864]: conn=1030 op=1086 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:45:56.708419+09:00 wslsrv slapd[864]: conn=1030 op=1086 SEARCH RESULT tag=101 err=0 qtime=0.000023 etime=0.000192 nentries=1 text=
+2026-11-06T16:45:56.708769+09:00 wslsrv slapd[864]: conn=1030 op=1087 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=moonjunyyy))"
+2026-11-06T16:45:56.708841+09:00 wslsrv slapd[864]: conn=1030 op=1087 SRCH attr=uid uidNumber
+2026-11-06T16:45:56.708897+09:00 wslsrv slapd[864]: conn=1030 op=1087 SEARCH RESULT tag=101 err=0 qtime=0.000029 etime=0.000153 nentries=1 text=
+2026-11-06T16:45:56.709068+09:00 wslsrv slapd[864]: conn=1030 op=1088 SRCH base="dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixGroup)(memberUid=moonjunyyy))"
+2026-11-06T16:45:56.709125+09:00 wslsrv slapd[864]: conn=1030 op=1088 SRCH attr=dn
+2026-11-06T16:45:56.709187+09:00 wslsrv slapd[864]: conn=1030 op=1088 SEARCH RESULT tag=101 err=0 qtime=0.000021 etime=0.000174 nentries=3 text=
+2026-11-06T16:45:56.709338+09:00 wslsrv slapd[864]: conn=1030 op=1089 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:45:56.709390+09:00 wslsrv slapd[864]: conn=1030 op=1089 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:45:56.709451+09:00 wslsrv slapd[864]: conn=1030 op=1089 SEARCH RESULT tag=101 err=0 qtime=0.000022 etime=0.000144 nentries=1 text=
+2026-11-06T16:45:56.709607+09:00 wslsrv slapd[864]: conn=1030 op=1090 ABANDON msg=1090
+2026-11-06T16:45:56.749955+09:00 wslsrv slapd[864]: conn=1030 op=1091 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:45:56.750077+09:00 wslsrv slapd[864]: conn=1030 op=1091 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:45:56.750140+09:00 wslsrv slapd[864]: conn=1030 op=1091 SEARCH RESULT tag=101 err=0 qtime=0.000024 etime=0.000203 nentries=1 text=
+2026-11-06T16:45:56.751069+09:00 wslsrv slapd[864]: conn=1030 op=1092 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=moonjunyyy))"
+2026-11-06T16:45:56.751163+09:00 wslsrv slapd[864]: conn=1030 op=1092 SRCH attr=uid uidNumber
+2026-11-06T16:45:56.751233+09:00 wslsrv slapd[864]: conn=1030 op=1092 SEARCH RESULT tag=101 err=0 qtime=0.000028 etime=0.000169 nentries=1 text=
+2026-11-06T16:45:56.751395+09:00 wslsrv slapd[864]: conn=1030 op=1093 SRCH base="dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixGroup)(memberUid=moonjunyyy))"
+2026-11-06T16:45:56.751472+09:00 wslsrv slapd[864]: conn=1030 op=1093 SRCH attr=dn
+2026-11-06T16:45:56.751587+09:00 wslsrv slapd[864]: conn=1030 op=1093 SEARCH RESULT tag=101 err=0 qtime=0.000029 etime=0.000249 nentries=3 text=
+2026-11-06T16:45:56.751651+09:00 wslsrv slapd[864]: conn=1030 op=1094 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:45:56.751712+09:00 wslsrv slapd[864]: conn=1030 op=1094 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:45:56.751785+09:00 wslsrv slapd[864]: conn=1030 op=1094 SEARCH RESULT tag=101 err=0 qtime=0.000024 etime=0.000130 nentries=1 text=
+2026-11-06T16:45:56.751928+09:00 wslsrv slapd[864]: conn=1030 op=1095 ABANDON msg=1095
+2026-11-06T16:46:02.336568+09:00 wslsrv slapd[864]: conn=1030 op=1096 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:46:02.336670+09:00 wslsrv slapd[864]: conn=1030 op=1096 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:46:02.336727+09:00 wslsrv slapd[864]: conn=1030 op=1096 SEARCH RESULT tag=101 err=0 qtime=0.000023 etime=0.000190 nentries=1 text=
+2026-11-06T16:46:02.337114+09:00 wslsrv slapd[864]: conn=1030 op=1097 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=moonjunyyy))"
+2026-11-06T16:46:02.337170+09:00 wslsrv slapd[864]: conn=1030 op=1097 SRCH attr=uid uidNumber
+2026-11-06T16:46:02.337228+09:00 wslsrv slapd[864]: conn=1030 op=1097 SEARCH RESULT tag=101 err=0 qtime=0.000032 etime=0.000146 nentries=1 text=
+2026-11-06T16:46:02.337393+09:00 wslsrv slapd[864]: conn=1030 op=1098 SRCH base="dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixGroup)(memberUid=moonjunyyy))"
+2026-11-06T16:46:02.337453+09:00 wslsrv slapd[864]: conn=1030 op=1098 SRCH attr=dn
+2026-11-06T16:46:02.337526+09:00 wslsrv slapd[864]: conn=1030 op=1098 SEARCH RESULT tag=101 err=0 qtime=0.000032 etime=0.000174 nentries=3 text=
+2026-11-06T16:46:02.337660+09:00 wslsrv slapd[864]: conn=1030 op=1099 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:46:02.337720+09:00 wslsrv slapd[864]: conn=1030 op=1099 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:46:02.337782+09:00 wslsrv slapd[864]: conn=1030 op=1099 SEARCH RESULT tag=101 err=0 qtime=0.000021 etime=0.000142 nentries=1 text=
+2026-11-06T16:46:02.337937+09:00 wslsrv slapd[864]: conn=1030 op=1100 ABANDON msg=1100
+2026-11-06T16:46:02.377512+09:00 wslsrv slapd[864]: conn=1030 op=1101 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:46:02.377594+09:00 wslsrv slapd[864]: conn=1030 op=1101 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:46:02.377651+09:00 wslsrv slapd[864]: conn=1030 op=1101 SEARCH RESULT tag=101 err=0 qtime=0.000025 etime=0.000207 nentries=1 text=
+2026-11-06T16:46:02.378421+09:00 wslsrv slapd[864]: conn=1030 op=1102 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=moonjunyyy))"
+2026-11-06T16:46:02.378512+09:00 wslsrv slapd[864]: conn=1030 op=1102 SRCH attr=uid uidNumber
+2026-11-06T16:46:02.378637+09:00 wslsrv slapd[864]: conn=1030 op=1102 SEARCH RESULT tag=101 err=0 qtime=0.000025 etime=0.000264 nentries=1 text=
+2026-11-06T16:46:02.378709+09:00 wslsrv slapd[864]: conn=1030 op=1103 SRCH base="dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixGroup)(memberUid=moonjunyyy))"
+2026-11-06T16:46:02.378775+09:00 wslsrv slapd[864]: conn=1030 op=1103 SRCH attr=dn
+2026-11-06T16:46:02.378838+09:00 wslsrv slapd[864]: conn=1030 op=1103 SEARCH RESULT tag=101 err=0 qtime=0.000021 etime=0.000138 nentries=3 text=
+2026-11-06T16:46:02.378996+09:00 wslsrv slapd[864]: conn=1030 op=1104 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:46:02.379063+09:00 wslsrv slapd[864]: conn=1030 op=1104 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:46:02.379111+09:00 wslsrv slapd[864]: conn=1030 op=1104 SEARCH RESULT tag=101 err=0 qtime=0.000027 etime=0.000181 nentries=1 text=
+2026-11-06T16:46:02.379281+09:00 wslsrv slapd[864]: conn=1030 op=1105 ABANDON msg=1105
+2026-11-06T16:46:04.926337+09:00 wslsrv slapd[864]: conn=1030 op=1106 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:46:04.926513+09:00 wslsrv slapd[864]: conn=1030 op=1106 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:46:04.926586+09:00 wslsrv slapd[864]: conn=1030 op=1106 SEARCH RESULT tag=101 err=0 qtime=0.000024 etime=0.000196 nentries=1 text=
+2026-11-06T16:46:04.926946+09:00 wslsrv slapd[864]: conn=1030 op=1107 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=moonjunyyy))"
+2026-11-06T16:46:04.927007+09:00 wslsrv slapd[864]: conn=1030 op=1107 SRCH attr=uid uidNumber
+2026-11-06T16:46:04.927073+09:00 wslsrv slapd[864]: conn=1030 op=1107 SEARCH RESULT tag=101 err=0 qtime=0.000035 etime=0.000152 nentries=1 text=
+2026-11-06T16:46:04.927230+09:00 wslsrv slapd[864]: conn=1030 op=1108 SRCH base="dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixGroup)(memberUid=moonjunyyy))"
+2026-11-06T16:46:04.927284+09:00 wslsrv slapd[864]: conn=1030 op=1108 SRCH attr=dn
+2026-11-06T16:46:04.927335+09:00 wslsrv slapd[864]: conn=1030 op=1108 SEARCH RESULT tag=101 err=0 qtime=0.000020 etime=0.000171 nentries=3 text=
+2026-11-06T16:46:04.927496+09:00 wslsrv slapd[864]: conn=1030 op=1109 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:46:04.927578+09:00 wslsrv slapd[864]: conn=1030 op=1109 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:46:04.927631+09:00 wslsrv slapd[864]: conn=1030 op=1109 SEARCH RESULT tag=101 err=0 qtime=0.000021 etime=0.000139 nentries=1 text=
+2026-11-06T16:46:04.927773+09:00 wslsrv slapd[864]: conn=1030 op=1110 ABANDON msg=1110
+2026-11-06T16:46:04.966829+09:00 wslsrv slapd[864]: conn=1030 op=1111 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:46:04.966926+09:00 wslsrv slapd[864]: conn=1030 op=1111 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:46:04.966993+09:00 wslsrv slapd[864]: conn=1030 op=1111 SEARCH RESULT tag=101 err=0 qtime=0.000029 etime=0.000210 nentries=1 text=
+2026-11-06T16:46:04.967715+09:00 wslsrv slapd[864]: conn=1030 op=1112 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=moonjunyyy))"
+2026-11-06T16:46:04.967789+09:00 wslsrv slapd[864]: conn=1030 op=1112 SRCH attr=uid uidNumber
+2026-11-06T16:46:04.967857+09:00 wslsrv slapd[864]: conn=1030 op=1112 SEARCH RESULT tag=101 err=0 qtime=0.000022 etime=0.000168 nentries=1 text=
+2026-11-06T16:46:04.967994+09:00 wslsrv slapd[864]: conn=1030 op=1113 SRCH base="dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixGroup)(memberUid=moonjunyyy))"
+2026-11-06T16:46:04.968069+09:00 wslsrv slapd[864]: conn=1030 op=1113 SRCH attr=dn
+2026-11-06T16:46:04.968139+09:00 wslsrv slapd[864]: conn=1030 op=1113 SEARCH RESULT tag=101 err=0 qtime=0.000024 etime=0.000192 nentries=3 text=
+2026-11-06T16:46:04.968262+09:00 wslsrv slapd[864]: conn=1030 op=1114 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:46:04.968330+09:00 wslsrv slapd[864]: conn=1030 op=1114 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:46:04.968391+09:00 wslsrv slapd[864]: conn=1030 op=1114 SEARCH RESULT tag=101 err=0 qtime=0.000021 etime=0.000156 nentries=1 text=
+2026-11-06T16:46:04.968528+09:00 wslsrv slapd[864]: conn=1030 op=1115 ABANDON msg=1115
+2026-11-06T16:46:27.381732+09:00 wslsrv slapd[864]: conn=1030 op=1116 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:46:27.382083+09:00 wslsrv slapd[864]: conn=1030 op=1116 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:46:27.382286+09:00 wslsrv systemd[1]: Starting m00nny-mounts.service - m00nny sandbox mounts, idmapped for the handbook's user...
+2026-11-06T16:46:27.382407+09:00 wslsrv slapd[864]: conn=1030 op=1116 SEARCH RESULT tag=101 err=0 qtime=0.000027 etime=0.000275 nentries=1 text=
+2026-11-06T16:46:27.382520+09:00 wslsrv slapd[864]: conn=1030 op=1117 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=moonjunyyy))"
+2026-11-06T16:46:27.382581+09:00 wslsrv slapd[864]: conn=1030 op=1117 SRCH attr=uid uidNumber
+2026-11-06T16:46:27.382608+09:00 wslsrv slapd[864]: conn=1030 op=1117 SEARCH RESULT tag=101 err=0 qtime=0.000024 etime=0.000214 nentries=1 text=
+2026-11-06T16:46:27.382803+09:00 wslsrv slapd[864]: conn=1030 op=1118 SRCH base="dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixGroup)(memberUid=moonjunyyy))"
+2026-11-06T16:46:27.382878+09:00 wslsrv slapd[864]: conn=1030 op=1118 SRCH attr=dn
+2026-11-06T16:46:27.383027+09:00 wslsrv systemd[1]: Starting m00nny-vault-mounts.service - m00nny vault mounts, idmapped for the vault's user...
+2026-11-06T16:46:27.383098+09:00 wslsrv slapd[864]: conn=1030 op=1118 SEARCH RESULT tag=101 err=0 qtime=0.000024 etime=0.000258 nentries=3 text=
+2026-11-06T16:46:27.383163+09:00 wslsrv slapd[864]: conn=1030 op=1119 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:46:27.383220+09:00 wslsrv slapd[864]: conn=1030 op=1119 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:46:27.383263+09:00 wslsrv slapd[864]: conn=1030 op=1119 SEARCH RESULT tag=101 err=0 qtime=0.000038 etime=0.000149 nentries=1 text=
+2026-11-06T16:46:27.383396+09:00 wslsrv slapd[864]: conn=1030 op=1120 ABANDON msg=1120
+2026-11-06T16:46:27.460108+09:00 wslsrv slapd[864]: conn=1032 op=951 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=testuser01))"
+2026-11-06T16:46:27.460214+09:00 wslsrv slapd[864]: conn=1032 op=951 SRCH attr=uidNumber cn gecos uid objectClass homeDirectory gidNumber loginShell
+2026-11-06T16:46:27.460276+09:00 wslsrv slapd[864]: conn=1032 op=951 SEARCH RESULT tag=101 err=0 qtime=0.000026 etime=0.000185 nentries=0 text=
+2026-11-06T16:46:27.461349+09:00 wslsrv refhandbook[892495]: skipped testuser01: no such account
+2026-11-06T16:46:27.466871+09:00 wslsrv systemd[1]: m00nny-vault-mounts.service: Deactivated successfully.
+2026-11-06T16:46:27.467231+09:00 wslsrv systemd[1]: Finished m00nny-vault-mounts.service - m00nny vault mounts, idmapped for the vault's user.
+2026-11-06T16:46:27.469883+09:00 wslsrv systemd[1]: m00nny-mounts.service: Deactivated successfully.
+2026-11-06T16:46:27.470181+09:00 wslsrv systemd[1]: Finished m00nny-mounts.service - m00nny sandbox mounts, idmapped for the handbook's user.
+2026-11-06T16:46:29.242513+09:00 wslsrv kernel: weston[28132]: segfault at 218 ip 000079063c6eaffb sp 00007ffd8bda7650 error 4 in rdp-backend.so[1cffb,79063c6d4000+18000] likely on CPU 20 (core 10, socket 0)
+2026-11-06T16:46:29.242555+09:00 wslsrv kernel: Code: 00 00 48 8d 3d 59 71 00 00 e8 b1 94 fe ff 90 41 55 41 54 49 89 d4 55 48 89 f5 53 48 89 fb 48 83 ec 08 48 8b 07 bf ba 00 00 00 <44> 8b a8 18 02 00 00 31 c0 e8 57 90 fe ff 41 39 c5 75 2d 48 8b 7b
+2026-11-06T16:46:29.242558+09:00 wslsrv kernel: weston: weston: potentially unexpected fatal signal 11.
+2026-11-06T16:46:29.242614+09:00 wslsrv kernel: CPU: 20 UID: 1000 PID: 28132 Comm: weston Tainted: G        W           6.18.35.2-WSL-ZFS-2.4.3-Integrated+ #6 PREEMPT(none) 
+2026-11-06T16:46:29.242617+09:00 wslsrv kernel: Tainted: [W]=WARN
+2026-11-06T16:46:29.242618+09:00 wslsrv kernel: RIP: 0033:0x79063c6eaffb
+2026-11-06T16:46:29.242633+09:00 wslsrv kernel: Code: 00 00 48 8d 3d 59 71 00 00 e8 b1 94 fe ff 90 41 55 41 54 49 89 d4 55 48 89 f5 53 48 89 fb 48 83 ec 08 48 8b 07 bf ba 00 00 00 <44> 8b a8 18 02 00 00 31 c0 e8 57 90 fe ff 41 39 c5 75 2d 48 8b 7b
+2026-11-06T16:46:29.242635+09:00 wslsrv kernel: RSP: 002b:00007ffd8bda7650 EFLAGS: 00010206
+2026-11-06T16:46:29.242636+09:00 wslsrv kernel: RAX: 0000000000000000 RBX: 00006368b1676670 RCX: 0000790640142a2d
+2026-11-06T16:46:29.242637+09:00 wslsrv kernel: RDX: 0000000000000000 RSI: 000079063c6e3580 RDI: 00000000000000ba
+2026-11-06T16:46:29.242638+09:00 wslsrv kernel: RBP: 000079063c6e3580 R08: 0000000000000003 R09: 00006368b16760c0
+2026-11-06T16:46:29.242639+09:00 wslsrv kernel: R10: 0000000000000004 R11: 0000000000000246 R12: 0000000000000000
+2026-11-06T16:46:29.242640+09:00 wslsrv kernel: R13: 0000000000000000 R14: 00006368b1676670 R15: 00006368b1676af0
+2026-11-06T16:46:29.242641+09:00 wslsrv kernel: FS:  000079063cbfcd80 GS:  0000000000000000
+2026-11-06T16:46:32.494744+09:00 wslsrv slapd[864]: conn=1036 op=1141 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:46:32.494924+09:00 wslsrv slapd[864]: conn=1036 op=1141 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:46:32.495014+09:00 wslsrv slapd[864]: conn=1036 op=1141 SEARCH RESULT tag=101 err=0 qtime=0.000033 etime=0.000249 nentries=1 text=
+2026-11-06T16:46:32.495564+09:00 wslsrv slapd[864]: conn=1033 op=771 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=moonjunyyy))"
+2026-11-06T16:46:32.495635+09:00 wslsrv slapd[864]: conn=1033 op=771 SRCH attr=uid uidNumber
+2026-11-06T16:46:32.495701+09:00 wslsrv slapd[864]: conn=1033 op=771 SEARCH RESULT tag=101 err=0 qtime=0.000027 etime=0.000189 nentries=1 text=
+2026-11-06T16:46:32.495865+09:00 wslsrv slapd[864]: conn=1033 op=772 SRCH base="dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixGroup)(memberUid=moonjunyyy))"
+2026-11-06T16:46:32.495950+09:00 wslsrv slapd[864]: conn=1033 op=772 SRCH attr=dn
+2026-11-06T16:46:32.496008+09:00 wslsrv slapd[864]: conn=1033 op=772 SEARCH RESULT tag=101 err=0 qtime=0.000024 etime=0.000170 nentries=3 text=
+2026-11-06T16:46:32.496125+09:00 wslsrv slapd[864]: conn=1033 op=773 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:46:32.496190+09:00 wslsrv slapd[864]: conn=1033 op=773 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:46:32.496261+09:00 wslsrv slapd[864]: conn=1033 op=773 SEARCH RESULT tag=101 err=0 qtime=0.000021 etime=0.000167 nentries=1 text=
+2026-11-06T16:46:32.496397+09:00 wslsrv slapd[864]: conn=1033 op=774 ABANDON msg=774
+2026-11-06T16:46:34.773398+09:00 wslsrv slapd[864]: conn=1032 op=952 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:46:34.773501+09:00 wslsrv slapd[864]: conn=1032 op=952 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:46:34.773561+09:00 wslsrv slapd[864]: conn=1032 op=952 SEARCH RESULT tag=101 err=0 qtime=0.000028 etime=0.000229 nentries=1 text=
+2026-11-06T16:46:34.774081+09:00 wslsrv slapd[864]: conn=1032 op=953 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=moonjunyyy))"
+2026-11-06T16:46:34.774159+09:00 wslsrv slapd[864]: conn=1032 op=953 SRCH attr=uid uidNumber
+2026-11-06T16:46:34.774229+09:00 wslsrv slapd[864]: conn=1032 op=953 SEARCH RESULT tag=101 err=0 qtime=0.000022 etime=0.000148 nentries=1 text=
+2026-11-06T16:46:34.774368+09:00 wslsrv slapd[864]: conn=1032 op=954 SRCH base="dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixGroup)(memberUid=moonjunyyy))"
+2026-11-06T16:46:34.774483+09:00 wslsrv slapd[864]: conn=1032 op=954 SRCH attr=dn
+2026-11-06T16:46:34.774551+09:00 wslsrv slapd[864]: conn=1032 op=954 SEARCH RESULT tag=101 err=0 qtime=0.000021 etime=0.000222 nentries=3 text=
+2026-11-06T16:46:34.774707+09:00 wslsrv slapd[864]: conn=1032 op=955 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:46:34.774773+09:00 wslsrv slapd[864]: conn=1032 op=955 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:46:34.774846+09:00 wslsrv slapd[864]: conn=1032 op=955 SEARCH RESULT tag=101 err=0 qtime=0.000037 etime=0.000181 nentries=1 text=
+2026-11-06T16:46:34.774988+09:00 wslsrv slapd[864]: conn=1032 op=956 ABANDON msg=956
+2026-11-06T16:46:34.826274+09:00 wslsrv slapd[864]: conn=1033 op=775 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:46:34.826384+09:00 wslsrv slapd[864]: conn=1033 op=775 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:46:34.826482+09:00 wslsrv slapd[864]: conn=1033 op=775 SEARCH RESULT tag=101 err=0 qtime=0.000030 etime=0.000210 nentries=1 text=
+2026-11-06T16:46:34.827161+09:00 wslsrv slapd[864]: conn=1036 op=1142 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=moonjunyyy))"
+2026-11-06T16:46:34.827237+09:00 wslsrv slapd[864]: conn=1036 op=1142 SRCH attr=uid uidNumber
+2026-11-06T16:46:34.827299+09:00 wslsrv slapd[864]: conn=1036 op=1142 SEARCH RESULT tag=101 err=0 qtime=0.000023 etime=0.000147 nentries=1 text=
+2026-11-06T16:46:34.827457+09:00 wslsrv slapd[864]: conn=1036 op=1143 SRCH base="dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixGroup)(memberUid=moonjunyyy))"
+2026-11-06T16:46:34.827522+09:00 wslsrv slapd[864]: conn=1036 op=1143 SRCH attr=dn
+2026-11-06T16:46:34.827583+09:00 wslsrv slapd[864]: conn=1036 op=1143 SEARCH RESULT tag=101 err=0 qtime=0.000022 etime=0.000174 nentries=3 text=
+2026-11-06T16:46:34.827777+09:00 wslsrv slapd[864]: conn=1036 op=1144 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:46:34.827847+09:00 wslsrv slapd[864]: conn=1036 op=1144 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:46:34.827924+09:00 wslsrv slapd[864]: conn=1036 op=1144 SEARCH RESULT tag=101 err=0 qtime=0.000027 etime=0.000196 nentries=1 text=
+2026-11-06T16:46:34.828067+09:00 wslsrv slapd[864]: conn=1036 op=1145 ABANDON msg=1145
+2026-11-06T16:46:51.702035+09:00 wslsrv slapd[864]: conn=1032 op=957 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:46:51.702161+09:00 wslsrv slapd[864]: conn=1032 op=957 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:46:51.702226+09:00 wslsrv slapd[864]: conn=1032 op=957 SEARCH RESULT tag=101 err=0 qtime=0.000029 etime=0.000199 nentries=1 text=
+2026-11-06T16:46:51.702616+09:00 wslsrv slapd[864]: conn=1032 op=958 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=moonjunyyy))"
+2026-11-06T16:46:51.702680+09:00 wslsrv slapd[864]: conn=1032 op=958 SRCH attr=uid uidNumber
+2026-11-06T16:46:51.702741+09:00 wslsrv slapd[864]: conn=1032 op=958 SEARCH RESULT tag=101 err=0 qtime=0.000021 etime=0.000156 nentries=1 text=
+2026-11-06T16:46:51.702906+09:00 wslsrv slapd[864]: conn=1032 op=959 SRCH base="dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixGroup)(memberUid=moonjunyyy))"
+2026-11-06T16:46:51.702967+09:00 wslsrv slapd[864]: conn=1032 op=959 SRCH attr=dn
+2026-11-06T16:46:51.703022+09:00 wslsrv slapd[864]: conn=1032 op=959 SEARCH RESULT tag=101 err=0 qtime=0.000022 etime=0.000167 nentries=3 text=
+2026-11-06T16:46:51.703187+09:00 wslsrv slapd[864]: conn=1032 op=960 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:46:51.703242+09:00 wslsrv slapd[864]: conn=1032 op=960 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:46:51.703297+09:00 wslsrv slapd[864]: conn=1032 op=960 SEARCH RESULT tag=101 err=0 qtime=0.000021 etime=0.000143 nentries=1 text=
+2026-11-06T16:46:51.703469+09:00 wslsrv slapd[864]: conn=1032 op=961 ABANDON msg=961
+2026-11-06T16:47:06.626345+09:00 wslsrv slapd[864]: conn=1032 op=962 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:47:06.626577+09:00 wslsrv slapd[864]: conn=1032 op=962 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:47:06.626658+09:00 wslsrv slapd[864]: conn=1032 op=962 SEARCH RESULT tag=101 err=0 qtime=0.000024 etime=0.000222 nentries=1 text=
+2026-11-06T16:47:06.627293+09:00 wslsrv slapd[864]: conn=1030 op=1121 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=moonjunyyy))"
+2026-11-06T16:47:06.627376+09:00 wslsrv slapd[864]: conn=1030 op=1121 SRCH attr=uid uidNumber
+2026-11-06T16:47:06.627441+09:00 wslsrv slapd[864]: conn=1030 op=1121 SEARCH RESULT tag=101 err=0 qtime=0.000024 etime=0.000161 nentries=1 text=
+2026-11-06T16:47:06.627584+09:00 wslsrv slapd[864]: conn=1030 op=1122 SRCH base="dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixGroup)(memberUid=moonjunyyy))"
+2026-11-06T16:47:06.627666+09:00 wslsrv slapd[864]: conn=1030 op=1122 SRCH attr=dn
+2026-11-06T16:47:06.627740+09:00 wslsrv slapd[864]: conn=1030 op=1122 SEARCH RESULT tag=101 err=0 qtime=0.000023 etime=0.000209 nentries=3 text=
+2026-11-06T16:47:06.627882+09:00 wslsrv slapd[864]: conn=1030 op=1123 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:47:06.627953+09:00 wslsrv slapd[864]: conn=1030 op=1123 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:47:06.628018+09:00 wslsrv slapd[864]: conn=1030 op=1123 SEARCH RESULT tag=101 err=0 qtime=0.000026 etime=0.000157 nentries=1 text=
+2026-11-06T16:47:06.628191+09:00 wslsrv slapd[864]: conn=1030 op=1124 ABANDON msg=1124
+2026-11-06T16:47:24.189413+09:00 wslsrv slapd[864]: conn=1030 op=1125 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:47:24.189529+09:00 wslsrv slapd[864]: conn=1030 op=1125 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:47:24.189587+09:00 wslsrv slapd[864]: conn=1030 op=1125 SEARCH RESULT tag=101 err=0 qtime=0.000028 etime=0.000225 nentries=1 text=
+2026-11-06T16:47:24.190082+09:00 wslsrv slapd[864]: conn=1030 op=1126 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=moonjunyyy))"
+2026-11-06T16:47:24.190187+09:00 wslsrv slapd[864]: conn=1030 op=1126 SRCH attr=uid uidNumber
+2026-11-06T16:47:24.190267+09:00 wslsrv slapd[864]: conn=1030 op=1126 SEARCH RESULT tag=101 err=0 qtime=0.000021 etime=0.000154 nentries=1 text=
+2026-11-06T16:47:24.190391+09:00 wslsrv slapd[864]: conn=1030 op=1127 SRCH base="dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixGroup)(memberUid=moonjunyyy))"
+2026-11-06T16:47:24.190494+09:00 wslsrv slapd[864]: conn=1030 op=1127 SRCH attr=dn
+2026-11-06T16:47:24.190582+09:00 wslsrv slapd[864]: conn=1030 op=1127 SEARCH RESULT tag=101 err=0 qtime=0.000032 etime=0.000241 nentries=3 text=
+2026-11-06T16:47:24.190713+09:00 wslsrv slapd[864]: conn=1030 op=1128 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:47:24.190770+09:00 wslsrv slapd[864]: conn=1030 op=1128 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:47:24.190834+09:00 wslsrv slapd[864]: conn=1030 op=1128 SEARCH RESULT tag=101 err=0 qtime=0.000038 etime=0.000177 nentries=1 text=
+2026-11-06T16:47:24.191015+09:00 wslsrv slapd[864]: conn=1030 op=1129 ABANDON msg=1129
+2026-11-06T16:47:24.197980+09:00 wslsrv systemd[1]: zfs-share.service: Deactivated successfully.
+2026-11-06T16:47:24.198127+09:00 wslsrv systemd[1]: Stopped zfs-share.service - ZFS file system shares.
+2026-11-06T16:47:24.198224+09:00 wslsrv systemd[1]: Stopping zfs-share.service - ZFS file system shares...
+2026-11-06T16:47:24.199231+09:00 wslsrv systemd[1]: Starting smbd.service - Samba SMB Daemon...
+2026-11-06T16:47:24.305420+09:00 wslsrv systemd[1]: Started smbd.service - Samba SMB Daemon.
+2026-11-06T16:47:24.308475+09:00 wslsrv systemd[1]: Starting zfs-share.service - ZFS file system shares...
+2026-11-06T16:47:24.319492+09:00 wslsrv systemd[1]: Finished zfs-share.service - ZFS file system shares.
+2026-11-06T16:47:24.332442+09:00 wslsrv slapd[864]: conn=1030 op=1130 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:47:24.332584+09:00 wslsrv slapd[864]: conn=1030 op=1130 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:47:24.332672+09:00 wslsrv slapd[864]: conn=1030 op=1130 SEARCH RESULT tag=101 err=0 qtime=0.000027 etime=0.000219 nentries=1 text=
+2026-11-06T16:47:24.333551+09:00 wslsrv slapd[864]: conn=1033 op=776 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=moonjunyyy))"
+2026-11-06T16:47:24.333636+09:00 wslsrv slapd[864]: conn=1033 op=776 SRCH attr=uid uidNumber
+2026-11-06T16:47:24.333712+09:00 wslsrv slapd[864]: conn=1033 op=776 SEARCH RESULT tag=101 err=0 qtime=0.000030 etime=0.000215 nentries=1 text=
+2026-11-06T16:47:24.333892+09:00 wslsrv slapd[864]: conn=1033 op=777 SRCH base="dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixGroup)(memberUid=moonjunyyy))"
+2026-11-06T16:47:24.333977+09:00 wslsrv slapd[864]: conn=1033 op=777 SRCH attr=dn
+2026-11-06T16:47:24.334048+09:00 wslsrv slapd[864]: conn=1033 op=777 SEARCH RESULT tag=101 err=0 qtime=0.000027 etime=0.000208 nentries=3 text=
+2026-11-06T16:47:24.334190+09:00 wslsrv slapd[864]: conn=1033 op=778 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:47:24.334261+09:00 wslsrv slapd[864]: conn=1033 op=778 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:47:24.334328+09:00 wslsrv slapd[864]: conn=1033 op=778 SEARCH RESULT tag=101 err=0 qtime=0.000025 etime=0.000165 nentries=1 text=
+2026-11-06T16:47:24.334483+09:00 wslsrv slapd[864]: conn=1033 op=779 ABANDON msg=779
+2026-11-06T16:47:27.820513+09:00 wslsrv slapd[864]: conn=1036 op=1146 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:47:27.820615+09:00 wslsrv slapd[864]: conn=1036 op=1146 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:47:27.820670+09:00 wslsrv slapd[864]: conn=1036 op=1146 SEARCH RESULT tag=101 err=0 qtime=0.000027 etime=0.000236 nentries=1 text=
+2026-11-06T16:47:27.821202+09:00 wslsrv systemd[1]: Starting m00nny-mounts.service - m00nny sandbox mounts, idmapped for the handbook's user...
+2026-11-06T16:47:27.821303+09:00 wslsrv slapd[864]: conn=1036 op=1147 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=moonjunyyy))"
+2026-11-06T16:47:27.821372+09:00 wslsrv slapd[864]: conn=1036 op=1147 SRCH attr=uid uidNumber
+2026-11-06T16:47:27.821424+09:00 wslsrv slapd[864]: conn=1036 op=1147 SEARCH RESULT tag=101 err=0 qtime=0.000034 etime=0.000148 nentries=1 text=
+2026-11-06T16:47:27.821489+09:00 wslsrv slapd[864]: conn=1036 op=1148 SRCH base="dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixGroup)(memberUid=moonjunyyy))"
+2026-11-06T16:47:27.821556+09:00 wslsrv slapd[864]: conn=1036 op=1148 SRCH attr=dn
+2026-11-06T16:47:27.821619+09:00 wslsrv slapd[864]: conn=1036 op=1148 SEARCH RESULT tag=101 err=0 qtime=0.000031 etime=0.000176 nentries=3 text=
+2026-11-06T16:47:27.821798+09:00 wslsrv slapd[864]: conn=1036 op=1149 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:47:27.821870+09:00 wslsrv slapd[864]: conn=1036 op=1149 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:47:27.821938+09:00 wslsrv slapd[864]: conn=1036 op=1149 SEARCH RESULT tag=101 err=0 qtime=0.000037 etime=0.000177 nentries=1 text=
+2026-11-06T16:47:27.822081+09:00 wslsrv slapd[864]: conn=1036 op=1150 ABANDON msg=1150
+2026-11-06T16:47:27.822198+09:00 wslsrv systemd[1]: Starting m00nny-vault-mounts.service - m00nny vault mounts, idmapped for the vault's user...
+2026-11-06T16:47:27.840212+09:00 wslsrv slapd[864]: conn=1036 op=1151 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=systemd-coredump))"
+2026-11-06T16:47:27.840298+09:00 wslsrv slapd[864]: conn=1036 op=1151 SRCH attr=uidNumber cn gecos uid objectClass homeDirectory gidNumber loginShell
+2026-11-06T16:47:27.840364+09:00 wslsrv slapd[864]: conn=1036 op=1151 SEARCH RESULT tag=101 err=0 qtime=0.000023 etime=0.000125 nentries=0 text=
+2026-11-06T16:47:27.870585+09:00 wslsrv slapd[864]: conn=1036 op=1152 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:47:27.870695+09:00 wslsrv slapd[864]: conn=1036 op=1152 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:47:27.870723+09:00 wslsrv slapd[864]: conn=1036 op=1152 SEARCH RESULT tag=101 err=0 qtime=0.000049 etime=0.000274 nentries=1 text=
+2026-11-06T16:47:27.871583+09:00 wslsrv slapd[864]: conn=1032 op=963 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=moonjunyyy))"
+2026-11-06T16:47:27.871657+09:00 wslsrv slapd[864]: conn=1032 op=963 SRCH attr=uid uidNumber
+2026-11-06T16:47:27.871689+09:00 wslsrv slapd[864]: conn=1032 op=963 SEARCH RESULT tag=101 err=0 qtime=0.000025 etime=0.000173 nentries=1 text=
+2026-11-06T16:47:27.871945+09:00 wslsrv slapd[864]: conn=1032 op=964 SRCH base="dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixGroup)(memberUid=moonjunyyy))"
+2026-11-06T16:47:27.872045+09:00 wslsrv slapd[864]: conn=1032 op=964 SRCH attr=dn
+2026-11-06T16:47:27.872114+09:00 wslsrv slapd[864]: conn=1032 op=964 SEARCH RESULT tag=101 err=0 qtime=0.000034 etime=0.000240 nentries=3 text=
+2026-11-06T16:47:27.872251+09:00 wslsrv slapd[864]: conn=1032 op=965 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:47:27.872322+09:00 wslsrv slapd[864]: conn=1032 op=965 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:47:27.872386+09:00 wslsrv slapd[864]: conn=1032 op=965 SEARCH RESULT tag=101 err=0 qtime=0.000026 etime=0.000156 nentries=1 text=
+2026-11-06T16:47:27.872548+09:00 wslsrv slapd[864]: conn=1032 op=966 ABANDON msg=966
+2026-11-06T16:47:27.908146+09:00 wslsrv slapd[864]: conn=1030 op=1131 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=testuser01))"
+2026-11-06T16:47:27.908266+09:00 wslsrv slapd[864]: conn=1030 op=1131 SRCH attr=uidNumber cn gecos uid objectClass homeDirectory gidNumber loginShell
+2026-11-06T16:47:27.908340+09:00 wslsrv slapd[864]: conn=1030 op=1131 SEARCH RESULT tag=101 err=0 qtime=0.000024 etime=0.000188 nentries=0 text=
+2026-11-06T16:47:27.909315+09:00 wslsrv refhandbook[893120]: skipped testuser01: no such account
+2026-11-06T16:47:27.916887+09:00 wslsrv systemd[1]: m00nny-vault-mounts.service: Deactivated successfully.
+2026-11-06T16:47:27.917194+09:00 wslsrv systemd[1]: Finished m00nny-vault-mounts.service - m00nny vault mounts, idmapped for the vault's user.
+2026-11-06T16:47:27.919009+09:00 wslsrv systemd[1]: m00nny-mounts.service: Deactivated successfully.
+2026-11-06T16:47:27.919307+09:00 wslsrv systemd[1]: Finished m00nny-mounts.service - m00nny sandbox mounts, idmapped for the handbook's user.
+2026-11-06T16:47:31.570069+09:00 wslsrv slapd[864]: conn=1033 op=780 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:47:31.570227+09:00 wslsrv slapd[864]: conn=1033 op=780 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:47:31.570293+09:00 wslsrv slapd[864]: conn=1033 op=780 SEARCH RESULT tag=101 err=0 qtime=0.000031 etime=0.000201 nentries=1 text=
+2026-11-06T16:47:31.570694+09:00 wslsrv slapd[864]: conn=1030 op=1132 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=moonjunyyy))"
+2026-11-06T16:47:31.570758+09:00 wslsrv slapd[864]: conn=1030 op=1132 SRCH attr=uid uidNumber
+2026-11-06T16:47:31.570825+09:00 wslsrv slapd[864]: conn=1030 op=1132 SEARCH RESULT tag=101 err=0 qtime=0.000021 etime=0.000155 nentries=1 text=
+2026-11-06T16:47:31.570983+09:00 wslsrv slapd[864]: conn=1030 op=1133 SRCH base="dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixGroup)(memberUid=moonjunyyy))"
+2026-11-06T16:47:31.571035+09:00 wslsrv slapd[864]: conn=1030 op=1133 SRCH attr=dn
+2026-11-06T16:47:31.571134+09:00 wslsrv slapd[864]: conn=1030 op=1133 SEARCH RESULT tag=101 err=0 qtime=0.000026 etime=0.000191 nentries=3 text=
+2026-11-06T16:47:31.571274+09:00 wslsrv slapd[864]: conn=1030 op=1134 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:47:31.571331+09:00 wslsrv slapd[864]: conn=1030 op=1134 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:47:31.571389+09:00 wslsrv slapd[864]: conn=1030 op=1134 SEARCH RESULT tag=101 err=0 qtime=0.000031 etime=0.000169 nentries=1 text=
+2026-11-06T16:47:31.571552+09:00 wslsrv slapd[864]: conn=1030 op=1135 ABANDON msg=1135
+2026-11-06T16:47:31.619253+09:00 wslsrv slapd[864]: conn=1036 op=1153 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:47:31.619352+09:00 wslsrv slapd[864]: conn=1036 op=1153 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:47:31.619417+09:00 wslsrv slapd[864]: conn=1036 op=1153 SEARCH RESULT tag=101 err=0 qtime=0.000030 etime=0.000216 nentries=1 text=
+2026-11-06T16:47:31.620126+09:00 wslsrv slapd[864]: conn=1032 op=967 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=moonjunyyy))"
+2026-11-06T16:47:31.620206+09:00 wslsrv slapd[864]: conn=1032 op=967 SRCH attr=uid uidNumber
+2026-11-06T16:47:31.620271+09:00 wslsrv slapd[864]: conn=1032 op=967 SEARCH RESULT tag=101 err=0 qtime=0.000028 etime=0.000177 nentries=1 text=
+2026-11-06T16:47:31.620404+09:00 wslsrv slapd[864]: conn=1032 op=968 SRCH base="dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixGroup)(memberUid=moonjunyyy))"
+2026-11-06T16:47:31.620471+09:00 wslsrv slapd[864]: conn=1032 op=968 SRCH attr=dn
+2026-11-06T16:47:31.620577+09:00 wslsrv slapd[864]: conn=1032 op=968 SEARCH RESULT tag=101 err=0 qtime=0.000022 etime=0.000210 nentries=3 text=
+2026-11-06T16:47:31.620633+09:00 wslsrv slapd[864]: conn=1032 op=969 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:47:31.620699+09:00 wslsrv slapd[864]: conn=1032 op=969 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:47:31.620759+09:00 wslsrv slapd[864]: conn=1032 op=969 SEARCH RESULT tag=101 err=0 qtime=0.000020 etime=0.000121 nentries=1 text=
+2026-11-06T16:47:31.620930+09:00 wslsrv slapd[864]: conn=1032 op=970 ABANDON msg=970
+2026-11-06T16:47:35.440037+09:00 wslsrv slapd[864]: conn=1032 op=971 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:47:35.440135+09:00 wslsrv slapd[864]: conn=1032 op=971 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:47:35.440203+09:00 wslsrv slapd[864]: conn=1032 op=971 SEARCH RESULT tag=101 err=0 qtime=0.000024 etime=0.000208 nentries=1 text=
+2026-11-06T16:47:35.440664+09:00 wslsrv slapd[864]: conn=1032 op=972 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=moonjunyyy))"
+2026-11-06T16:47:35.440732+09:00 wslsrv slapd[864]: conn=1032 op=972 SRCH attr=uid uidNumber
+2026-11-06T16:47:35.440793+09:00 wslsrv slapd[864]: conn=1032 op=972 SEARCH RESULT tag=101 err=0 qtime=0.000021 etime=0.000137 nentries=1 text=
+2026-11-06T16:47:35.440958+09:00 wslsrv slapd[864]: conn=1032 op=973 SRCH base="dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixGroup)(memberUid=moonjunyyy))"
+2026-11-06T16:47:35.441026+09:00 wslsrv slapd[864]: conn=1032 op=973 SRCH attr=dn
+2026-11-06T16:47:35.441096+09:00 wslsrv slapd[864]: conn=1032 op=973 SEARCH RESULT tag=101 err=0 qtime=0.000024 etime=0.000202 nentries=3 text=
+2026-11-06T16:47:35.441240+09:00 wslsrv slapd[864]: conn=1032 op=974 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:47:35.441305+09:00 wslsrv slapd[864]: conn=1032 op=974 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:47:35.441372+09:00 wslsrv slapd[864]: conn=1032 op=974 SEARCH RESULT tag=101 err=0 qtime=0.000024 etime=0.000170 nentries=1 text=
+2026-11-06T16:47:35.441505+09:00 wslsrv slapd[864]: conn=1032 op=975 ABANDON msg=975
+2026-11-06T16:47:35.480976+09:00 wslsrv slapd[864]: conn=1032 op=976 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:47:35.481087+09:00 wslsrv slapd[864]: conn=1032 op=976 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:47:35.481116+09:00 wslsrv slapd[864]: conn=1032 op=976 SEARCH RESULT tag=101 err=0 qtime=0.000028 etime=0.000222 nentries=1 text=
+2026-11-06T16:47:35.481764+09:00 wslsrv slapd[864]: conn=1033 op=781 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=moonjunyyy))"
+2026-11-06T16:47:35.481838+09:00 wslsrv slapd[864]: conn=1033 op=781 SRCH attr=uid uidNumber
+2026-11-06T16:47:35.481871+09:00 wslsrv slapd[864]: conn=1033 op=781 SEARCH RESULT tag=101 err=0 qtime=0.000025 etime=0.000158 nentries=1 text=
+2026-11-06T16:47:35.482074+09:00 wslsrv slapd[864]: conn=1033 op=782 SRCH base="dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixGroup)(memberUid=moonjunyyy))"
+2026-11-06T16:47:35.482178+09:00 wslsrv slapd[864]: conn=1033 op=782 SRCH attr=dn
+2026-11-06T16:47:35.482251+09:00 wslsrv slapd[864]: conn=1033 op=782 SEARCH RESULT tag=101 err=0 qtime=0.000024 etime=0.000175 nentries=3 text=
+2026-11-06T16:47:35.482472+09:00 wslsrv slapd[864]: conn=1033 op=783 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:47:35.482541+09:00 wslsrv slapd[864]: conn=1033 op=783 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:47:35.482609+09:00 wslsrv slapd[864]: conn=1033 op=783 SEARCH RESULT tag=101 err=0 qtime=0.000028 etime=0.000226 nentries=1 text=
+2026-11-06T16:47:35.482795+09:00 wslsrv slapd[864]: conn=1033 op=784 ABANDON msg=784
+2026-11-06T16:47:37.063406+09:00 wslsrv slapd[864]: conn=1033 op=785 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:47:37.063725+09:00 wslsrv slapd[864]: conn=1033 op=785 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:47:37.063782+09:00 wslsrv slapd[864]: conn=1033 op=785 SEARCH RESULT tag=101 err=0 qtime=0.000024 etime=0.000198 nentries=1 text=
+2026-11-06T16:47:37.063994+09:00 wslsrv slapd[864]: conn=1033 op=786 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=moonjunyyy))"
+2026-11-06T16:47:37.064055+09:00 wslsrv slapd[864]: conn=1033 op=786 SRCH attr=uid uidNumber
+2026-11-06T16:47:37.064085+09:00 wslsrv slapd[864]: conn=1033 op=786 SEARCH RESULT tag=101 err=0 qtime=0.000023 etime=0.000155 nentries=1 text=
+2026-11-06T16:47:37.064289+09:00 wslsrv slapd[864]: conn=1033 op=787 SRCH base="dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixGroup)(memberUid=moonjunyyy))"
+2026-11-06T16:47:37.064361+09:00 wslsrv slapd[864]: conn=1033 op=787 SRCH attr=dn
+2026-11-06T16:47:37.064430+09:00 wslsrv slapd[864]: conn=1033 op=787 SEARCH RESULT tag=101 err=0 qtime=0.000027 etime=0.000190 nentries=3 text=
+2026-11-06T16:47:37.064564+09:00 wslsrv slapd[864]: conn=1033 op=788 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:47:37.064636+09:00 wslsrv slapd[864]: conn=1033 op=788 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:47:37.064705+09:00 wslsrv slapd[864]: conn=1033 op=788 SEARCH RESULT tag=101 err=0 qtime=0.000026 etime=0.000142 nentries=1 text=
+2026-11-06T16:47:37.064833+09:00 wslsrv slapd[864]: conn=1033 op=789 ABANDON msg=789
+2026-11-06T16:47:37.104429+09:00 wslsrv slapd[864]: conn=1033 op=790 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:47:37.104521+09:00 wslsrv slapd[864]: conn=1033 op=790 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:47:37.104585+09:00 wslsrv slapd[864]: conn=1033 op=790 SEARCH RESULT tag=101 err=0 qtime=0.000025 etime=0.000195 nentries=1 text=
+2026-11-06T16:47:37.105413+09:00 wslsrv slapd[864]: conn=1033 op=791 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=moonjunyyy))"
+2026-11-06T16:47:37.105475+09:00 wslsrv slapd[864]: conn=1033 op=791 SRCH attr=uid uidNumber
+2026-11-06T16:47:37.105510+09:00 wslsrv slapd[864]: conn=1033 op=791 SEARCH RESULT tag=101 err=0 qtime=0.000028 etime=0.000153 nentries=1 text=
+2026-11-06T16:47:37.105788+09:00 wslsrv slapd[864]: conn=1033 op=792 SRCH base="dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixGroup)(memberUid=moonjunyyy))"
+2026-11-06T16:47:37.105884+09:00 wslsrv slapd[864]: conn=1033 op=792 SRCH attr=dn
+2026-11-06T16:47:37.105940+09:00 wslsrv slapd[864]: conn=1033 op=792 SEARCH RESULT tag=101 err=0 qtime=0.000021 etime=0.000177 nentries=3 text=
+2026-11-06T16:47:37.106063+09:00 wslsrv slapd[864]: conn=1033 op=793 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:47:37.106126+09:00 wslsrv slapd[864]: conn=1033 op=793 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:47:37.106164+09:00 wslsrv slapd[864]: conn=1033 op=793 SEARCH RESULT tag=101 err=0 qtime=0.000029 etime=0.000187 nentries=1 text=
+2026-11-06T16:47:37.106357+09:00 wslsrv slapd[864]: conn=1033 op=794 ABANDON msg=794
+2026-11-06T16:47:44.856955+09:00 wslsrv slapd[864]: conn=1030 op=1136 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:47:44.857122+09:00 wslsrv slapd[864]: conn=1030 op=1136 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:47:44.857180+09:00 wslsrv slapd[864]: conn=1030 op=1136 SEARCH RESULT tag=101 err=0 qtime=0.000023 etime=0.000213 nentries=1 text=
+2026-11-06T16:47:44.857542+09:00 wslsrv slapd[864]: conn=1033 op=795 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=moonjunyyy))"
+2026-11-06T16:47:44.857604+09:00 wslsrv slapd[864]: conn=1033 op=795 SRCH attr=uid uidNumber
+2026-11-06T16:47:44.857666+09:00 wslsrv slapd[864]: conn=1033 op=795 SEARCH RESULT tag=101 err=0 qtime=0.000026 etime=0.000137 nentries=1 text=
+2026-11-06T16:47:44.857832+09:00 wslsrv slapd[864]: conn=1033 op=796 SRCH base="dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixGroup)(memberUid=moonjunyyy))"
+2026-11-06T16:47:44.857892+09:00 wslsrv slapd[864]: conn=1033 op=796 SRCH attr=dn
+2026-11-06T16:47:44.857951+09:00 wslsrv slapd[864]: conn=1033 op=796 SEARCH RESULT tag=101 err=0 qtime=0.000021 etime=0.000172 nentries=3 text=
+2026-11-06T16:47:44.858122+09:00 wslsrv slapd[864]: conn=1033 op=797 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:47:44.858188+09:00 wslsrv slapd[864]: conn=1033 op=797 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:47:44.858244+09:00 wslsrv slapd[864]: conn=1033 op=797 SEARCH RESULT tag=101 err=0 qtime=0.000025 etime=0.000165 nentries=1 text=
+2026-11-06T16:47:44.858412+09:00 wslsrv slapd[864]: conn=1033 op=798 ABANDON msg=798
+2026-11-06T16:47:44.898750+09:00 wslsrv slapd[864]: conn=1033 op=799 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:47:44.898885+09:00 wslsrv slapd[864]: conn=1033 op=799 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:47:44.898985+09:00 wslsrv slapd[864]: conn=1033 op=799 SEARCH RESULT tag=101 err=0 qtime=0.000042 etime=0.000288 nentries=1 text=
+2026-11-06T16:47:44.899652+09:00 wslsrv slapd[864]: conn=1033 op=800 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=moonjunyyy))"
+2026-11-06T16:47:44.899736+09:00 wslsrv slapd[864]: conn=1033 op=800 SRCH attr=uid uidNumber
+2026-11-06T16:47:44.899803+09:00 wslsrv slapd[864]: conn=1033 op=800 SEARCH RESULT tag=101 err=0 qtime=0.000023 etime=0.000172 nentries=1 text=
+2026-11-06T16:47:44.899974+09:00 wslsrv slapd[864]: conn=1033 op=801 SRCH base="dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixGroup)(memberUid=moonjunyyy))"
+2026-11-06T16:47:44.900047+09:00 wslsrv slapd[864]: conn=1033 op=801 SRCH attr=dn
+2026-11-06T16:47:44.900113+09:00 wslsrv slapd[864]: conn=1033 op=801 SEARCH RESULT tag=101 err=0 qtime=0.000029 etime=0.000187 nentries=3 text=
+2026-11-06T16:47:44.900294+09:00 wslsrv slapd[864]: conn=1033 op=802 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:47:44.900376+09:00 wslsrv slapd[864]: conn=1033 op=802 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:47:44.900443+09:00 wslsrv slapd[864]: conn=1033 op=802 SEARCH RESULT tag=101 err=0 qtime=0.000028 etime=0.000201 nentries=1 text=
+2026-11-06T16:47:44.900593+09:00 wslsrv slapd[864]: conn=1033 op=803 ABANDON msg=803
+2026-11-06T16:48:12.514524+09:00 wslsrv kernel: weston[29296]: segfault at 218 ip 00007cccd7f32ffb sp 00007ffef4452680 error 4 in rdp-backend.so[1cffb,7cccd7f1c000+18000] likely on CPU 2 (core 1, socket 0)
+2026-11-06T16:48:12.514566+09:00 wslsrv kernel: Code: 00 00 48 8d 3d 59 71 00 00 e8 b1 94 fe ff 90 41 55 41 54 49 89 d4 55 48 89 f5 53 48 89 fb 48 83 ec 08 48 8b 07 bf ba 00 00 00 <44> 8b a8 18 02 00 00 31 c0 e8 57 90 fe ff 41 39 c5 75 2d 48 8b 7b
+2026-11-06T16:48:12.514569+09:00 wslsrv kernel: weston: weston: potentially unexpected fatal signal 11.
+2026-11-06T16:48:12.514570+09:00 wslsrv kernel: CPU: 2 UID: 1000 PID: 29296 Comm: weston Tainted: G        W           6.18.35.2-WSL-ZFS-2.4.3-Integrated+ #6 PREEMPT(none) 
+2026-11-06T16:48:12.514571+09:00 wslsrv kernel: Tainted: [W]=WARN
+2026-11-06T16:48:12.514571+09:00 wslsrv kernel: RIP: 0033:0x7cccd7f32ffb
+2026-11-06T16:48:12.514572+09:00 wslsrv kernel: Code: 00 00 48 8d 3d 59 71 00 00 e8 b1 94 fe ff 90 41 55 41 54 49 89 d4 55 48 89 f5 53 48 89 fb 48 83 ec 08 48 8b 07 bf ba 00 00 00 <44> 8b a8 18 02 00 00 31 c0 e8 57 90 fe ff 41 39 c5 75 2d 48 8b 7b
+2026-11-06T16:48:12.514573+09:00 wslsrv kernel: RSP: 002b:00007ffef4452680 EFLAGS: 00010202
+2026-11-06T16:48:12.514573+09:00 wslsrv kernel: RAX: 0000000000000000 RBX: 00005b71073e45d0 RCX: 00007cccdb98aa2d
+2026-11-06T16:48:12.514574+09:00 wslsrv kernel: RDX: 0000000000000000 RSI: 00007cccd7f2b580 RDI: 00000000000000ba
+2026-11-06T16:48:12.514574+09:00 wslsrv kernel: RBP: 00007cccd7f2b580 R08: 0000000000000003 R09: 00005b71073e4020
+2026-11-06T16:48:12.514575+09:00 wslsrv kernel: R10: 0000000000000004 R11: 0000000000000246 R12: 0000000000000000
+2026-11-06T16:48:12.514575+09:00 wslsrv kernel: R13: 0000000000000000 R14: 00005b71073e45d0 R15: 00005b71073e4a50
+2026-11-06T16:48:12.514576+09:00 wslsrv kernel: FS:  00007cccd8444d80 GS:  0000000000000000
+2026-11-06T16:48:36.368750+09:00 wslsrv systemd[1]: Starting m00nny-mounts.service - m00nny sandbox mounts, idmapped for the handbook's user...
+2026-11-06T16:48:36.369529+09:00 wslsrv systemd[1]: Starting m00nny-vault-mounts.service - m00nny vault mounts, idmapped for the vault's user...
+2026-11-06T16:48:36.432582+09:00 wslsrv slapd[864]: conn=1030 op=1137 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=testuser01))"
+2026-11-06T16:48:36.432711+09:00 wslsrv slapd[864]: conn=1030 op=1137 SRCH attr=uidNumber cn gecos uid objectClass homeDirectory gidNumber loginShell
+2026-11-06T16:48:36.432790+09:00 wslsrv slapd[864]: conn=1030 op=1137 SEARCH RESULT tag=101 err=0 qtime=0.000025 etime=0.000182 nentries=0 text=
+2026-11-06T16:48:36.433546+09:00 wslsrv refhandbook[893761]: skipped testuser01: no such account
+2026-11-06T16:48:36.438264+09:00 wslsrv systemd[1]: m00nny-vault-mounts.service: Deactivated successfully.
+2026-11-06T16:48:36.438617+09:00 wslsrv systemd[1]: Finished m00nny-vault-mounts.service - m00nny vault mounts, idmapped for the vault's user.
+2026-11-06T16:48:36.441965+09:00 wslsrv systemd[1]: m00nny-mounts.service: Deactivated successfully.
+2026-11-06T16:48:36.442238+09:00 wslsrv systemd[1]: Finished m00nny-mounts.service - m00nny sandbox mounts, idmapped for the handbook's user.
+2026-11-06T16:48:38.987235+09:00 wslsrv slapd[864]: conn=3626 fd=34 ACCEPT from IP=172.16.200.101:33858 (IP=0.0.0.0:389)
+2026-11-06T16:48:38.987337+09:00 wslsrv slapd[864]: conn=3626 op=0 SRCH base="ou=NFSv4Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=NFSv4RemotePerson)(uidNumber=10001))"
+2026-11-06T16:48:38.987393+09:00 wslsrv slapd[864]: conn=3626 op=0 SRCH attr=NFSv4Name
+2026-11-06T16:48:38.987458+09:00 wslsrv slapd[864]: conn=3626 op=0 SEARCH RESULT tag=101 err=0 qtime=0.000019 etime=0.000261 nentries=1 text=
+2026-11-06T16:48:38.987531+09:00 wslsrv slapd[864]: conn=3626 op=1 UNBIND
+2026-11-06T16:48:38.987586+09:00 wslsrv slapd[864]: conn=3626 fd=34 closed
+2026-11-06T16:48:38.987646+09:00 wslsrv slapd[864]: conn=3627 fd=36 ACCEPT from IP=172.16.200.101:33866 (IP=0.0.0.0:389)
+2026-11-06T16:48:38.987715+09:00 wslsrv slapd[864]: conn=3627 op=0 SRCH base="ou=NFSv4Groups,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=NFSv4RemoteGroup)(gidNumber=10001))"
+2026-11-06T16:48:38.987770+09:00 wslsrv slapd[864]: conn=3627 op=0 SRCH attr=NFSv4Name
+2026-11-06T16:48:38.987879+09:00 wslsrv slapd[864]: conn=3627 op=0 SEARCH RESULT tag=101 err=0 qtime=0.000023 etime=0.000260 nentries=1 text=
+2026-11-06T16:48:38.987980+09:00 wslsrv slapd[864]: conn=3627 op=1 UNBIND
+2026-11-06T16:48:38.988036+09:00 wslsrv slapd[864]: conn=3627 fd=36 closed
+2026-11-06T16:49:24.386676+09:00 wslsrv slapd[864]: conn=3628 fd=34 ACCEPT from IP=3.130.168.2:60636 (IP=0.0.0.0:636)
+2026-11-06T16:49:24.387095+09:00 wslsrv slapd[864]: conn=3628 fd=34 closed (TLS negotiation failure)
+2026-11-06T16:49:46.254805+09:00 wslsrv systemd[1]: Starting m00nny-mounts.service - m00nny sandbox mounts, idmapped for the handbook's user...
+2026-11-06T16:49:46.255685+09:00 wslsrv systemd[1]: Starting m00nny-vault-mounts.service - m00nny vault mounts, idmapped for the vault's user...
+2026-11-06T16:49:46.332919+09:00 wslsrv slapd[864]: conn=1030 op=1138 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=testuser01))"
+2026-11-06T16:49:46.333016+09:00 wslsrv slapd[864]: conn=1030 op=1138 SRCH attr=uidNumber cn gecos uid objectClass homeDirectory gidNumber loginShell
+2026-11-06T16:49:46.333075+09:00 wslsrv slapd[864]: conn=1030 op=1138 SEARCH RESULT tag=101 err=0 qtime=0.000028 etime=0.000213 nentries=0 text=
+2026-11-06T16:49:46.334008+09:00 wslsrv refhandbook[894037]: skipped testuser01: no such account
+2026-11-06T16:49:46.338754+09:00 wslsrv systemd[1]: m00nny-vault-mounts.service: Deactivated successfully.
+2026-11-06T16:49:46.339076+09:00 wslsrv systemd[1]: Finished m00nny-vault-mounts.service - m00nny vault mounts, idmapped for the vault's user.
+2026-11-06T16:49:46.342475+09:00 wslsrv systemd[1]: m00nny-mounts.service: Deactivated successfully.
+2026-11-06T16:49:46.342829+09:00 wslsrv systemd[1]: Finished m00nny-mounts.service - m00nny sandbox mounts, idmapped for the handbook's user.
+2026-11-06T16:49:55.830528+09:00 wslsrv kernel: weston[30514]: segfault at 218 ip 00007453c0554ffb sp 00007ffc5b9dcb30 error 4 in rdp-backend.so[1cffb,7453c053e000+18000] likely on CPU 12 (core 6, socket 0)
+2026-11-06T16:49:55.830571+09:00 wslsrv kernel: Code: 00 00 48 8d 3d 59 71 00 00 e8 b1 94 fe ff 90 41 55 41 54 49 89 d4 55 48 89 f5 53 48 89 fb 48 83 ec 08 48 8b 07 bf ba 00 00 00 <44> 8b a8 18 02 00 00 31 c0 e8 57 90 fe ff 41 39 c5 75 2d 48 8b 7b
+2026-11-06T16:49:55.830574+09:00 wslsrv kernel: weston: weston: potentially unexpected fatal signal 11.
+2026-11-06T16:49:55.830576+09:00 wslsrv kernel: CPU: 12 UID: 1000 PID: 30514 Comm: weston Tainted: G        W           6.18.35.2-WSL-ZFS-2.4.3-Integrated+ #6 PREEMPT(none) 
+2026-11-06T16:49:55.830576+09:00 wslsrv kernel: Tainted: [W]=WARN
+2026-11-06T16:49:55.830577+09:00 wslsrv kernel: RIP: 0033:0x7453c0554ffb
+2026-11-06T16:49:55.830577+09:00 wslsrv kernel: Code: 00 00 48 8d 3d 59 71 00 00 e8 b1 94 fe ff 90 41 55 41 54 49 89 d4 55 48 89 f5 53 48 89 fb 48 83 ec 08 48 8b 07 bf ba 00 00 00 <44> 8b a8 18 02 00 00 31 c0 e8 57 90 fe ff 41 39 c5 75 2d 48 8b 7b
+2026-11-06T16:49:55.830578+09:00 wslsrv kernel: RSP: 002b:00007ffc5b9dcb30 EFLAGS: 00010206
+2026-11-06T16:49:55.830578+09:00 wslsrv kernel: RAX: 0000000000000000 RBX: 000063d4f24705d0 RCX: 00007453c3faca2d
+2026-11-06T16:49:55.830579+09:00 wslsrv kernel: RDX: 0000000000000000 RSI: 00007453c054d580 RDI: 00000000000000ba
+2026-11-06T16:49:55.830580+09:00 wslsrv kernel: RBP: 00007453c054d580 R08: 0000000000000003 R09: 000063d4f2470020
+2026-11-06T16:49:55.830580+09:00 wslsrv kernel: R10: 0000000000000004 R11: 0000000000000246 R12: 0000000000000000
+2026-11-06T16:49:55.830581+09:00 wslsrv kernel: R13: 0000000000000000 R14: 000063d4f24705d0 R15: 000063d4f2470a50
+2026-11-06T16:49:55.830581+09:00 wslsrv kernel: FS:  00007453c0a66d80 GS:  0000000000000000
+2026-11-06T16:49:57.336230+09:00 wslsrv slapd[864]: conn=3629 fd=34 ACCEPT from IP=3.130.168.2:51440 (IP=0.0.0.0:636)
+2026-11-06T16:49:57.351858+09:00 wslsrv slapd[864]: conn=3629 fd=34 closed (TLS negotiation failure)
+2026-11-06T16:50:00.486502+09:00 wslsrv slapd[864]: conn=1030 op=1139 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:50:00.486619+09:00 wslsrv slapd[864]: conn=1030 op=1139 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:50:00.486675+09:00 wslsrv slapd[864]: conn=1030 op=1139 SEARCH RESULT tag=101 err=0 qtime=0.000027 etime=0.000230 nentries=1 text=
+2026-11-06T16:50:00.487165+09:00 wslsrv slapd[864]: conn=1033 op=804 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=moonjunyyy))"
+2026-11-06T16:50:00.487238+09:00 wslsrv slapd[864]: conn=1033 op=804 SRCH attr=uid uidNumber
+2026-11-06T16:50:00.487312+09:00 wslsrv slapd[864]: conn=1033 op=804 SEARCH RESULT tag=101 err=0 qtime=0.000021 etime=0.000136 nentries=1 text=
+2026-11-06T16:50:00.487457+09:00 wslsrv slapd[864]: conn=1033 op=805 SRCH base="dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixGroup)(memberUid=moonjunyyy))"
+2026-11-06T16:50:00.487524+09:00 wslsrv slapd[864]: conn=1033 op=805 SRCH attr=dn
+2026-11-06T16:50:00.487579+09:00 wslsrv slapd[864]: conn=1033 op=805 SEARCH RESULT tag=101 err=0 qtime=0.000027 etime=0.000198 nentries=3 text=
+2026-11-06T16:50:00.487770+09:00 wslsrv slapd[864]: conn=1033 op=806 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:50:00.487830+09:00 wslsrv slapd[864]: conn=1033 op=806 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:50:00.487862+09:00 wslsrv slapd[864]: conn=1033 op=806 SEARCH RESULT tag=101 err=0 qtime=0.000025 etime=0.000171 nentries=1 text=
+2026-11-06T16:50:00.488052+09:00 wslsrv slapd[864]: conn=1033 op=807 ABANDON msg=807
+2026-11-06T16:50:18.652080+09:00 wslsrv zed: eid=643 class=config_sync pool='mainpool'
+2026-11-06T16:50:41.664787+09:00 wslsrv slapd[864]: conn=1033 op=808 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:50:41.664976+09:00 wslsrv slapd[864]: conn=1033 op=808 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:50:41.665112+09:00 wslsrv slapd[864]: conn=1033 op=808 SEARCH RESULT tag=101 err=0 qtime=0.000030 etime=0.000243 nentries=1 text=
+2026-11-06T16:50:41.665455+09:00 wslsrv slapd[864]: conn=1033 op=809 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=moonjunyyy))"
+2026-11-06T16:50:41.665541+09:00 wslsrv slapd[864]: conn=1033 op=809 SRCH attr=uid uidNumber
+2026-11-06T16:50:41.665610+09:00 wslsrv slapd[864]: conn=1033 op=809 SEARCH RESULT tag=101 err=0 qtime=0.000025 etime=0.000161 nentries=1 text=
+2026-11-06T16:50:41.665768+09:00 wslsrv slapd[864]: conn=1033 op=810 SRCH base="dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixGroup)(memberUid=moonjunyyy))"
+2026-11-06T16:50:41.665833+09:00 wslsrv slapd[864]: conn=1033 op=810 SRCH attr=dn
+2026-11-06T16:50:41.665900+09:00 wslsrv slapd[864]: conn=1033 op=810 SEARCH RESULT tag=101 err=0 qtime=0.000028 etime=0.000225 nentries=3 text=
+2026-11-06T16:50:41.666057+09:00 wslsrv slapd[864]: conn=1033 op=811 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:50:41.666128+09:00 wslsrv slapd[864]: conn=1033 op=811 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:50:41.666203+09:00 wslsrv slapd[864]: conn=1033 op=811 SEARCH RESULT tag=101 err=0 qtime=0.000023 etime=0.000149 nentries=1 text=
+2026-11-06T16:50:41.666302+09:00 wslsrv slapd[864]: conn=1033 op=812 ABANDON msg=812
+2026-11-06T16:50:44.312486+09:00 wslsrv slapd[864]: conn=1036 op=1154 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:50:44.312586+09:00 wslsrv slapd[864]: conn=1036 op=1154 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:50:44.312649+09:00 wslsrv slapd[864]: conn=1036 op=1154 SEARCH RESULT tag=101 err=0 qtime=0.000023 etime=0.000194 nentries=1 text=
+2026-11-06T16:50:44.313046+09:00 wslsrv slapd[864]: conn=1036 op=1155 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=moonjunyyy))"
+2026-11-06T16:50:44.313114+09:00 wslsrv slapd[864]: conn=1036 op=1155 SRCH attr=uid uidNumber
+2026-11-06T16:50:44.313173+09:00 wslsrv slapd[864]: conn=1036 op=1155 SEARCH RESULT tag=101 err=0 qtime=0.000021 etime=0.000144 nentries=1 text=
+2026-11-06T16:50:44.313322+09:00 wslsrv slapd[864]: conn=1036 op=1156 SRCH base="dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixGroup)(memberUid=moonjunyyy))"
+2026-11-06T16:50:44.313379+09:00 wslsrv slapd[864]: conn=1036 op=1156 SRCH attr=dn
+2026-11-06T16:50:44.313440+09:00 wslsrv slapd[864]: conn=1036 op=1156 SEARCH RESULT tag=101 err=0 qtime=0.000021 etime=0.000165 nentries=3 text=
+2026-11-06T16:50:44.313617+09:00 wslsrv slapd[864]: conn=1036 op=1157 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:50:44.313678+09:00 wslsrv slapd[864]: conn=1036 op=1157 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:50:44.313733+09:00 wslsrv slapd[864]: conn=1036 op=1157 SEARCH RESULT tag=101 err=0 qtime=0.000027 etime=0.000150 nentries=1 text=
+2026-11-06T16:50:44.313879+09:00 wslsrv slapd[864]: conn=1036 op=1158 ABANDON msg=1158
+2026-11-06T16:50:44.339189+09:00 wslsrv slapd[864]: conn=1036 op=1159 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:50:44.339305+09:00 wslsrv slapd[864]: conn=1036 op=1159 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:50:44.339377+09:00 wslsrv slapd[864]: conn=1036 op=1159 SEARCH RESULT tag=101 err=0 qtime=0.000026 etime=0.000173 nentries=1 text=
+2026-11-06T16:50:44.340064+09:00 wslsrv slapd[864]: conn=1033 op=813 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=moonjunyyy))"
+2026-11-06T16:50:44.340140+09:00 wslsrv slapd[864]: conn=1033 op=813 SRCH attr=uid uidNumber
+2026-11-06T16:50:44.340271+09:00 wslsrv slapd[864]: conn=1033 op=813 SEARCH RESULT tag=101 err=0 qtime=0.000033 etime=0.000255 nentries=1 text=
+2026-11-06T16:50:44.340374+09:00 wslsrv slapd[864]: conn=1033 op=814 SRCH base="dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixGroup)(memberUid=moonjunyyy))"
+2026-11-06T16:50:44.340457+09:00 wslsrv slapd[864]: conn=1033 op=814 SRCH attr=dn
+2026-11-06T16:50:44.340534+09:00 wslsrv slapd[864]: conn=1033 op=814 SEARCH RESULT tag=101 err=0 qtime=0.000024 etime=0.000156 nentries=3 text=
+2026-11-06T16:50:44.340705+09:00 wslsrv slapd[864]: conn=1033 op=815 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:50:44.340778+09:00 wslsrv slapd[864]: conn=1033 op=815 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:50:44.340848+09:00 wslsrv slapd[864]: conn=1033 op=815 SEARCH RESULT tag=101 err=0 qtime=0.000031 etime=0.000196 nentries=1 text=
+2026-11-06T16:50:44.341010+09:00 wslsrv slapd[864]: conn=1033 op=816 ABANDON msg=816
+2026-11-06T16:50:47.765069+09:00 wslsrv slapd[864]: conn=1036 op=1160 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:50:47.765186+09:00 wslsrv slapd[864]: conn=1036 op=1160 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:50:47.765246+09:00 wslsrv slapd[864]: conn=1036 op=1160 SEARCH RESULT tag=101 err=0 qtime=0.000032 etime=0.000205 nentries=1 text=
+2026-11-06T16:50:47.765598+09:00 wslsrv systemd[1]: Starting m00nny-mounts.service - m00nny sandbox mounts, idmapped for the handbook's user...
+2026-11-06T16:50:47.765751+09:00 wslsrv slapd[864]: conn=1036 op=1161 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=moonjunyyy))"
+2026-11-06T16:50:47.765831+09:00 wslsrv slapd[864]: conn=1036 op=1161 SRCH attr=uid uidNumber
+2026-11-06T16:50:47.765896+09:00 wslsrv slapd[864]: conn=1036 op=1161 SEARCH RESULT tag=101 err=0 qtime=0.000021 etime=0.000123 nentries=1 text=
+2026-11-06T16:50:47.765994+09:00 wslsrv slapd[864]: conn=1036 op=1162 SRCH base="dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixGroup)(memberUid=moonjunyyy))"
+2026-11-06T16:50:47.766062+09:00 wslsrv slapd[864]: conn=1036 op=1162 SRCH attr=dn
+2026-11-06T16:50:47.766137+09:00 wslsrv slapd[864]: conn=1036 op=1162 SEARCH RESULT tag=101 err=0 qtime=0.000021 etime=0.000138 nentries=3 text=
+2026-11-06T16:50:47.766213+09:00 wslsrv slapd[864]: conn=1036 op=1163 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:50:47.766277+09:00 wslsrv slapd[864]: conn=1036 op=1163 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:50:47.766312+09:00 wslsrv slapd[864]: conn=1036 op=1163 SEARCH RESULT tag=101 err=0 qtime=0.000026 etime=0.000148 nentries=1 text=
+2026-11-06T16:50:47.766517+09:00 wslsrv systemd[1]: Starting m00nny-vault-mounts.service - m00nny vault mounts, idmapped for the vault's user...
+2026-11-06T16:50:47.766610+09:00 wslsrv slapd[864]: conn=1036 op=1164 ABANDON msg=1164
+2026-11-06T16:50:47.772263+09:00 wslsrv systemd[1]: Reload requested from client PID 894440 ('systemctl') (unit user@10001.service)...
+2026-11-06T16:50:47.772353+09:00 wslsrv systemd[1]: Reloading...
+2026-11-06T16:50:47.866497+09:00 wslsrv kernel: systemd-sysv-generator[894515]: SysV service '/etc/init.d/gdm3' lacks a native systemd unit file, automatically generating a unit file for compatibility.
+2026-11-06T16:50:47.866536+09:00 wslsrv kernel: systemd-sysv-generator[894515]: Please update package to include a native systemd unit file.
+2026-11-06T16:50:47.866539+09:00 wslsrv kernel: systemd-sysv-generator[894515]: ! This compatibility logic is deprecated, expect removal soon. !
+2026-11-06T16:50:47.870485+09:00 wslsrv kernel: systemd-sysv-generator[894515]: SysV service '/etc/init.d/lightdm' lacks a native systemd unit file, automatically generating a unit file for compatibility.
+2026-11-06T16:50:47.870514+09:00 wslsrv kernel: systemd-sysv-generator[894515]: Please update package to include a native systemd unit file.
+2026-11-06T16:50:47.870517+09:00 wslsrv kernel: systemd-sysv-generator[894515]: ! This compatibility logic is deprecated, expect removal soon. !
+2026-11-06T16:50:47.980579+09:00 wslsrv systemd[1]: /usr/lib/systemd/system/saslauthd.service:8: PIDFile= references a path below legacy directory /var/run/, updating /var/run/saslauthd/saslauthd.pid → /run/saslauthd/saslauthd.pid; please update the unit file accordingly.
+2026-11-06T16:50:48.057382+09:00 wslsrv systemd[1]: Reloading finished in 284 ms.
+2026-11-06T16:50:48.120826+09:00 wslsrv systemd[1]: m00nny-vault-mounts.service: Deactivated successfully.
+2026-11-06T16:50:48.121080+09:00 wslsrv systemd[1]: Finished m00nny-vault-mounts.service - m00nny vault mounts, idmapped for the vault's user.
+2026-11-06T16:50:48.127241+09:00 wslsrv slapd[864]: conn=1036 op=1165 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=testuser01))"
+2026-11-06T16:50:48.127321+09:00 wslsrv slapd[864]: conn=1036 op=1165 SRCH attr=uidNumber cn gecos uid objectClass homeDirectory gidNumber loginShell
+2026-11-06T16:50:48.127378+09:00 wslsrv slapd[864]: conn=1036 op=1165 SEARCH RESULT tag=101 err=0 qtime=0.000031 etime=0.000182 nentries=0 text=
+2026-11-06T16:50:48.128617+09:00 wslsrv refhandbook[894437]: skipped testuser01: no such account
+2026-11-06T16:50:48.137419+09:00 wslsrv systemd[1]: m00nny-mounts.service: Deactivated successfully.
+2026-11-06T16:50:48.137720+09:00 wslsrv systemd[1]: Finished m00nny-mounts.service - m00nny sandbox mounts, idmapped for the handbook's user.
+2026-11-06T16:50:48.144073+09:00 wslsrv slapd[864]: conn=1030 op=1140 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:50:48.144171+09:00 wslsrv slapd[864]: conn=1030 op=1140 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:50:48.144229+09:00 wslsrv slapd[864]: conn=1030 op=1140 SEARCH RESULT tag=101 err=0 qtime=0.000030 etime=0.000217 nentries=1 text=
+2026-11-06T16:50:48.145011+09:00 wslsrv slapd[864]: conn=1030 op=1141 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=moonjunyyy))"
+2026-11-06T16:50:48.145094+09:00 wslsrv slapd[864]: conn=1030 op=1141 SRCH attr=uid uidNumber
+2026-11-06T16:50:48.145162+09:00 wslsrv slapd[864]: conn=1030 op=1141 SEARCH RESULT tag=101 err=0 qtime=0.000025 etime=0.000195 nentries=1 text=
+2026-11-06T16:50:48.145303+09:00 wslsrv slapd[864]: conn=1030 op=1142 SRCH base="dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixGroup)(memberUid=moonjunyyy))"
+2026-11-06T16:50:48.145374+09:00 wslsrv slapd[864]: conn=1030 op=1142 SRCH attr=dn
+2026-11-06T16:50:48.145523+09:00 wslsrv slapd[864]: conn=1030 op=1142 SEARCH RESULT tag=101 err=0 qtime=0.000026 etime=0.000253 nentries=3 text=
+2026-11-06T16:50:48.145590+09:00 wslsrv slapd[864]: conn=1030 op=1143 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:50:48.145660+09:00 wslsrv slapd[864]: conn=1030 op=1143 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:50:48.145729+09:00 wslsrv slapd[864]: conn=1030 op=1143 SEARCH RESULT tag=101 err=0 qtime=0.000038 etime=0.000149 nentries=1 text=
+2026-11-06T16:50:48.145793+09:00 wslsrv slapd[864]: conn=1030 op=1144 ABANDON msg=1144
+2026-11-06T16:50:56.516572+09:00 wslsrv slapd[864]: conn=1036 op=1166 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:50:56.516676+09:00 wslsrv slapd[864]: conn=1036 op=1166 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:50:56.516733+09:00 wslsrv slapd[864]: conn=1036 op=1166 SEARCH RESULT tag=101 err=0 qtime=0.000024 etime=0.000206 nentries=1 text=
+2026-11-06T16:50:56.517166+09:00 wslsrv slapd[864]: conn=1032 op=977 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=moonjunyyy))"
+2026-11-06T16:50:56.517243+09:00 wslsrv slapd[864]: conn=1032 op=977 SRCH attr=uid uidNumber
+2026-11-06T16:50:56.517314+09:00 wslsrv slapd[864]: conn=1032 op=977 SEARCH RESULT tag=101 err=0 qtime=0.000028 etime=0.000144 nentries=1 text=
+2026-11-06T16:50:56.517453+09:00 wslsrv slapd[864]: conn=1032 op=978 SRCH base="dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixGroup)(memberUid=moonjunyyy))"
+2026-11-06T16:50:56.517521+09:00 wslsrv slapd[864]: conn=1032 op=978 SRCH attr=dn
+2026-11-06T16:50:56.517584+09:00 wslsrv slapd[864]: conn=1032 op=978 SEARCH RESULT tag=101 err=0 qtime=0.000028 etime=0.000199 nentries=3 text=
+2026-11-06T16:50:56.517748+09:00 wslsrv slapd[864]: conn=1032 op=979 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:50:56.517816+09:00 wslsrv slapd[864]: conn=1032 op=979 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:50:56.517895+09:00 wslsrv slapd[864]: conn=1032 op=979 SEARCH RESULT tag=101 err=0 qtime=0.000025 etime=0.000166 nentries=1 text=
+2026-11-06T16:50:56.518041+09:00 wslsrv slapd[864]: conn=1032 op=980 ABANDON msg=980
+2026-11-06T16:50:56.525175+09:00 wslsrv systemd[1]: zfs-share.service: Deactivated successfully.
+2026-11-06T16:50:56.525273+09:00 wslsrv systemd[1]: Stopped zfs-share.service - ZFS file system shares.
+2026-11-06T16:50:56.525352+09:00 wslsrv systemd[1]: Stopping zfs-share.service - ZFS file system shares...
+2026-11-06T16:50:56.525544+09:00 wslsrv systemd[1]: Stopping smbd.service - Samba SMB Daemon...
+2026-11-06T16:50:56.527052+09:00 wslsrv systemd[1]: smbd.service: Deactivated successfully.
+2026-11-06T16:50:56.527329+09:00 wslsrv systemd[1]: Stopped smbd.service - Samba SMB Daemon.
+2026-11-06T16:50:56.528959+09:00 wslsrv systemd[1]: Starting smbd.service - Samba SMB Daemon...
+2026-11-06T16:50:56.625976+09:00 wslsrv systemd[1]: Started smbd.service - Samba SMB Daemon.
+2026-11-06T16:50:56.628810+09:00 wslsrv systemd[1]: Starting zfs-share.service - ZFS file system shares...
+2026-11-06T16:50:56.639044+09:00 wslsrv systemd[1]: Finished zfs-share.service - ZFS file system shares.
+2026-11-06T16:50:56.651726+09:00 wslsrv slapd[864]: conn=1032 op=981 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:50:56.651822+09:00 wslsrv slapd[864]: conn=1032 op=981 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:50:56.651884+09:00 wslsrv slapd[864]: conn=1032 op=981 SEARCH RESULT tag=101 err=0 qtime=0.000036 etime=0.000249 nentries=1 text=
+2026-11-06T16:50:56.652616+09:00 wslsrv slapd[864]: conn=1031 op=949 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=moonjunyyy))"
+2026-11-06T16:50:56.652698+09:00 wslsrv slapd[864]: conn=1031 op=949 SRCH attr=uid uidNumber
+2026-11-06T16:50:56.652753+09:00 wslsrv slapd[864]: conn=1031 op=949 SEARCH RESULT tag=101 err=0 qtime=0.000026 etime=0.000170 nentries=1 text=
+2026-11-06T16:50:56.652930+09:00 wslsrv slapd[864]: conn=1031 op=950 SRCH base="dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixGroup)(memberUid=moonjunyyy))"
+2026-11-06T16:50:56.652998+09:00 wslsrv slapd[864]: conn=1031 op=950 SRCH attr=dn
+2026-11-06T16:50:56.653062+09:00 wslsrv slapd[864]: conn=1031 op=950 SEARCH RESULT tag=101 err=0 qtime=0.000023 etime=0.000204 nentries=3 text=
+2026-11-06T16:50:56.653241+09:00 wslsrv slapd[864]: conn=1031 op=951 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:50:56.653307+09:00 wslsrv slapd[864]: conn=1031 op=951 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:50:56.653374+09:00 wslsrv slapd[864]: conn=1031 op=951 SEARCH RESULT tag=101 err=0 qtime=0.000022 etime=0.000172 nentries=1 text=
+2026-11-06T16:50:56.653528+09:00 wslsrv slapd[864]: conn=1031 op=952 ABANDON msg=952
+2026-11-06T16:51:07.028712+09:00 wslsrv slapd[864]: conn=3630 fd=34 ACCEPT from IP=172.16.0.192:64391 (IP=0.0.0.0:636)
+2026-11-06T16:51:07.028887+09:00 wslsrv slapd[864]: conn=3630 fd=34 closed (TLS negotiation failure)
+2026-11-06T16:51:07.042842+09:00 wslsrv slapd[864]: conn=3631 fd=34 ACCEPT from IP=172.16.0.192:64392 (IP=0.0.0.0:636)
+2026-11-06T16:51:07.059302+09:00 wslsrv slapd[864]: conn=3631 fd=34 TLS established tls_ssf=256 ssf=256 tls_proto=TLSv1.2 tls_cipher=ECDHE-RSA-AES256-GCM-SHA384
+2026-11-06T16:51:07.062841+09:00 wslsrv slapd[864]: conn=3631 op=0 SRCH base="" scope=0 deref=0 filter="(objectClass=*)"
+2026-11-06T16:51:07.062923+09:00 wslsrv slapd[864]: conn=3631 op=0 SRCH attr=supportedSASLMechanisms defaultNamingContext namingContexts schemaNamingContext saslRealm
+2026-11-06T16:51:07.063008+09:00 wslsrv slapd[864]: conn=3631 op=0 SEARCH RESULT tag=101 err=0 qtime=0.000028 etime=0.000165 nentries=1 text=
+2026-11-06T16:51:07.074359+09:00 wslsrv slapd[864]: conn=3631 op=1 BIND dn="" method=163
+2026-11-06T16:51:07.074794+09:00 wslsrv slapd[864]: conn=3631 op=1 RESULT tag=97 err=14 qtime=0.000036 etime=0.000512 text=SASL(0): successful result: 
+2026-11-06T16:51:07.079497+09:00 wslsrv slapd[864]: conn=3631 op=2 BIND dn="" method=163
+2026-11-06T16:51:07.079575+09:00 wslsrv slapd[864]: conn=3631 op=2 RESULT tag=97 err=14 qtime=0.000034 etime=0.000103 text=SASL(0): successful result: 
+2026-11-06T16:51:07.082557+09:00 wslsrv slapd[864]: conn=3631 op=3 BIND dn="" method=163
+2026-11-06T16:51:07.082816+09:00 wslsrv slapd[864]: conn=3631 op=3 BIND authcid="moonjunyyy@M00NNY.KR" authzid="moonjunyyy@M00NNY.KR"
+2026-11-06T16:51:07.082915+09:00 wslsrv slapd[864]: conn=3631 op=3 BIND dn="uid=moonjunyyy,ou=users,dc=m00nny,dc=kr" mech=GSSAPI bind_ssf=0 ssf=256
+2026-11-06T16:51:07.082993+09:00 wslsrv slapd[864]: conn=3631 op=3 RESULT tag=97 err=0 qtime=0.000080 etime=0.000423 text=
+2026-11-06T16:51:07.087069+09:00 wslsrv slapd[864]: conn=3631 op=4 SRCH base="dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=inetOrgPerson)(objectClass=shadowAccount))(uid=moonjunyyy@\5Csamba.m00nny.kr))"
+2026-11-06T16:51:07.087151+09:00 wslsrv slapd[864]: conn=3631 op=4 SRCH attr=uid homeDirectory 1.1 1.1 cn description loginShell 1.1 LinkedIdentity IsHidden 1.1 gidNumber uidNumber
+2026-11-06T16:51:07.087218+09:00 wslsrv slapd[864]: conn=3631 op=4 SEARCH RESULT tag=101 err=0 qtime=0.000033 etime=0.000178 nentries=0 text=
+2026-11-06T16:51:21.015843+09:00 wslsrv slapd[864]: conn=3631 op=5 SRCH base="automountMapName=auto_master,dc=m00nny,dc=kr" scope=2 deref=0 filter="(|(objectClass=automount))"
+2026-11-06T16:51:21.016325+09:00 wslsrv slapd[864]: conn=3631 op=5 SRCH attr=automountKey automountInformation
+2026-11-06T16:51:21.016398+09:00 wslsrv slapd[864]: conn=3631 op=5 SEARCH RESULT tag=101 err=32 qtime=0.000032 etime=0.000247 nentries=0 text=
+2026-11-06T16:51:21.020493+09:00 wslsrv slapd[864]: conn=3631 op=6 SRCH base="dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(?objectClass=mount))(cn=*))"
+2026-11-06T16:51:21.020577+09:00 wslsrv slapd[864]: conn=3631 op=6 SRCH attr=mountDirectory mountType mountOption mountPassNo mountDumpFrequency cn
+2026-11-06T16:51:21.020655+09:00 wslsrv slapd[864]: conn=3631 op=6 SEARCH RESULT tag=101 err=0 qtime=0.000030 etime=0.000182 nentries=0 text=
+2026-11-06T16:51:26.522142+09:00 wslsrv smbd[894854]: [2026/11/06 16:51:26.521643,  0] source3/smbd/smb2_service.c:117(chdir_current_service)
+2026-11-06T16:51:26.522350+09:00 wslsrv smbd[894854]:   chdir_current_service: vfs_ChDir(/data/tmp) failed: Permission denied. Current token: uid=10001, gid=10001, 3 groups: 10001 20000 10000
+2026-11-06T16:51:39.178529+09:00 wslsrv kernel: weston[30962]: segfault at 218 ip 00007d3c0a2b3ffb sp 00007fffe6cef210 error 4 in rdp-backend.so[1cffb,7d3c0a29d000+18000] likely on CPU 28 (core 14, socket 0)
+2026-11-06T16:51:39.178568+09:00 wslsrv kernel: Code: 00 00 48 8d 3d 59 71 00 00 e8 b1 94 fe ff 90 41 55 41 54 49 89 d4 55 48 89 f5 53 48 89 fb 48 83 ec 08 48 8b 07 bf ba 00 00 00 <44> 8b a8 18 02 00 00 31 c0 e8 57 90 fe ff 41 39 c5 75 2d 48 8b 7b
+2026-11-06T16:51:39.178571+09:00 wslsrv kernel: weston: weston: potentially unexpected fatal signal 11.
+2026-11-06T16:51:39.178572+09:00 wslsrv kernel: CPU: 28 UID: 1000 PID: 30962 Comm: weston Tainted: G        W           6.18.35.2-WSL-ZFS-2.4.3-Integrated+ #6 PREEMPT(none) 
+2026-11-06T16:51:39.178573+09:00 wslsrv kernel: Tainted: [W]=WARN
+2026-11-06T16:51:39.178574+09:00 wslsrv kernel: RIP: 0033:0x7d3c0a2b3ffb
+2026-11-06T16:51:39.178574+09:00 wslsrv kernel: Code: 00 00 48 8d 3d 59 71 00 00 e8 b1 94 fe ff 90 41 55 41 54 49 89 d4 55 48 89 f5 53 48 89 fb 48 83 ec 08 48 8b 07 bf ba 00 00 00 <44> 8b a8 18 02 00 00 31 c0 e8 57 90 fe ff 41 39 c5 75 2d 48 8b 7b
+2026-11-06T16:51:39.178575+09:00 wslsrv kernel: RSP: 002b:00007fffe6cef210 EFLAGS: 00010202
+2026-11-06T16:51:39.178576+09:00 wslsrv kernel: RAX: 0000000000000000 RBX: 000063c16bb6b5d0 RCX: 00007d3c0dd0ba2d
+2026-11-06T16:51:39.178576+09:00 wslsrv kernel: RDX: 0000000000000000 RSI: 00007d3c0a2ac580 RDI: 00000000000000ba
+2026-11-06T16:51:39.178577+09:00 wslsrv kernel: RBP: 00007d3c0a2ac580 R08: 0000000000000003 R09: 000063c16bb6b020
+2026-11-06T16:51:39.178578+09:00 wslsrv kernel: R10: 0000000000000004 R11: 0000000000000246 R12: 0000000000000000
+2026-11-06T16:51:39.178578+09:00 wslsrv kernel: R13: 0000000000000000 R14: 000063c16bb6b5d0 R15: 000063c16bb6ba50
+2026-11-06T16:51:39.178579+09:00 wslsrv kernel: FS:  00007d3c0a7c5d80 GS:  0000000000000000
+2026-11-06T16:52:01.290119+09:00 wslsrv systemd[1]: Starting m00nny-mounts.service - m00nny sandbox mounts, idmapped for the handbook's user...
+2026-11-06T16:52:01.290713+09:00 wslsrv systemd[1]: Starting m00nny-vault-mounts.service - m00nny vault mounts, idmapped for the vault's user...
+2026-11-06T16:52:01.354229+09:00 wslsrv slapd[864]: conn=1031 op=953 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=testuser01))"
+2026-11-06T16:52:01.354386+09:00 wslsrv slapd[864]: conn=1031 op=953 SRCH attr=uidNumber cn gecos uid objectClass homeDirectory gidNumber loginShell
+2026-11-06T16:52:01.354468+09:00 wslsrv slapd[864]: conn=1031 op=953 SEARCH RESULT tag=101 err=0 qtime=0.000028 etime=0.000196 nentries=0 text=
+2026-11-06T16:52:01.355234+09:00 wslsrv refhandbook[895005]: skipped testuser01: no such account
+2026-11-06T16:52:01.359204+09:00 wslsrv systemd[1]: m00nny-vault-mounts.service: Deactivated successfully.
+2026-11-06T16:52:01.359552+09:00 wslsrv systemd[1]: Finished m00nny-vault-mounts.service - m00nny vault mounts, idmapped for the vault's user.
+2026-11-06T16:52:01.363246+09:00 wslsrv systemd[1]: m00nny-mounts.service: Deactivated successfully.
+2026-11-06T16:52:01.363577+09:00 wslsrv systemd[1]: Finished m00nny-mounts.service - m00nny sandbox mounts, idmapped for the handbook's user.
+2026-11-06T16:52:20.718410+09:00 wslsrv slapd[864]: conn=3632 fd=36 ACCEPT from IP=3.130.168.2:34058 (IP=0.0.0.0:636)
+2026-11-06T16:52:21.032039+09:00 wslsrv slapd[864]: conn=3631 op=7 UNBIND
+2026-11-06T16:52:21.032142+09:00 wslsrv slapd[864]: conn=3631 fd=34 closed
+2026-11-06T16:52:21.807078+09:00 wslsrv slapd[864]: conn=3632 fd=36 TLS established tls_ssf=256 ssf=256 tls_proto=TLSv1.3 tls_cipher=TLS_AES_256_GCM_SHA384
+2026-11-06T16:52:21.810420+09:00 wslsrv slapd[864]: conn=3632 fd=36 closed (connection lost)
+2026-11-06T16:52:25.462852+09:00 wslsrv slapd[864]: conn=1031 op=954 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:52:25.462956+09:00 wslsrv slapd[864]: conn=1031 op=954 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:52:25.463020+09:00 wslsrv slapd[864]: conn=1031 op=954 SEARCH RESULT tag=101 err=0 qtime=0.000028 etime=0.000238 nentries=1 text=
+2026-11-06T16:52:25.463579+09:00 wslsrv slapd[864]: conn=1031 op=955 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(|(objectClass=posixAccount)(objectClass=shadowAccount)(objectClass=inetOrgPerson))(uid=moonjunyyy))"
+2026-11-06T16:52:25.463645+09:00 wslsrv slapd[864]: conn=1031 op=955 SRCH attr=uid uidNumber
+2026-11-06T16:52:25.463700+09:00 wslsrv slapd[864]: conn=1031 op=955 SEARCH RESULT tag=101 err=0 qtime=0.000021 etime=0.000137 nentries=1 text=
+2026-11-06T16:52:25.463843+09:00 wslsrv slapd[864]: conn=1031 op=956 SRCH base="dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixGroup)(memberUid=moonjunyyy))"
+2026-11-06T16:52:25.463898+09:00 wslsrv slapd[864]: conn=1031 op=956 SRCH attr=dn
+2026-11-06T16:52:25.463957+09:00 wslsrv slapd[864]: conn=1031 op=956 SEARCH RESULT tag=101 err=0 qtime=0.000020 etime=0.000164 nentries=3 text=
+2026-11-06T16:52:25.464100+09:00 wslsrv slapd[864]: conn=1031 op=957 SRCH base="ou=Users,dc=m00nny,dc=kr" scope=2 deref=0 filter="(&(objectClass=posixAccount)(uid=moonjunyyy))"
+2026-11-06T16:52:25.464157+09:00 wslsrv slapd[864]: conn=1031 op=957 SRCH attr=shadowFlag shadowMax shadowMin shadowLastChange userPassword uid shadowExpire shadowInactive shadowWarning
+2026-11-06T16:52:25.464217+09:00 wslsrv slapd[864]: conn=1031 op=957 SEARCH RESULT tag=101 err=0 qtime=0.000022 etime=0.000137 nentries=1 text=
+2026-11-06T16:52:25.464350+09:00 wslsrv slapd[864]: conn=1031 op=958 ABANDON msg=958

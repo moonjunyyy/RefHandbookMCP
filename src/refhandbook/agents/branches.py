@@ -164,8 +164,12 @@ def finish_script(repos: list[Repo], branch: str, outcome: str) -> str:
     for i, r in enumerate(repos):
         gd, tree, wt, base, b = _q(f"{GIT}/{r.slug}"), _q(f"{GIT}/{r.slug}{TREE}"), _q(r.inside), _q(r.base), _q(branch)
         lines.append(f"""(
-  cd {wt} && g add -A && {{ g diff --cached --quiet || g commit -q -m "$MSG"; }} || {{ printf '%s {i} kept 0\\n' {MARK}; printf 'the work could not be committed\\n'; exit 0; }}
-  g checkout -q --detach  # the branch no longer checked out here: it can be merged and deleted
+  cd {wt} && [ "$(g symbolic-ref --quiet HEAD)" = refs/heads/{b} ] || {{
+    printf '%s {i} failed 0\\n%s\\n' {MARK} 'the worktree is not on the run branch'; exit 0;
+  }}
+  g add -A && {{ g diff --cached --quiet || g commit -q -m "$MSG"; }} && g checkout -q --detach || {{
+    printf '%s {i} failed 0\\n%s\\n' {MARK} 'the worktree could not be finalized'; exit 0;
+  }}
   n=$(g --git-dir={gd} diff --name-only {base} {b} | {{ c=0; while IFS= read -r _; do c=$((c+1)); done; echo $c; }})
   if [ "$(g --git-dir={gd} rev-list --count {base}..{b})" = 0 ]; then
     g --git-dir={gd} branch -q -D {b}; printf '%s {i} unchanged 0\\n' {MARK}
@@ -313,7 +317,7 @@ class Branches:
 
     def finish(self, outcome: str, message: str, launch: Launch) -> dict:
         """At the run's end: commit each worktree on the branch, merge it when the run ended done, remove the
-        worktrees and their registrations. Returns what the run's page shows of each repository."""
+        worktrees and their registrations after successful finalization. Returns what the run's page shows of each repository."""
         with self._locked() as m:
             if m.ended:
                 return self._listing(m)
@@ -333,7 +337,7 @@ class Branches:
                 except BranchError as e:
                     code, out = 1, ""
                     for r in live:
-                        r.why = f"{e}; the branch {m.branch} is left as it was"
+                        r.why = str(e)
                 got = said(out)
                 for i, r in enumerate(live):
                     words, text = got.get(i, ([], ""))
@@ -342,9 +346,12 @@ class Branches:
                         r.files = int(words[1]) if len(words) > 1 and words[1].isdigit() else 0
                         r.why = text
                     else:
-                        r.state = "kept"
-                        r.why = r.why or text or f"git exited {code}; the branch {m.branch} is left as it was"
+                        r.state = "failed"
+                        why = r.why or text or f"git exited {code} without confirming finalization"
+                        r.why = f"{why}; worktree preserved at {r.worktree}"
             for r in m.repos:
+                if r.state not in ("merged", "kept", "unchanged"):
+                    continue
                 if r.name:
                     _unregister(r)
                 if r.worktree:

@@ -4,10 +4,16 @@
 import { account, act, empty, flash, flashNext, form, frame, go, h, help, link, main, meta, pageHead, replace, section, tag, values, when } from '/auth/static/site.js';
 import type { Json } from '/auth/static/site.js';
 import { t } from '../lib/i18n';
+import { copyText } from '../lib/clipboard';
 
 interface Me { user: Json; roles: string[]; may: Record<string, boolean>; shells: string[]; requests: boolean; invites: boolean }
 
 let me: Me | null = null;
+
+/** What the portal says when Kerberos took a change and the SMB side could not follow (docs/smb.md). */
+function warn(answer: Json | undefined): void {
+  if (answer?.warning) flash('error', String(answer.warning));
+}
 
 async function load(): Promise<Me> {
   me = (await account().get('/me')) as Me;
@@ -32,7 +38,7 @@ function oneTime(uid: string, password: string, what: string): HTMLElement {
     h('p', null, t('이 비밀번호는 지금 한 번만 보입니다. 본인에게 전하고, 처음 로그인할 때 바꾸게 됩니다.')),
     h('p', { class: 'secret' }, h('code', null, password)),
     h('div', { class: 'actions' }, h('button', { type: 'button', class: 'secondary',
-      onclick: () => navigator.clipboard?.writeText(password).then(() => flash('ok', t('복사했습니다.'))) }, t('복사'))));
+      onclick: () => copyText(password) }, t('복사'))));
 }
 
 // ── one's own account ───────────────────────────────────────────────────
@@ -51,7 +57,7 @@ export async function mine(): Promise<void> {
         h('dt', null, t('역할')), h('dd', null, m.roles.filter(r => r !== 'user').join(', ') || t('사용자')))),
       section(t('프로필'), form({}, async (f, b) => {
         const v = values(f);
-        await act(b, () => account().patch('/me', v));
+        if (await act(b, () => account().patch('/me', v))) flash('ok', t('저장했습니다.'));
       },
         h('label', null, t('표시 이름'), h('input', { name: 'displayName', value: u.display_name, maxlength: 64 })),
         h('label', null, t('이메일'), h('input', { name: 'mail', type: 'email', value: u.mail })),
@@ -60,7 +66,8 @@ export async function mine(): Promise<void> {
       h('section', { class: 'card section', id: 'password' }, h('h2', null, t('비밀번호 변경'), help(t('이 사이트와 SSH에 함께 쓰는 비밀번호입니다.'))),
         form({}, async (f, b) => {
           const done = await act(b, () => account().post('/me/password', values(f)));
-          if (done) f.reset();
+          if (done) { f.reset(); flash('ok', t('비밀번호를 바꿨습니다.')); }
+          warn(done);  // after it: a warning stays in its place
         },
           h('label', null, t('지금 비밀번호'), h('input', { name: 'old', type: 'password', autocomplete: 'current-password', required: true })),
           h('label', null, t('새 비밀번호'), h('input', { name: 'new', type: 'password', minlength: 12, autocomplete: 'new-password', required: true })),
@@ -102,6 +109,7 @@ export async function newUser(): Promise<void> {
       const r = await act(b, () => account().post('/users', values(f)));
       if (r) replace(main(), pageHead(t('새 사용자'), tabs(m)), oneTime(r.user.uid, r.password, t('계정을 만들었습니다')),
         h('p', null, link(`${p}/admin/users/${r.user.uid}`, t('계정 보기'))));
+      warn(r);
     },
       h('div', { class: 'cols' },
         h('label', null, t('사용자명'), h('input', { name: 'uid', required: true, pattern: '[a-z][a-z0-9_-]{1,31}', autocomplete: 'off' })),
@@ -124,12 +132,15 @@ export async function user(uid: string): Promise<void> {
         const r = await act(e.target as HTMLButtonElement, () => account().post(`/users/${uid}/reset`));
         if (r) replace(main(), pageHead(uid, tabs(m)), oneTime(uid, r.password, t('비밀번호를 초기화했습니다')),
           h('p', null, link(`${p}/admin/users/${uid}`, t('계정 보기'))));
+        warn(r);
       } }, t('초기화')))),
     may.unlock && h('div', { class: 'actions' }, h('button', { class: 'secondary', onclick: async (e: Event) => {
-      if (await act(e.target as HTMLButtonElement, () => account().post(`/users/${uid}/unlock`))) reload();
-    } }, t('로그인 실패 잠금 풀기'))),
+      const r = await act(e.target as HTMLButtonElement, () => account().post(`/users/${uid}/unlock`));
+      if (r) { reload(); flash('ok', t('잠금을 풀었습니다.')); warn(r); }
+    } }, t('로그인 실패 잠금 풀기')), help(t('이 사이트에서 비밀번호를 여러 번 틀려 걸린 잠금과 Kerberos의 로그인 실패 잠금을 풉니다. 로그인 화면의 잠금은 정해진 시간이 지나면 풀립니다.'))),
     may.set_enabled && h('div', { class: 'actions' }, h('button', { class: u.disabled ? 'secondary' : 'danger', onclick: async (e: Event) => {
-      if (await act(e.target as HTMLButtonElement, () => account().patch(`/users/${uid}`, { enabled: u.disabled }))) reload();
+      const r = await act(e.target as HTMLButtonElement, () => account().patch(`/users/${uid}`, { enabled: u.disabled }));
+      if (r) { reload(); warn(r); }
     } }, u.disabled ? t('계정 활성화') : t('계정 비활성화'))),
     may.delete_user && h('details', { class: 'panel' }, h('summary', null, h('span', { class: 'danger-text' }, t('계정 삭제…'))),
       form({}, async (f, b) => {
@@ -180,6 +191,7 @@ export async function requests(): Promise<void> {
           const out = await act(b, () => account().post(`/requests/${r.id}/approve`, values(f)));
           if (out) replace(main(), pageHead(t('사용 신청'), tabs(m)), oneTime(out.user.uid, out.password, t('계정을 만들었습니다')),
             h('p', null, link(`${frame.portal}/admin/requests`, t('다른 신청 보기'))));
+          warn(out);
         }, shellSelect(m), h('button', null, t('승인'))),
         h('button', { class: 'secondary', onclick: async (e: Event) => {
           if (await act(e.target as HTMLButtonElement, () => account().post(`/requests/${r.id}/reject`))) void requests();
@@ -197,7 +209,7 @@ export async function invites(): Promise<void> {
         replace(main(), pageHead(t('초대 링크'), tabs(m)), section(t('링크를 만들었습니다'),
           h('p', null, t('이 링크는 지금 한 번만 보입니다.')), h('p', { class: 'secret' }, h('code', null, r.link)),
           h('div', { class: 'actions' },
-            h('button', { type: 'button', class: 'secondary', onclick: () => navigator.clipboard?.writeText(r.link).then(() => flash('ok', t('복사했습니다.'))) }, t('복사')),
+            h('button', { type: 'button', class: 'secondary', onclick: () => copyText(r.link) }, t('복사')),
             link(`${frame.portal}/admin/invites`, t('목록으로')))));
       }
     }, h('label', null, t('메모 (선택)'), h('input', { name: 'note', maxlength: 120, placeholder: t('누구에게 줄 링크인지') })),

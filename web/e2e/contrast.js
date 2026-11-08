@@ -71,7 +71,7 @@ const MEASURE = (scope) => {
   await page.click('dialog button:text-is("저장")');
   await page.waitForSelector('.cal-grid .cal-ev');
   await visit('/', '.widget[data-widget=home] .note-body');
-  await page.waitForSelector('.widget[data-widget=today] .widget-list');
+  await page.waitForSelector('.widget[data-widget=today] .today-cols');
   await page.waitForSelector('.widget[data-widget=boards] .widget-list');
   await page.waitForSelector('.widget[data-widget=tasks] input[name=task]');
   await page.fill('.widget[data-widget=tasks] input[name=task]', '초록 고치기');

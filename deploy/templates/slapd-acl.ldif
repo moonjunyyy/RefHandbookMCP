@@ -45,45 +45,74 @@ olcAccess: {5}to dn.one="@@users_ou@@" attrs=entry,objectClass,@inetOrgPerson,@p
   by dn.exact="@@portal_dn@@" write
   by dn.exact="@@kadmin_dn@@" write
   by users read
+# SMB (docs/smb.md): Samba's side of an account, after the rule above (which keeps uid, cn and the rest
+#    of the account's own attributes: first match wins, attribute by attribute).
+#    The NT hash is as good as the password: Samba alone reads it; the portal writes it when it sets a
+#    password, and a person may write their own (the site sign-in does it as them, holding no identity
+#    of its own). Samba's DN cannot write it, so SMB clients cannot change a password behind Kerberos.
+olcAccess: {6}to dn.one="@@users_ou@@" attrs=sambaNTPassword,sambaLMPassword,sambaPasswordHistory
+  by dn.exact="@@portal_dn@@" =w
+  by dn.exact="@@samba_dn@@" read
+  by self =w
+  by * none
+olcAccess: {7}to dn.one="@@users_ou@@" attrs=sambaPwdLastSet
+  by dn.exact="@@portal_dn@@" write
+  by self write
+  by dn.exact="@@samba_dn@@" read
+  by users read
+#    The account's SID and domain: the portal sets them when it gives an account its SMB side.
+olcAccess: {8}to dn.one="@@users_ou@@" attrs=sambaSID,sambaPrimaryGroupSID,sambaDomainName
+  by dn.exact="@@portal_dn@@" write
+  by dn.exact="@@samba_dn@@" read
+  by users read
+#    What Samba keeps up itself (logons, bad passwords, the flags): Samba and the portal (the disabled flag).
+olcAccess: {9}to dn.one="@@users_ou@@" attrs=sambaAcctFlags,sambaLogonTime,sambaLogoffTime,sambaKickoffTime,sambaPwdCanChange,sambaPwdMustChange,sambaBadPasswordCount,sambaBadPasswordTime,sambaLogonHours,sambaHomePath,sambaHomeDrive,sambaLogonScript,sambaProfilePath,sambaUserWorkstations,sambaMungedDial
+  by dn.exact="@@portal_dn@@" write
+  by dn.exact="@@samba_dn@@" write
+  by users read
 # 5. Portal may create private groups and change memberUid.
-olcAccess: {6}to dn.base="@@groups_ou@@" attrs=children
+olcAccess: {10}to dn.base="@@groups_ou@@" attrs=children
   by dn.exact="@@portal_dn@@" write
   by users read
-olcAccess: {7}to dn.one="@@groups_ou@@" attrs=entry,objectClass,cn,gidNumber,memberUid
+olcAccess: {11}to dn.one="@@groups_ou@@" attrs=entry,objectClass,cn,gidNumber,memberUid
   by dn.exact="@@portal_dn@@" write
   by users read
 # 6. Projects (docs/projects.md): the groups people make themselves, one level under the groups' OU.
 #    The portal adds them under @@projects_ou@@ (made once with projects.ldif beside this file) and
 #    changes their members and description; nothing else of them, nothing else there.
-olcAccess: {8}to dn.base="@@projects_ou@@" attrs=children
+olcAccess: {12}to dn.base="@@projects_ou@@" attrs=children
   by dn.exact="@@portal_dn@@" write
   by users read
-olcAccess: {9}to dn.one="@@projects_ou@@" attrs=entry,objectClass,cn,gidNumber,memberUid,description
+olcAccess: {13}to dn.one="@@projects_ou@@" attrs=entry,objectClass,cn,gidNumber,memberUid,description
   by dn.exact="@@portal_dn@@" write
   by users read
 # ... then the rules for service and admin accounts (ou=Services, ou=Admins), and the catch-all.
-olcAccess: {10}to dn.children="ou=Services,@@base_dn@@" filter=(objectClass=simpleSecurityObject)
+olcAccess: {14}to dn.children="ou=Services,@@base_dn@@" filter=(objectClass=simpleSecurityObject)
   by dn.regex="^(.*ou=A|cn=a)dmin(s*),@@base_dn@@$" write
   by dn.exact="uid=kadmin,ou=Services,@@base_dn@@" write
   by dn.exact="uid=kdc,ou=Services,@@base_dn@@" write
   by dn.exact="uid=www,ou=Services,@@base_dn@@" read
   by * none
-olcAccess: {11}to dn.base="ou=Services,@@base_dn@@" attrs=children
+olcAccess: {15}to dn.base="ou=Services,@@base_dn@@" attrs=children
   by dn.regex="^(.*ou=A|cn=a)dmin(s*),@@base_dn@@$" write
   by users read
-olcAccess: {12}to dn.one="ou=Services,@@base_dn@@" attrs=cn,ipServiceProtocol,ipServicePort
+olcAccess: {16}to dn.one="ou=Services,@@base_dn@@" attrs=cn,ipServiceProtocol,ipServicePort
   by dn.regex="^(.*ou=A|cn=a)dmin(s*),@@base_dn@@$" write
   by dn.exact="uid=www,ou=Services,@@base_dn@@" write
   by users read
-olcAccess: {13}to dn.children="ou=Admins,@@base_dn@@" filter=(objectClass=simpleSecurityObject)
+olcAccess: {17}to dn.children="ou=Admins,@@base_dn@@" filter=(objectClass=simpleSecurityObject)
   by dn.regex="^(.*ou=A|cn=a)dmin(s*),@@base_dn@@$" write
   by dn.exact="uid=kadmin,ou=Services,@@base_dn@@" write
   by dn.exact="uid=kdc,ou=Services,@@base_dn@@" read
   by * none
-olcAccess: {14}to dn.base="ou=Admins,@@base_dn@@" attrs=children
+olcAccess: {18}to dn.base="ou=Admins,@@base_dn@@" attrs=children
   by dn.regex="^(.*ou=A|cn=a)dmin(s*),@@base_dn@@$" write
   by * none
-olcAccess: {15}to dn.one="ou=Admins,@@base_dn@@" attrs=cn,ipServiceProtocol,ipServicePort
+olcAccess: {19}to dn.one="ou=Admins,@@base_dn@@" attrs=cn,ipServiceProtocol,ipServicePort
   by dn.regex="^(.*ou=A|cn=a)dmin(s*),@@base_dn@@$" write
   by * none
-olcAccess: {16}to * by * read
+# SMB: Samba's domain entry (samba.ldif beside this file): its SID and RID counters, which Samba keeps.
+olcAccess: {20}to dn.subtree="@@samba_domain_dn@@"
+  by dn.exact="@@samba_dn@@" write
+  by users read
+olcAccess: {21}to * by * read

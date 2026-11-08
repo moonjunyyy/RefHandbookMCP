@@ -5,6 +5,7 @@
 import { account, act, empty, flash, flashNext, form, frame, go, h, help, link, main, meta, pageHead, replace, section, tag, values, when } from '/auth/static/site.js';
 import type { Json } from '/auth/static/site.js';
 import { n_, t } from '../lib/i18n';
+import { copyText } from '../lib/clipboard';
 
 const api = () => account();
 const P = '/projects';
@@ -134,7 +135,7 @@ export async function project(cn: string): Promise<void> {
             h('p', null, t('이 링크는 지금 한 번만 보입니다. 받은 사람이 로그인한 채 열면 바로 구성원이 됩니다.')),
             h('p', { class: 'secret' }, h('code', null, r.link)),
             h('div', { class: 'actions' },
-              h('button', { type: 'button', class: 'secondary', onclick: () => navigator.clipboard?.writeText(r.link).then(() => flash('ok', t('복사했습니다.'))) }, t('복사')),
+              h('button', { type: 'button', class: 'secondary', onclick: () => copyText(r.link) }, t('복사')),
               link(path, t('프로젝트로')))));
         }, h('input', { name: 'note', maxlength: 120, placeholder: t('누구에게 줄 링크인지') }), h('button', { class: 'secondary' }, t('링크 만들기'))),
         (p.invites ?? []).length ? h('div', { class: 'table-wrap' }, h('table', null,

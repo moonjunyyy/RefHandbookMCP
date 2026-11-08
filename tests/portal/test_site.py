@@ -55,6 +55,7 @@ def test_a_service_app_declares_its_widgets_pages_and_routes():
     assert cal.audience == "calendar" and cal.upstream.endswith(":8120") and cal.menu_href == "/calendar"
     assert [(w.id, w.href, w.size) for w in cal.widgets] == [("today", "/apps/site/widgets/calendar.js", "2x1"),
                                                             ("upcoming", "/apps/site/widgets/calendar.js", "1x1"),
+                                                            ("month", "/apps/site/widgets/calendar.js", "2x2"),
                                                             ("tasks", "/apps/site/widgets/calendar.js", "1x1")]
     routes = {r.path: r for r in cal.routes}
     assert not routes["/calendar/api/"].signin and routes["/calendar/feed/"].auth == "public"
@@ -66,7 +67,7 @@ def test_a_service_app_declares_its_widgets_pages_and_routes():
     assert cal.default and vault.default if (vault := next(a for a in s.apps if a.id == "vault")) else False
     vault = next(a for a in s.apps if a.id == "vault")
     assert vault.audience == "vault" and vault.upstream.endswith(":8110")
-    assert [w.id for w in vault.widgets] == ["recent", "home"] and vault.widgets[1].size == "2x2"
+    assert [(w.id, w.size) for w in vault.widgets] == [("recent", "1x1"), ("tags", "1x1"), ("home", "2x2")]
     assert {r.path for r in vault.routes} == {"/vault/api/"} and vault.routes[0].body == "5m"
     projects = next(a for a in s.apps if a.id == "projects")
     assert not projects.audience and not projects.routes and projects.widgets[0].href == "/apps/site/widgets/projects.js"
@@ -198,7 +199,11 @@ def test_every_palette_of_the_look_reads_in_both_themes():
 
     theme = (Path(__file__).resolve().parents[2] / "src/portal/static/theme.css").read_text()
     blocks = {"light": _re.search(r":root \{(.*?)\n\}", theme, _re.S).group(1), "dark": _re.search(r':root\[data-theme="dark"\] \{(.*?)\n\}', theme, _re.S).group(1)}
-    base = {k: dict(_re.findall(r"--([a-z-]+):\s*(#[0-9a-f]{3,6})\b", v)) for k, v in blocks.items()}
+    base = {}
+    for scheme, block in blocks.items():
+        tokens = dict(_re.findall(r"--([a-z-]+):\s*(#[0-9a-f]{3,6}\b|var\(--[a-z-]+\))", blocks["light"] + block))
+        base[scheme] = {name: tokens.get(value[6:-1], value) if value.startswith("var(") else value
+                        for name, value in tokens.items()}
     look = site._look(tomllib.loads(SITE.read_text()))
     pairs = [("accent-text", "accent"), ("accent-text", "accent-hover"), ("accent", "bg"), ("accent", "card"), ("accent-hover", "accent-soft"), ("accent", "accent-soft")]
     low = []

@@ -161,7 +161,7 @@ async function run() {
   await page.keyboard.press('w');
   await page.waitForSelector('dialog[open] .pick-list');
   const rows = await page.$$eval('dialog .pick-row', (els) => els.map((e) => ({ app: e.dataset.app, w: e.dataset.widget, title: e.querySelector('.pick-title').textContent, desc: e.querySelector('.pick-desc').textContent, size: e.querySelector('.tag.size').textContent, h: e.getBoundingClientRect().height, on: e.querySelector('input').checked })));
-  step('w 가 시트를 열고, 앱별 행마다 스위치·이름·설명·크기(cols×rows)다 (C24·C34)', rows.length === 8 && rows.every((r) => r.title && r.desc && r.size) && rows.filter((r) => r.w === 'launcher').length === 4
+  step('w 가 시트를 열고, 앱별 행마다 스위치·이름·설명·크기(cols×rows)다 (C24·C34)', rows.length === 9 && rows.every((r) => r.title && r.desc && r.size) && rows.filter((r) => r.w === 'launcher').length === 4
     && rows.find((r) => r.w === 'tasks').desc.startsWith('체크리스트') && rows.find((r) => r.w === 'today').size === '2×1' && rows.filter((r) => r.on).length === 4, JSON.stringify(rows.map((r) => [r.app, r.w, r.size, r.on])));
   step('행은 44px 를 넘지 않는다', rows.every((r) => r.h <= 44), JSON.stringify(rows.map((r) => Math.round(r.h))));
   await page.hover('dialog .pick-row[data-app="eq-sandbox"][data-widget="boards"]');
@@ -396,7 +396,6 @@ async function run() {
     await sleep(400);
   };
   const nextKey = await page.$eval('.cal-day.today', (e) => (e.nextElementSibling || e.previousElementSibling).dataset.day);
-  const nextIsAfter = nextKey > todayKey;
   await drag('.cal-day.selected .cal-ev', `.cal-day[data-day="${nextKey}"]`);
   step('달력에서 일정을 다른 날로 끌면 그 날로 옮겨 저장된다', mock.events()[0].start === nextKey && (await texts(page, `.cal-day[data-day="${nextKey}"] .cal-ev`)).some((x) => x.includes('랩 미팅'))
     && !(await page.$('.cal-day.selected .cal-ev')), JSON.stringify(mock.events()[0]));
@@ -407,7 +406,9 @@ async function run() {
     && (await page.$eval('.wk-body', (e) => e.scrollTop)) > 0, page.url());
   const allWk = await page.$(`.wk-allcol[data-day="${nextKey}"] .cal-ev`);
   const wkHasIt = !!allWk && (await allWk.textContent()).includes('랩 미팅');
-  step('종일 일정은 종일 줄의 그 날에 있다', wkHasIt || !nextIsAfter && !(await page.$('.wk-allcol .cal-ev')) && (await page.$$('.wk-col')).length === 7, String(wkHasIt));
+  // the day it was moved to may be in the next week (moved on a Sunday: the weeks start on Monday) — then this week shows none
+  const shownWeek = await page.$$eval('.wk-allcol', (els) => els.map((e) => e.dataset.day));
+  step('종일 일정은 종일 줄의 그 날에 있다', wkHasIt || !shownWeek.includes(nextKey) && !(await page.$('.wk-allcol .cal-ev')) && (await page.$$('.wk-col')).length === 7, `${wkHasIt} ${nextKey} ${shownWeek.join()}`);
   // a slot pressed: 10:00 of today (the column is 24 hours tall; the body is scrolled to the morning)
   await page.click(`.wk-col[data-day="${todayKey}"]`, { position: { x: 10, y: 10 * 44 + 5 } });
   await page.waitForSelector('dialog[open]');
@@ -487,6 +488,19 @@ async function run() {
   await page.waitForSelector('.toast.error');
   allowed = 0;
   step('그 사이 바뀐 노트는 덮어쓰지 않는다(412 → 한 줄)', mock.files().get('Home.md').text === '# Home\n\nchanged elsewhere\n' && (await texts(page, '.toast.error'))[0].includes('다른 데서'));
+  const attemptedDraft = await page.inputValue('textarea.editor');
+  const draftUrl = page.url();
+  page.once('dialog', dialog => dialog.dismiss());
+  await page.click('.vault-side a:has-text("Lie algebras")');
+  step('미저장 상태에서 노트 이동을 취소하면 입력과 주소를 지킨다',
+    (await page.inputValue('textarea.editor')) === attemptedDraft && page.url() === draftUrl);
+  await page.click('.note-head label.switch input');
+  await page.waitForSelector('dialog[open]');
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.querySelector('dialog[open]') && document.querySelector('.note-head label.switch input').checked);
+  step('보기 전환 취소는 편집 스위치와 초안을 되돌린다',
+    (await page.isChecked('.note-head label.switch input')) && (await page.inputValue('textarea.editor')) === attemptedDraft);
+  page.once('dialog', dialog => dialog.accept());
   await open(page, `${BASE}/vault/v1/Ideas/Operators.md`, '.note-body');
   step('주소로 노트를 연다', (await texts(page, '.note-head h1'))[0] === 'Ideas/Operators' && (await texts(page, '.vault-side li.current a'))[0] === 'Operators');
   // a wide note in a fresh page: no KaTeX fetched; the table scrolls inside the note, the page does not widen (C31)
@@ -584,8 +598,9 @@ async function run() {
 
   // (g) the widgets of the calendar, the notes and the projects on the main page
   mock.put('site', 'prefs', { ...mock.get('site', 'prefs'), apps: ['calendar', 'vault', 'projects'],
-                              home: [{ app: 'calendar', widget: 'today' }, { app: 'vault', widget: 'recent' }, { app: 'projects', widget: 'mine' }, { app: 'vault', widget: 'home' }, { app: 'calendar', widget: 'tasks' }] });
-  await open(page, `${BASE}/`, '.widget[data-widget=recent] .widget-list');
+                              home: [{ app: 'calendar', widget: 'today' }, { app: 'vault', widget: 'recent' }, { app: 'projects', widget: 'mine' }, { app: 'vault', widget: 'home' }, { app: 'calendar', widget: 'tasks' },
+                                     { app: 'calendar', widget: 'upcoming' }, { app: 'calendar', widget: 'month' }, { app: 'vault', widget: 'tags' }] });
+  await open(page, `${BASE}/`, '.widget[data-widget=recent] .items-list');
   await page.waitForSelector('.widget[data-widget=tasks] input[name=task]');
   await page.fill('.widget[data-widget=tasks] input[name=task]', '초록 고치기');
   await page.keyboard.press('Enter');
@@ -599,16 +614,37 @@ async function run() {
   await page.click('.widget[data-widget=tasks] .tasks-foot button:text-is("끝난 것 치우기")');
   await sleep(300);
   step('끝난 것 치우기는 끝난 줄만 지운다', mock.tasks().length === 1 && (await page.$$('.widget[data-widget=tasks] ul.tasks li')).length === 1);
-  await page.waitForSelector('.widget[data-widget=today] .widget-list, .widget[data-widget=today] p.muted');
+  await page.waitForSelector('.widget[data-widget=today] .today-cols');
   await page.waitForSelector('.widget[data-widget=home] .note-body');
-  step('캘린더 위젯이 오늘의 일정을 보인다', (await texts(page, '.widget[data-widget=today] .widget-list li a')).includes('세미나') && !(await texts(page, '.widget[data-widget=today] .widget-list li a')).includes('랩 미팅'), JSON.stringify(await texts(page, '.widget[data-widget=today]')));
-  step('노트 위젯이 최근 노트와 Home 을 보인다', (await texts(page, '.widget[data-widget=recent] .widget-list li a')).length === 4 && (await texts(page, '.widget[data-widget=home] .note-body h1'))[0] === 'Home');
-  step('프로젝트 위젯이 내 프로젝트를 보인다', (await texts(page, '.widget[data-widget=mine] .widget-list li a')).join() === '실험실');
+  step('캘린더 위젯이 오늘의 일정을 보인다', (await texts(page, '.widget[data-widget=today] .items-list a.item-text')).includes('세미나') && !(await texts(page, '.widget[data-widget=today] .items-list a.item-text')).includes('랩 미팅'), JSON.stringify(await texts(page, '.widget[data-widget=today]')));
+  step('오늘 위젯의 머리: 날짜와 일정·마감의 수 (PIM: 한눈에)', (await texts(page, '.widget[data-widget=today] .widget-top .stat')).length >= 2
+    && !!(await page.$('.widget[data-widget=today] .widget-top a.widget-date')), JSON.stringify(await texts(page, '.widget[data-widget=today] .widget-top')));
+  step('노트 위젯이 최근 노트와 Home 을 보인다', (await texts(page, '.widget[data-widget=recent] .items-list a.item-text')).length === 4 && (await texts(page, '.widget[data-widget=home] .note-body h1'))[0] === 'Home');
+  step('최근 노트: 7일의 수와 14일의 흐름, 줄마다 언제', (await page.$$('.widget[data-widget=recent] .activity .act')).length === 14
+    && (await texts(page, '.widget[data-widget=recent] .item-aside')).length === 4, JSON.stringify(await texts(page, '.widget[data-widget=recent] .item-aside')));
+  step('프로젝트 위젯이 내 프로젝트를 보인다', (await texts(page, '.widget[data-widget=mine] .items-list a.item-text')).join() === '실험실'
+    && (await page.$$('.widget[data-widget=mine] .faces .face')).length === 2);
+  await page.waitForSelector('.widget[data-widget=upcoming] .day-strip');
+  step('다가오는 일: 7일의 띠(오늘 표시)와 날마다 묶인 일정', (await page.$$('.widget[data-widget=upcoming] .day-strip .day')).length === 7
+    && (await page.$$('.widget[data-widget=upcoming] .day-strip .day[data-today]')).length === 1
+    && (await texts(page, '.widget[data-widget=upcoming] .items-group')).length >= 1, JSON.stringify(await texts(page, '.widget[data-widget=upcoming] .items-group')));
+  await page.waitForSelector('.widget[data-widget=month] .month-grid');
+  const busy = await page.$('.widget[data-widget=month] button.month-day:not([data-level="0"]):not([data-today])');
+  step('이번 달: 일정이 있는 날은 칠해지고 오늘은 테두리', !!busy && (await page.$$('.widget[data-widget=month] button.month-day[data-today]')).length === 1);
+  if (busy) { await busy.click(); await sleep(150); }
+  step('이번 달: 날을 누르면 그 날의 일정이 아래에 선다', (await page.$$('.widget[data-widget=month] button.month-day[aria-pressed=true]')).length === 1
+    && (await texts(page, '.widget[data-widget=month] .month-agenda a.item-text')).length >= 1, JSON.stringify(await texts(page, '.widget[data-widget=month] .month-agenda')));
+  await page.waitForSelector('.widget[data-widget=tags] .bars');
+  step('태그: 노트 수만큼의 막대, 누르면 그 태그로 찾기', (await texts(page, '.widget[data-widget=tags] .bar-label')).includes('#draft')
+    && /^\/vault\/\w+\?q=/.test(await page.$eval('.widget[data-widget=tags] .bars a', (a) => a.getAttribute('href'))),
+    JSON.stringify([await texts(page, '.widget[data-widget=tags] .bar-label'), await page.$eval('.widget[data-widget=tags] .bars a', (a) => a.getAttribute('href'))]));
+  step('할 일: 마감별 묶음과 끝낸 정도', (await texts(page, '.widget[data-widget=tasks] .items-group')).length >= 1 && !!(await page.$('.widget[data-widget=tasks] .meter')));
   await shot(page, 'g-home');
 
   // (h) the theme: chosen in the settings, applied at once, kept as the cookie and in the account, survives a reload
   await open(page, `${BASE}/settings`, '.value');
-  step('설정의 첫 묶음은 값 셋이고 설명 문단이 없다', (await page.$$('main > section:nth-of-type(1) .value')).length === 3 && (await page.$$('main p.muted')).length === 0 && !(await page.$('main a.button')));
+  step('설정은 모양·홈 배치·일반으로 나뉘고 테마는 미리보기와 함께 있다', (await texts(page, '.settings-controls > section h2')).join() === '모양,홈 배치,일반'
+    && !!(await page.$('section:has(.look-preview) select[name=theme]')));
   const before = await bg(page);
   await page.selectOption('select[name=theme]', 'dark');
   await sleep(300);
@@ -626,8 +662,10 @@ async function run() {
   const prop = (name) => page.evaluate((n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim(), name);
   const chipsOf = (kind) => texts(page, `[data-look=${kind}] button.chip`);
   const pickLook = async (kind, label) => { await page.click(`[data-look=${kind}] button.chip:text-is("${label}")`); await sleep(300); await page.waitForSelector(`[data-look=${kind}]`); };
-  step('모양 묶음: 사이트 파일이 선언한 색·모서리·글꼴·글자 크기·홈 칸 수의 칩과 배경 이미지 칸', (await chipsOf('palette')).length === LOOK.palette.length && (await chipsOf('corner')).length === LOOK.corner.length
-    && (await chipsOf('type')).length === LOOK.type.length && (await chipsOf('size')).length === LOOK.size.length && (await chipsOf('columns')).length === LOOK.columns.length
+  const fontsOf = (kind) => page.$$(`[data-look=${kind}] button.font-choice`);
+  step('모양 묶음: 사이트 파일이 선언한 색·모서리·글꼴(본문·제목·코드)·글자 크기·홈 칸 수와 배경 이미지 칸', (await chipsOf('palette')).length === LOOK.palette.length && (await chipsOf('corner')).length === LOOK.corner.length
+    && (await fontsOf('type')).length === LOOK.type.length && (await fontsOf('heading')).length === LOOK.heading.length && (await fontsOf('mono')).length === LOOK.mono.length
+    && (await chipsOf('size')).length === LOOK.size.length && (await chipsOf('columns')).length === LOOK.columns.length
     && !!(await page.$('input[name=image]')) && (await page.$$('[data-look=palette] .swatch')).length === LOOK.palette.length,
     JSON.stringify([await chipsOf('palette'), await chipsOf('size'), await chipsOf('columns')]));
   const ownAccent = await prop('--accent');
@@ -647,9 +685,33 @@ async function run() {
     && (await page.$eval('main section .inline-field button', (b) => getComputedStyle(b).borderTopLeftRadius)) === corner.tokens['radius-s']
     && (await page.$eval('main section.card', (s) => getComputedStyle(s).borderTopLeftRadius)) === corner.tokens.radius,
     `${await prop('--radius')} ${await page.$eval('main section .inline-field button', (b) => getComputedStyle(b).borderTopLeftRadius)}`);
-  const type = LOOK.type.find((c) => c.tokens.sans && !c.tokens.sans.startsWith('var('));
-  await pickLook('type', type.label);
-  step('글꼴: 본문의 글꼴이 그 선언이다', (await page.evaluate(() => getComputedStyle(document.body).fontFamily)).startsWith(type.tokens.sans.split(',')[0]), await page.evaluate(() => getComputedStyle(document.body).fontFamily));
+  step('기본 글꼴은 열린 글꼴을 하나도 불러오지 않는다', (await page.$$('link[data-look-font]')).length === 0);
+  const sheet = (id) => `${LOOK.fonts}${id}.css`;
+  const pickFont = async (kind, c) => {
+    await page.click(`[data-look=${kind}] button.font-choice:has(.font-name:text-is("${c.label}"))`);
+    await page.waitForFunction(() => !document.querySelector('.settings-controls').inert);
+    await page.waitForSelector(`[data-look=${kind}] button.font-choice[aria-pressed=true]`);
+  };
+  const loaded = (family) => page.evaluate(async (f) => { await document.fonts.ready; return [...document.fonts].some((x) => x.family.replace(/"/g, '') === f && x.status === 'loaded'); }, family);
+  const type = LOOK.type.find((c) => c.fonts.length === 1);
+  const typeFamily = type.tokens.sans.split(',')[0].replace(/"/g, '');
+  await pickFont('type', type);
+  step('본문 글꼴: 본문이 그 글꼴이고, 그 글꼴의 스타일시트만 붙고, 실제로 내려받아 쓴다', (await page.evaluate(() => getComputedStyle(document.body).fontFamily)).startsWith(type.tokens.sans.split(',')[0])
+    && JSON.stringify(await page.$$eval('link[data-look-font]', (ls) => ls.map((l) => l.getAttribute('href')))) === JSON.stringify([sheet(type.fonts[0])])
+    && (await loaded(typeFamily)) && mock.get('site', 'prefs').look.type === type.id,
+    `${await page.evaluate(() => getComputedStyle(document.body).fontFamily)} ${JSON.stringify(await page.$$eval('link[data-look-font]', (ls) => ls.map((l) => l.getAttribute('href'))))}`);
+  const heading = LOOK.heading.find((c) => c.group === 'display');
+  await pickFont('heading', heading);
+  step('제목 글꼴: 제목이 그 글꼴이고 본문은 그대로다', (await page.$eval('h1', (e) => getComputedStyle(e).fontFamily)).startsWith(heading.tokens.serif.split(',')[0])
+    && (await page.evaluate(() => getComputedStyle(document.body).fontFamily)).startsWith(type.tokens.sans.split(',')[0])
+    && (await page.$$('link[data-look-font]')).length === 2, await page.$eval('h1', (e) => getComputedStyle(e).fontFamily));
+  const mono = LOOK.mono.find((c) => c.fonts.length === 1);
+  await pickFont('mono', mono);
+  step('코드 글꼴: --mono 가 그 글꼴이다', (await prop('--mono')).startsWith(mono.tokens.mono.split(',')[0]) && (await page.$$('link[data-look-font]')).length === 3, await prop('--mono'));
+  step('글꼴 고르기: 줄마다 그 글꼴로 쓰인 견본, 보이는 줄의 글꼴만 불러온다', (await page.$$eval('[data-look=type] .font-sample', (els) => new Set(els.map((e) => e.style.fontFamily)).size)) === new Set(LOOK.type.map((c) => c.tokens.sans ?? '')).size
+    && (await page.$$('link[data-font-preview]')).length > 0 && (await page.$$('link[data-font-preview]')).length < LOOK.type.length + LOOK.heading.length + LOOK.mono.length);
+  await page.$eval('[data-look=type]', (e) => e.scrollIntoView());
+  await shot(page, 'h-fonts');
   const size = LOOK.size.find((c) => c.tokens['root-size']);
   await pickLook('size', size.label);
   step('글자 크기: 뿌리 글자 크기가 바뀌고 글이 따라 커지거나 작아진다', (await page.evaluate(() => getComputedStyle(document.documentElement).fontSize)) === `${16 * parseFloat(size.tokens['root-size']) / 100}px`,
@@ -665,7 +727,7 @@ async function run() {
   await page.press('input[name=image]', 'Enter');
   await sleep(300);
   step('배경 이미지: 이 사이트의 주소(또는 https)는 페이지 밑에 깔린다', mock.get('site', 'prefs').look.image === '/e2e/look.png'
-    && (await page.evaluate(() => getComputedStyle(document.body).backgroundImage)).includes('/e2e/look.png'), await page.evaluate(() => getComputedStyle(document.body).backgroundImage));
+    && (await page.evaluate(() => getComputedStyle(document.body, '::before').backgroundImage)).includes('/e2e/look.png'), await page.evaluate(() => getComputedStyle(document.body, '::before').backgroundImage));
   await shot(page, 'h-look');
   await open(page, `${BASE}/`, '.widgets');
   step('홈은 고른 칸 수로 나뉜다', (await page.$eval('.widgets', (g) => getComputedStyle(g).gridTemplateColumns.split(' ').length)) === n, await page.$eval('.widgets', (g) => getComputedStyle(g).gridTemplateColumns));
@@ -674,17 +736,96 @@ async function run() {
   await page.route(`${BASE}/prepaint`, (r) => r.fulfill({ status: 200, contentType: 'text/html; charset=utf-8',
     body: '<!doctype html><html><head><link rel="stylesheet" href="/auth/static/theme.css"><script src="/auth/static/theme.js"></script></head><body></body></html>' }));
   await page.goto(`${BASE}/prepaint`, { waitUntil: 'load' });
-  step('theme.js 혼자서(site.js 없이, 첫 칠 전) 고른 모양을 이미 입힌다', (await prop('--accent')) === pal.dark.accent && (await prop('--radius')) === corner.tokens.radius, `${await prop('--accent')} ${await prop('--radius')}`);
+  step('theme.js 혼자서(site.js 없이, 첫 칠 전) 고른 모양을 이미 입힌다', (await prop('--accent')) === pal.dark.accent && (await prop('--radius')) === corner.tokens.radius
+    && (await page.$$('link[data-look-font]')).length === 3, `${await prop('--accent')} ${await prop('--radius')}`);
+  await open(page, BASE + '/settings', '#accent-hex');
+  await page.fill('#accent-hex', '#abc');
+  step('HEX 입력은 저장 전에 피커와 미리보기에 반영된다', (await page.inputValue('#accent-picker')) === '#aabbcc'
+    && (await page.$eval('.look-sample-accent', el => getComputedStyle(el).backgroundColor)) === 'rgb(170, 187, 204)'
+    && !mock.get('site', 'prefs').look.accent);
+  await page.press('#accent-hex', 'Enter');
+  await page.waitForFunction(() => JSON.parse(localStorage.getItem('prefs')).look.accent === '#aabbcc');
+  await page.locator('#accent-picker').evaluate(el => {
+    el.value = '#1e65c2'; el.dispatchEvent(new Event('input')); el.dispatchEvent(new Event('change'));
+  });
+  await page.waitForFunction(() => JSON.parse(localStorage.getItem('prefs')).look.accent === '#1e65c2');
+  const setRange = async (id, value) => {
+    await page.locator('#' + id).evaluate((el, v) => { el.value = v; el.dispatchEvent(new Event('input')); }, value);
+    const output = await page.locator('output[for=' + id + ']').textContent();
+    await page.locator('#' + id).evaluate(el => el.dispatchEvent(new Event('change')));
+    await page.waitForFunction(([k,v]) => JSON.parse(localStorage.getItem('prefs')).look[k] === v, [id, value]);
+    return output;
+  };
+  const radiusOutput = await setRange('radius', 0);
+  await setRange('imageBlur', 12);
+  await setRange('imageDim', 63);
+  step('피커와 슬라이더가 계정에 저장되고 배경 필터는 배경층에만 적용된다', radiusOutput === '0%'
+    && (await prop('--radius')) === '0px' && mock.get('site', 'prefs').look.accent === '#1e65c2'
+    && (await page.evaluate(() => getComputedStyle(document.body, '::before').filter)) === 'blur(12px) brightness(0.37)'
+    && (await page.evaluate(() => getComputedStyle(document.querySelector('main')).filter)) === 'none');
+  const contrast = () => page.$eval('.look-sample-accent', el => {
+    const style = getComputedStyle(el);
+    const lum = css => css.match(/[0-9.]+/g).map(Number).slice(0, 3).reduce((sum, c, i) => {
+      c /= 255;
+      return sum + [0.2126, 0.7152, 0.0722][i] * (c <= .04045 ? c / 12.92 : ((c + .055) / 1.055) ** 2.4);
+    }, 0);
+    const [bright, dim] = [lum(style.color), lum(style.backgroundColor)].sort((a, b) => b - a);
+    return (bright + .05) / (dim + .05);
+  });
+  const darkContrast = await contrast();
+  await page.selectOption('select[name=theme]', 'light');
+  await page.waitForFunction(() => document.documentElement.dataset.theme === 'light');
+  step('사용자 지정 채움색과 글자의 대비는 밝은·어두운 테마에서 4.5:1 이상이다',
+    darkContrast >= 4.5 && (await contrast()) >= 4.5 && (await prop('--accent-fill')) === '#1e65c2');
+  await page.selectOption('select[name=theme]', 'dark');
+  await page.waitForFunction(() => document.documentElement.dataset.theme === 'dark');
+  await page.goto(BASE + '/prepaint', { waitUntil: 'load' });
+  step('직접 설정도 새로고침 첫 칠부터 적용된다', (await prop('--accent-fill')) === '#1e65c2'
+    && (await prop('--radius')) === '0px' && (await prop('--page-blur')) === '12px' && (await prop('--page-dim')) === '63%');
   await page.unroute(`${BASE}/prepaint`);
   await open(page, `${BASE}/settings`, '[data-look=palette]');
   await page.click('.value:has([data-look=palette]) button.link');
   await sleep(300);
   step("'기본값'은 theme.css 의 제 색으로 돌린다", (await prop('--accent')) === ownAccent && !('palette' in mock.get('site', 'prefs').look), `${await prop('--accent')} vs ${ownAccent}`);
-  // the steps after read the frame as theme.css draws it: the look goes back to the site's own
-  mock.put('site', 'prefs', { ...mock.get('site', 'prefs'), look: {} });
-  await open(page, `${BASE}/settings`, '[data-look=palette]');
-  step('모양을 다 비우면 theme.css 의 토큰이다(이 브라우저의 사본도)', (await prop('--radius')) === ownRadius && (await page.evaluate(() => getComputedStyle(document.documentElement).fontSize)) === '16px'
-    && (await page.evaluate(() => localStorage.getItem('look'))) === JSON.stringify({ light: {}, dark: {}, both: {} }));
+  // Exercise the reset through the real control, preserving the independent home layout.
+  await page.click('button:text-is("모양 초기화")');
+  await page.waitForFunction(() => document.querySelector('select[name=theme]').value === 'auto');
+  step('모양 초기화는 테마와 모양을 되돌리고 홈 칸 수는 유지한다', (await prop('--radius')) === ownRadius
+    && (await page.evaluate(() => getComputedStyle(document.documentElement).fontSize)) === '16px' && (await page.$$('link[data-look-font]')).length === 0
+    && mock.get('site', 'prefs').theme === 'auto' && JSON.stringify(mock.get('site', 'prefs').look) === JSON.stringify({ columns: n }));
+  await page.click('[data-look=columns] button:text-is("자동")');
+  await page.waitForFunction(() => !JSON.parse(localStorage.getItem('look')).both['home-grid']);
+  await page.selectOption('select[name=theme]', 'dark');
+  await page.waitForFunction(() => document.documentElement.dataset.theme === 'dark');
+  const check = await ctx.newPage();
+  await check.setViewportSize({ width: 360, height: 800 });
+  await open(check, BASE + '/settings', '.look-preview');
+  step('모바일에서도 모양 설정이 화면 너비에 맞는다', await check.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+  await check.route(BASE + '/apps/site/api/store/prefs', route => route.request().method() === 'PUT'
+    ? route.fulfill({ status: 503 }) : route.fallback());
+  await check.selectOption('select[name=theme]', 'light');
+  await check.waitForSelector('.toast.error');
+  step('저장 실패 시 테마·선택·브라우저 캐시가 마지막 저장값을 유지한다', (await theme(check)) === 'dark'
+    && (await check.inputValue('select[name=theme]')) === 'dark' && mock.get('site', 'prefs').theme === 'dark'
+    && (await check.evaluate(() => JSON.parse(localStorage.getItem('prefs')).theme)) === 'dark');
+  await check.unroute(BASE + '/apps/site/api/store/prefs');
+  await check.route(BASE + '/invalid-image', route => route.fulfill({ status: 200, body: 'not an image' }));
+  await check.fill('input[name=image]', '/invalid-image');
+  await check.press('input[name=image]', 'Enter');
+  await check.waitForFunction(() => document.querySelector('.toast.error')?.textContent.includes('배경 이미지를 불러올 수 없습니다'));
+  step('이미지가 아닌 응답을 거부하고 주소 입력은 보존한다', !mock.get('site', 'prefs').look.image
+    && (await check.inputValue('input[name=image]')) === '/invalid-image');
+  const savedHome = mock.get('site', 'prefs');
+  mock.put('site', 'prefs', { ...savedHome, home: [{ app: savedHome.apps[0], widget: 'launcher' }] });
+  await open(check, BASE + '/', '.widgets .widget');
+  await check.focus('.widgets .widget');
+  await check.keyboard.press('Delete');
+  await check.waitForFunction(() => !document.querySelector('.widgets .widget'));
+  await open(check, BASE + '/', '.widgets .add-widget');
+  step('마지막 위젯을 빼면 다시 열어도 홈이 비어 있다', (await cells(check)).length === 0
+    && mock.get('site', 'prefs').homeCustomized === true);
+  mock.put('site', 'prefs', savedHome);
+  await check.close();
 
   // (i) an app's own page: the same frame (header with the apps that are on, the theme) from site.js
   await open(page, `${BASE}/apps/eq-sandbox/`, 'body[data-ready]');
@@ -779,6 +920,54 @@ async function run() {
   step('실행 페이지가 브랜치와 저장소마다 그 결과를 보인다(병합됨·브랜치에 남음+충돌 파일·바뀐 것 없음)', (await texts(page, 'main section h2 code')).includes('run/b1')
     && JSON.stringify(brs) === JSON.stringify([['/Workspace/RefHandbookMCP', '병합됨', ''], ['/Workspace/NNG-lean', '브랜치에 남음', 'conflicts:\nREADME.md'], ['/Workspace/OnlineViL', '바뀐 것 없음', '']]), JSON.stringify(brs));
   await shot(page, 'agents-run-branches');
+  const live = await ctx.newPage();
+  let checks = 0;
+  await live.route(url => decodeURIComponent(url.pathname) === '/agents/api/v1/runs/run:live', route => {
+    checks++;
+    return route.fulfill({ json: { id: 'run:live', title: 'Live', phase: 'running', state: checks > 1 ? 'closed' : 'open',
+      goal: 'work', requested_by: 'user', usage: { input: checks, output: 0, cache_read: 0 }, tree: [], board: [],
+      recipe: { input: 'work', title: '', grant: {}, flow: null } } });
+  });
+  await open(live, BASE + '/agents/runs/run:live', 'input[name=name]');
+  await live.fill('input[name=name]', 'draft-preset');
+  await live.waitForFunction(() => document.querySelector('main').textContent.includes('입력 2'));
+  step('실행 상태가 자동 갱신돼도 프리셋 입력과 초점을 지킨다',
+    (await live.inputValue('input[name=name]')) === 'draft-preset'
+    && await live.$eval('input[name=name]', el => el === document.activeElement));
+  await live.close();
+
+  const copyPage = await ctx.newPage();
+  await copyPage.addInitScript(() => Object.defineProperty(navigator, 'clipboard', { value: undefined }));
+  await open(copyPage, BASE + '/vault/v1/Home.md', '.note-body');
+  await copyPage.click('.vault-side .vault-head button.more');
+  await pickItem(copyPage, '경로');
+  await copyPage.waitForSelector('dialog[open] textarea');
+  step('클립보드가 없어도 경로를 직접 복사할 수 있고 가짜 성공을 표시하지 않는다',
+    await copyPage.$eval('dialog[open] textarea', field => field.value.length > 0 && field.selectionEnd === field.value.length)
+    && !(await copyPage.$('.toast.ok')));
+  await copyPage.close();
+
+  const journey = await ctx.newPage();
+  await open(journey, BASE + '/calendar', '.cal-nav');
+  let fetches = 0, releaseOld;
+  const old = new Promise(resolve => { releaseOld = resolve; });
+  await journey.route('**/calendar/api/v1/events?*', async route => {
+    const n = ++fetches;
+    const start = new Date(new URL(route.request().url()).searchParams.get('from'));
+    start.setUTCDate(start.getUTCDate() + 12);
+    const end = new Date(start.getTime() + 3600000);
+    if (n === 1) await old;
+    await route.fulfill({ json: { events: [{ id: 'race-' + n, cal: 'u-1', start: start.toISOString(), end: end.toISOString(),
+      summary: 'Fetch ' + n, allday: false }] } });
+  });
+  const next = journey.locator('.cal-nav button').filter({ hasText: '›' });
+  await next.click();
+  await next.click();
+  await journey.waitForSelector('.cal-grid :text-is("Fetch 2")');
+  releaseOld();
+  await journey.waitForLoadState('networkidle');
+  step('캘린더의 느린 이전 응답이 최신 화면을 덮지 않는다', (await journey.locator('.cal-grid :text-is("Fetch 2")').count()) > 0);
+  await journey.close();
 
   // (j) a new browser: the account's theme and apps arrive with load(), without the cookie
   const ctx2 = await browser.newContext({ viewport: { width: 1100, height: 820 }, locale: 'ko-KR' });
@@ -786,7 +975,7 @@ async function run() {
   const page2 = await ctx2.newPage();
   watch(page2);
   await open(page2, `${BASE}/`, '.widgets');
-  step('새 브라우저도 계정의 테마와 배치를 받는다', (await theme(page2)) === 'dark' && (await cells(page2)).length === 5, `${await theme(page2)} ${JSON.stringify(await cells(page2))}`);
+  step('새 브라우저도 계정의 테마와 배치를 받는다', (await theme(page2)) === 'dark' && (await cells(page2)).length === 8, `${await theme(page2)} ${JSON.stringify(await cells(page2))}`);
   await ctx2.close();
 
   // (k) an older account: hidden/order become the apps that are on
@@ -800,14 +989,14 @@ async function run() {
   step('옛 계정은 보이던 앱이 켜진 채 깨어난다', JSON.stringify(await cells(page3)) === '["agents/launcher","eq-sandbox/launcher"]', JSON.stringify(await cells(page3)));
   await ctx3.close();
 
-  // (l) signed out: the site's name, one sign-in, the public launchers
+  // (l) signed out: the site's name and one sign-in — nothing of the apps (docs/frame.md §1)
   mock.signOut();
   const ctx4 = await browser.newContext({ viewport: { width: 1100, height: 820 }, locale: 'ko-KR' });
   await mock.install(ctx4);
   const page4 = await ctx4.newPage();
   watch(page4);
   await open(page4, `${BASE}/`, 'a.primary');
-  step('로그아웃 상태의 홈은 이름 + 로그인 하나 + 실행기다', (await texts(page4, 'a.primary')).join() === '로그인' && (await page4.$$('.widgets .widget')).length === 7 && !(await page4.$('main p.muted.small')));
+  step('로그아웃 상태의 홈은 이름 + 로그인 하나다(앱은 하나도 없다)', (await texts(page4, 'a.primary')).join() === '로그인' && (await page4.$$('.widgets .widget')).length === 0 && !(await page4.$('main p.muted.small')));
   await ctx4.close();
 
   step('페이지 오류 0', report.pageErrors.length === 0, report.pageErrors.join(' | '));

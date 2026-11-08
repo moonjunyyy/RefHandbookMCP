@@ -39,9 +39,14 @@ export declare const account: () => {
     del: (path: string) => Promise<any>;
 };
 export declare function message(e: unknown): string;
+export declare function setHelp(open: (() => void) | null): void;
+/** The site's chrome on any page — the site's pages and every app alike: the header (the site's name, the apps,
+ * the person's menu with the page's help) at the top of the page, made here when the page has none, then
+ * filled. An app adds its content and its own controls under it, never a header, links or help of its own. */
+export declare function chrome(): HTMLElement;
 /** The header: the site's name (home), the apps the person has on — an app with one page is a link, an app with
  * more opens their list under it — and their name: a menu with what is theirs (the account and its pages, the apps
- * catalog, the settings) and the way out. */
+ * catalog, the settings, the page's help) and the way out. Signed out, only the way in. */
 export declare function header(): void;
 export declare function title(text: string): void;
 /** The head of a page: its name, and its tabs when it has them. Nothing else: a page that needs a sentence

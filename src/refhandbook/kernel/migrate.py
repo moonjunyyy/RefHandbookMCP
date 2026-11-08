@@ -246,6 +246,119 @@ def _contained(g: Graph, L: str) -> list[dict[str, Any]]:
     return out
 
 
+# The packages whose nodes and edges a projection rebuilds; an edge of any other package (an entry's ref, a
+# tag) is someone's own writing that happens to touch the image, and is kept across the rebuild.
+PROJECTED_PKGS = ("research", "handbook", "kernel", "")
+
+
+def ledger_image(L: str) -> tuple[str, tuple]:
+    """The ids a ledger's image holds: its node and what it contains (a SELECT and its arguments)."""
+    return "SELECT ? UNION SELECT dst FROM k_edges WHERE src = ? AND type = ?", (L, L, CONTAINS)
+
+
+HANDBOOK_IMAGE = ("SELECT id FROM k_nodes WHERE type IN ('card', 'step') OR (type = 'missing' AND id LIKE 'card:%')", ())
+
+
+def foreign_edges(g: Graph, image: tuple[str, tuple]) -> list[tuple]:
+    """The edges no projection makes that touch an image about to be rebuilt. Their ends keep their ids
+    across the rebuild (a row's node is its nid, a card's node its id), so `restore_edges` puts them back."""
+    nodes, args = image
+    marks = ",".join("?" * len(PROJECTED_PKGS))
+    return [tuple(r) for r in g.db.execute(
+        f"SELECT e.src, e.type, e.dst, e.attrs, e.origin, e.clock FROM k_edges e JOIN k_types t ON t.name = e.type"
+        f" WHERE t.pkg NOT IN ({marks}) AND (e.src IN ({nodes}) OR e.dst IN ({nodes}))",
+        (*PROJECTED_PKGS, *args, *args))]
+
+
+def restore_edges(g: Graph, kept: list[tuple]) -> int:
+    """Put back what `foreign_edges` kept, with its writer and its clock, where both ends exist again (an
+    edge to a row that is gone goes with it)."""
+    n = 0
+    for src, type_, dst, attrs, origin, clock in kept:
+        if g.db.execute("SELECT COUNT(*) FROM k_nodes WHERE id IN (?, ?)", (src, dst)).fetchone()[0] == len({src, dst}):
+            n += g.db.execute("INSERT INTO k_edges (src, type, dst, attrs, origin, clock) VALUES (?, ?, ?, ?, ?, ?)"
+                              " ON CONFLICT(src, type, dst) DO NOTHING", (src, type_, dst, attrs, origin, clock)).rowcount
+    return n
+
+
+def _image(g: Graph, L: str) -> tuple[dict[str, dict], dict[tuple, dict]]:
+    """A ledger's image as it stands: its nodes, and the edges a projection makes that touch them."""
+    nodes_sql, args = ledger_image(L)
+    nodes = {r["id"]: dict(r) for r in g.db.execute(f"SELECT * FROM k_nodes WHERE id IN ({nodes_sql})", args)}
+    marks = ",".join("?" * len(PROJECTED_PKGS))
+    edges = {(r["src"], r["type"], r["dst"]): dict(r) for r in g.db.execute(
+        f"SELECT e.* FROM k_edges e JOIN k_types t ON t.name = e.type WHERE t.pkg IN ({marks})"
+        f" AND (e.src IN ({nodes_sql}) OR e.dst IN ({nodes_sql}))", (*PROJECTED_PKGS, *args, *args))}
+    return nodes, edges
+
+
+def _target(g: Graph, L: str, data: dict[str, Any], db) -> tuple[dict[str, dict], dict[tuple, dict]]:  # noqa: ANN001
+    """The image a redraw of L from `data` would make — drawn inside a savepoint and rolled back, so the
+    projection's own code says what the image is and nothing of the drawing stays."""
+    g.db.execute("SAVEPOINT k_target")
+    try:
+        drop_ledger(g, L, keep_log=True)
+        ledger_to_graph(g, data)
+        relink_incoming(g, db, L)
+        return _image(g, L)
+    finally:
+        g.db.execute("ROLLBACK TO k_target")
+        g.db.execute("RELEASE k_target")
+
+
+NODE_FIELDS = ("type", "state", "content", "attrs", "origin")
+
+
+def apply_ledger(g: Graph, L: str, data: dict[str, Any], db, actor: str = "kernel") -> dict[str, int]:  # noqa: ANN001
+    """Bring L's image to what `data` says in place: only nodes and edges that differ from a redraw change.
+    A node that stays keeps its version, its author and when it was made; a new one is `actor`'s; a removed one
+    goes, with its edges. Edges no projection makes (an entry's refs, tags) are not compared and stay."""
+    with g.tx():
+        target_nodes, target_edges = _target(g, L, data, db)
+        nodes, edges = _image(g, L)
+        c = g.tick()
+        derived = {k: v for k, v in json.loads(nodes.get(L, {}).get("attrs") or "{}").items() if k.startswith("derived_")}
+        if L in target_nodes and derived:  # facts the runtime derives onto the ledger node after each sync
+            target_nodes[L]["attrs"] = json.dumps({**json.loads(target_nodes[L]["attrs"]), **derived}, ensure_ascii=False)
+        n = {"added": 0, "changed": 0, "removed": 0, "edges": 0}
+        same = lambda a, b: all((json.loads(a[f]) == json.loads(b[f])) if f == "attrs" else a[f] == b[f]  # noqa: E731
+                                for f in NODE_FIELDS)
+        for nid, t in target_nodes.items():
+            cur = nodes.get(nid)
+            if cur is None:
+                if g.db.execute("SELECT 1 FROM k_nodes WHERE id = ?", (nid,)).fetchone():  # outside L's image: adopt
+                    g.db.execute("UPDATE k_nodes SET type = ?, state = ?, content = ?, attrs = ?, origin = ?,"
+                                 " version = version + 1, updated = ? WHERE id = ?",
+                                 (*(t[f] for f in NODE_FIELDS), c, nid))
+                else:
+                    g.db.execute("INSERT INTO k_nodes (id, type, state, content, attrs, origin, author, version, created,"
+                                 " updated) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
+                                 (nid, *(t[f] for f in NODE_FIELDS), actor, c, c))
+                n["added"] += 1
+            elif not same(cur, t):
+                g.db.execute("UPDATE k_nodes SET type = ?, state = ?, content = ?, attrs = ?, origin = ?,"
+                             " version = version + 1, updated = ? WHERE id = ?", (*(t[f] for f in NODE_FIELDS), c, nid))
+                n["changed"] += 1
+        for key in edges.keys() - target_edges.keys():
+            g.db.execute("DELETE FROM k_edges WHERE src = ? AND type = ? AND dst = ?", key)
+            n["edges"] += 1
+        for key, t in target_edges.items():
+            cur = edges.get(key)
+            if cur is None:
+                g.db.execute("INSERT INTO k_edges (src, type, dst, attrs, origin, clock) VALUES (?, ?, ?, ?, ?, ?)"
+                             " ON CONFLICT(src, type, dst) DO UPDATE SET attrs = excluded.attrs, origin = excluded.origin",
+                             (*key, t["attrs"], t["origin"], c))
+                n["edges"] += 1
+            elif json.loads(cur["attrs"]) != json.loads(t["attrs"]) or cur["origin"] != t["origin"]:
+                g.db.execute("UPDATE k_edges SET attrs = ?, origin = ? WHERE src = ? AND type = ? AND dst = ?",
+                             (t["attrs"], t["origin"], *key))
+                n["edges"] += 1
+        for nid in nodes.keys() - target_nodes.keys():
+            g.db.execute("DELETE FROM k_nodes WHERE id = ?", (nid,))
+            n["removed"] += 1
+    return n
+
+
 def drop_ledger(g: Graph, L: str, keep_log: bool = False) -> None:
     """Remove a ledger's image: its node and everything it contains, and (unless keep_log, for a
     re-projection) its carried-over log."""

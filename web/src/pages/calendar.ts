@@ -15,6 +15,7 @@
 import { api, button, choice, dialog, empty, flash, form, frame, go, h, keys, link, main, menu, menuButton, message, onMenu, pageHead, primaryLink, replace, title, when } from '/auth/static/site.js';
 import type { Json, MenuSection } from '/auth/static/site.js';
 import { n_, t } from '../lib/i18n';
+import { copyText } from '../lib/clipboard';
 import { taskList } from '../lib/tasks';
 
 const cal = api('/calendar/api/v1');
@@ -140,7 +141,7 @@ async function subscription(only?: Json): Promise<void> {
   const body = h('div', { class: 'fields' },
     h('label', null, t('구독 주소'), field),
     h('p', { class: 'actions' },
-      button(t('복사'), async () => { await navigator.clipboard?.writeText(f.url); flash('ok', t('복사했습니다.')); }, 'secondary'),
+      button(t('복사'), () => copyText(f.url), 'secondary'),
       button(t('거두기'), (b: HTMLButtonElement) => { revoke = true; b.closest('dialog')?.querySelector<HTMLButtonElement>('button[type=submit]')?.click(); }, 'link')));
   const ok = await dialog(only ? t('{name} 구독 주소', { name: only.name }) : t('폰 캘린더에 넣기'), body, { ok: t('닫기'), cancel: t('취소') });
   if (ok && revoke) {
@@ -156,7 +157,7 @@ async function devices(): Promise<void> {
   const name = h('input', { type: 'text', name: 'device', maxlength: 60, placeholder: t('기기 이름 (폰, 노트북…)'), autocomplete: 'off' });
   const address = h('input', { type: 'text', readonly: true, onfocus: (ev: Event) => (ev.target as HTMLInputElement).select() });
   const user = h('input', { type: 'text', readonly: true });
-  const copy = (value: string) => button(t('복사'), async () => { await navigator.clipboard?.writeText(value); flash('ok', t('복사했습니다.')); }, 'secondary');
+  const copy = (value: string) => button(t('복사'), () => copyText(value), 'secondary');
   async function load(): Promise<void> {
     const r = await cal.get('/devices');
     address.value = r.url; user.value = r.username;
@@ -240,6 +241,8 @@ export async function calendar(): Promise<void> {
   const head = h('div', { class: 'cal-head' });
   const grid = h('div', { class: 'cal-grid', role: 'grid' });
   const week = h('div', { class: 'wk' });
+  const status = h('div', { role: 'status', class: 'muted small' });
+  let rangeVersion = 0, displayedRange = '';
   const panel = h('div', { class: 'cal-day-panel' });
   const byCal = () => Object.fromEntries(calendars.map(c => [c.id, c]));
 
@@ -264,12 +267,6 @@ export async function calendar(): Promise<void> {
     const start = new Date(first); start.setDate(1 - ((first.getDay() + 6) % 7));
     const end = new Date(start); end.setDate(start.getDate() + 42);
     return [start, end];
-  }
-
-  async function load(): Promise<void> {
-    const [a, b] = span();
-    const r = await cal.get(`/events?from=${toUtc(a)}&to=${toUtc(b)}`);
-    events = r.events;
   }
 
   function perDay(): Record<string, Json[]> {
@@ -476,10 +473,29 @@ export async function calendar(): Promise<void> {
   }
 
   async function refresh(): Promise<void> {
-    await load();
-    drawGrid();
-    drawPanel();
-    drawWeek();
+    const version = ++rangeVersion;
+    const [a, b] = span();
+    const range = '/events?from=' + toUtc(a) + '&to=' + toUtc(b);
+    const same = displayedRange === range;
+    if (!same) {
+      events = [];
+      drawGrid(); drawPanel(); drawWeek();
+    }
+    replace(status, t('일정을 불러오는 중…'));
+    try {
+      const r = await cal.get(range);
+      if (version !== rangeVersion || !head.isConnected) return;
+      const scroll = week.querySelector('.wk-body')?.scrollTop;
+      events = r.events;
+      displayedRange = range;
+      replace(status);
+      drawGrid(); drawPanel(); drawWeek();
+      const body = week.querySelector('.wk-body');
+      if (body && same && scroll !== undefined) body.scrollTop = scroll;
+    } catch (e) {
+      if (version !== rangeVersion || !head.isConnected) return;
+      replace(status, message(e), ' ', button(t('다시 시도'), refresh, 'link'));
+    }
   }
 
   async function move(by: number): Promise<void> {
@@ -493,7 +509,6 @@ export async function calendar(): Promise<void> {
   const listed = await cal.get('/calendars');
   calendars = listed.calendars;
   projects = listed.projects ?? [];
-  await load();
   keys([
     { key: 't', label: t('오늘'), run: () => go(view === 'week' ? `/calendar?v=week&d=${today}` : `/calendar?d=${today}`) },
     { key: 'ArrowLeft', label: t('이전'), run: () => move(-1) },
@@ -502,9 +517,7 @@ export async function calendar(): Promise<void> {
     { key: 'w', label: t('주'), run: () => { if (view !== 'week') { view = 'week'; anchor = fromServer(selected || today); remember(); drawHead(); void refresh(); } } },
     { key: 'n', label: t('새 일정'), run: async () => { if (await editEvent(calendars, selected || today).catch(e => { flash('error', message(e)); return false; })) await refresh(); } },
   ]);
-  replace(main(), head, grid, week, panel);
+  replace(main(), head, status, grid, week, panel);
   drawHead();
-  drawGrid();
-  drawPanel();
-  drawWeek();
+  await refresh();
 }

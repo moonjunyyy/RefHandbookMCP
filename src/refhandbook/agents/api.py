@@ -504,6 +504,7 @@ def install(m: Any, *, stores: Callable[[str], Handbook], who: Callable[[Request
                     raise missing(f"{rel}: no such file or directory") from e
                 if kind not in ("dir", "file") or not rel:
                     raise bad(f"{rel or '/work'}: only files and folders of the workspace are downloaded together")
+            ws.zip_selection(rels)
             return ws
         ws = await locked(check)
         parents = {r.rpartition("/")[0] for r in rels}

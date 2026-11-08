@@ -10,11 +10,11 @@ export const LexiconCredits: React.FC<{ lexicons: LoadedLexicon[]; className?: s
         <React.Fragment key={l.id}>
           {i > 0 && ' · '}
           어휘 일부 출처: {l.credit.publisher}{' '}
-          <a href={l.credit.url} target="_blank" rel="noreferrer" className="underline underline-offset-2 hover:text-stone-700">
+          <a href={l.credit.url} target="_blank" rel="noreferrer" className="underline underline-offset-2 hover:text-ink">
             「{l.credit.source}」
           </a>
           {l.credit.dumpCreated && ` (${l.credit.dumpCreated.slice(0, 10).replaceAll('/', '-')} 판)`},{' '}
-          <a href={l.credit.licenseUrl} target="_blank" rel="noreferrer" className="underline underline-offset-2 hover:text-stone-700">
+          <a href={l.credit.licenseUrl} target="_blank" rel="noreferrer" className="underline underline-offset-2 hover:text-ink">
             {l.credit.license}
           </a>
         </React.Fragment>

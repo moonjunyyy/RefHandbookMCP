@@ -1,33 +1,36 @@
+@import "../../../src/portal/static/theme.css";
+@import "../../../src/portal/static/chrome.css";
+@import "../../../src/portal/static/guide.css";
+@import "../../../src/portal/static/background.css";
 @import "tailwindcss";
 
+/* Semantic utilities bind the existing components to the same public theme contract as the site. */
+@theme inline {
+  --color-page: var(--bg); --color-surface: var(--card); --color-soft: var(--soft);
+  --color-ink: var(--text); --color-muted: var(--muted); --color-edge: var(--line);
+  --color-accent: var(--accent); --color-accent-soft: var(--accent-soft);
+  --color-action: var(--accent-fill, var(--accent)); --color-on-action: var(--accent-fill-text, var(--accent-text));
+  --color-success: var(--ok); --color-success-soft: var(--soft);
+  --color-danger: var(--bad); --color-danger-soft: var(--soft); --color-scrim: var(--scrim);
+  --font-sans: var(--sans); --font-serif: var(--serif); --font-mono: var(--mono);
+  --radius-control: var(--control-radius); --radius-panel: var(--panel-radius);
+}
 @layer base {
-  body {
-    font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
-    color: #1c1917;
-    background-color: #fbf9f5;
-  }
+  html { font-size: var(--root-size); }
+  body { margin: 0; color: var(--text); background: var(--bg); font-family: var(--sans); }
+  button, a, input, select, textarea, summary { outline-color: var(--accent); }
+  :where(button, a, input, select, textarea, summary):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button { min-height: 2rem; }
+  input, textarea, select { min-width: 0; max-width: 100%; }
 }
+#root { min-width: 0; overflow-wrap: anywhere; }
+::selection { background: var(--accent-soft); color: var(--text); }
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--soft); }
+::-webkit-scrollbar-thumb { background: var(--line); border-radius: var(--control-radius); }
+::-webkit-scrollbar-thumb:hover { background: var(--muted); }
 
-.font-serif-kr {
-  font-family: 'Gowun Batang', 'Source Serif 4', Georgia, serif;
-}
+.pool-dialog { border: none; width: min(44rem, 100%); margin: auto; color: var(--text); }
+.pool-dialog::backdrop { background: var(--scrim); backdrop-filter: blur(2px); }
 
-.font-display {
-  font-family: 'Cinzel', 'Gowun Batang', Georgia, serif;
-}
-
-/* Custom scrollbar for clean editorial look */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-::-webkit-scrollbar-track {
-  background: #f5f2eb;
-}
-::-webkit-scrollbar-thumb {
-  background: #d6cebe;
-  border-radius: 3px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: #b8ac96;
-}
+#root main { background: var(--page-surface); }

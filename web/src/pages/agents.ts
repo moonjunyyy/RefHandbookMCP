@@ -64,7 +64,8 @@ function flowSection(r: Json): HTMLElement {
     r.preset && h('p', { class: 'small' }, link(`/agents/presets/${r.preset}`, t('이 프리셋 열기'))));
 }
 
-let poll = 0;
+let poll = 0, runVersion = 0;
+let lastRun: { id: string; data: string; root: HTMLElement } | undefined;
 
 /** What a run's branch is to each repository (agents/branches.py): its label and its tag's kind. */
 function branchState(state: string): [string, string] {
@@ -92,14 +93,48 @@ function branches(b: Json | null): Child {
 }
 
 export async function run(id: string): Promise<void> {
+  await drawRun(id);
+}
+
+async function drawRun(id: string, background = false): Promise<void> {
   window.clearTimeout(poll);
-  const r = await agents.get(`/runs/${encodeURIComponent(id)}`);
+  const version = ++runVersion;
+  const here = () => decodeURIComponent(location.pathname.replace(/\/$/, '')) === '/agents/runs/' + id;
+  const schedule = () => {
+    poll = window.setTimeout(() => { if (here()) void drawRun(id, true); }, 5000);
+  };
+  let r: Json;
+  try {
+    r = await agents.get('/runs/' + encodeURIComponent(id));
+  } catch (e) {
+    if (!background) throw e;
+    if (version === runVersion && here()) {
+      const status = lastRun?.root.querySelector('[data-run-update]');
+      if (status) replace(status, t('실행 상태를 갱신하지 못했습니다. 잠시 후 다시 시도합니다.'));
+      schedule();
+    }
+    return;
+  }
+  if (version !== runVersion || !here()) return;
+  if (r.state === 'open') schedule();
+  const data = JSON.stringify(r);
+  const current = lastRun?.id === id && lastRun.root.isConnected ? lastRun : undefined;
+  if (background && current?.data === data) {
+    const status = current.root.querySelector('[data-run-update]');
+    if (status) replace(status);
+    return;
+  }
+  const previous = current?.root.querySelector<HTMLInputElement>('input[name=name]');
+  const focused = previous === document.activeElement;
+  const draft = previous?.value;
+  const root = h('div');
   const g = r.grant;
-  replace(main(),
+  replace(root,
     pageHead(r.title || r.id, agentTabs()), meta(h('code', null, r.id), ' ', phase(r.phase),
       ' · ', t('요청 {who}', { who: r.requested_by === 'model' ? 'Claude' : t('나') })),
     r.approve_url && h('p', { class: 'flash' }, t('Claude가 요청한 실행입니다. 승인 화면에서 키·모델·한도를 정해 승인하면 시작합니다.'), ' ',
       h('a', { href: r.approve_url }, t('승인 화면으로'))),
+    h('div', { role: 'status', class: 'muted small', 'data-run-update': '' }),
     r.error && h('p', { class: 'flash error' }, r.error),
     r.flow ? section(t('입력'), r.input ? h('p', null, r.input) : empty(t('없음 (블럭의 명령만으로 실행)')))
       : section(t('목표'), h('p', null, r.goal)),
@@ -139,9 +174,12 @@ export async function run(id: string): Promise<void> {
     branches(r.branches),
     r.board.length > 0 && section(t('공유된 노트'), r.board.map((n: Json) =>
       h('p', { class: 'small' }, tag(n.state, n.state === 'verified' ? 'ok' : ''), ` ${n.text}`))));
-  if (r.state === 'open' && location.pathname === `/agents/runs/${id}`) {
-    poll = window.setTimeout(() => { if (location.pathname === `/agents/runs/${id}`) void run(id); }, 5000);
-  }
+  const field = root.querySelector<HTMLInputElement>('input[name=name]');
+  if (field && draft !== undefined) field.value = draft;
+  replace(main(), root);
+  lastRun = { id, data, root };
+  if (focused) field?.focus();
+
 }
 
 // ── keys ────────────────────────────────────────────────────────────────

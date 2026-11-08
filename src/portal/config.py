@@ -67,6 +67,13 @@ class Settings:
     kadmin_policy: str = field(default_factory=lambda: _env("KADMIN_POLICY", "users"))
     # Write userPassword: {SASL}principal so LDAP simple binds pass through saslauthd to Kerberos.
     sasl_userpassword: bool = field(default_factory=lambda: _env("SASL_USERPASSWORD", "0") == "1")
+    # SMB passwords (docs/smb.md): every password the site sets in Kerberos also becomes the account's SMB
+    # password (its NT hash in the directory, read by Samba's ldapsam), and a disabled account is disabled
+    # there too. PORTAL_SMB_PASSWORDS, else smb_passwords in [site] of the site file (both the portal and
+    # the sign-in set passwords, and both read it there); on once the directory has Samba's schema,
+    # domain entry and rules.
+    smb_passwords: bool = field(default_factory=lambda: _env("SMB_PASSWORDS", _f().extra.get("smb_passwords", "0")) == "1")
+    workgroup: str = field(default_factory=lambda: _f().workgroup)
 
     # Service identity. Must NOT match "*/admin" (default kadm5.acl grants those everything).
     service_principal: str = field(default_factory=lambda: _env("SERVICE_PRINCIPAL", f"portal/service@{_f().realm}"))
@@ -202,3 +209,8 @@ class Settings:
 
     def project_dn(self, cn: str) -> str:
         return f"cn={cn},{self.projects_ou}"
+
+    @property
+    def samba_domain_dn(self) -> str:
+        """Samba's domain entry, where ldapsam keeps it (sambaDomainName=<workgroup>,<ldap suffix>)."""
+        return f"sambaDomainName={self.workgroup},{self.base_dn}"

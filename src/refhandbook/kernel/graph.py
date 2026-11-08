@@ -626,6 +626,13 @@ class Graph:
         return self.db.execute("DELETE FROM k_edges WHERE src = ? AND type = ? AND dst = ?",
                                (src, type_, dst)).rowcount > 0
 
+    def _set_edge_attrs(self, src: str, type_: str, dst: str, *, actor: str, attrs: dict[str, Any]) -> bool:
+        """Change an edge's attributes and nothing else: who wrote it and when (its clock) stay."""
+        _check_actor(actor)
+        self._check_edge_actor(type_, actor)
+        return self.db.execute("UPDATE k_edges SET attrs = ? WHERE src = ? AND type = ? AND dst = ?",
+                               (json.dumps(attrs, ensure_ascii=False), src, type_, dst)).rowcount > 0
+
     def _check_edge_actor(self, type_: str, actor: str) -> None:
         t = self._require_type(type_, ("edge",))
         if t["authority"] == "kernel" and actor != "kernel":
@@ -656,6 +663,10 @@ class Graph:
     def unlink(self, *a: Any, **k: Any) -> bool:
         with self.tx():
             return self._unlink(*a, **k)
+
+    def set_edge_attrs(self, *a: Any, **k: Any) -> bool:
+        with self.tx():
+            return self._set_edge_attrs(*a, **k)
 
     def edges(self, src: str | None = None, type_: str | None = None, dst: str | None = None) -> list[dict[str, Any]]:
         where, args = [], []

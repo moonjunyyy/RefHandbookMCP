@@ -10,6 +10,7 @@ export PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=${PLAYWRIGHT_HOST_PLATFORM_OVERRIDE:-ub
 export NODE_PATH=${NODE_PATH:-/work/e2e/node_modules}   # where playwright is installed
 export STATIC_ROOT=${STATIC_ROOT:-$(cd ../../src/portal/static && pwd)}
 export DIST_ROOT=${DIST_ROOT:-$(cd ../dist && pwd)}
+export WORDGEN_ROOT=${WORDGEN_ROOT:-$(cd ../../apps/WordGenerator/dist && pwd)}
 export EQ_ROOT=${EQ_ROOT:-/work/frame-e2e/eq}
 # the look's choices as /me carries them (portal/site.py reads [look] of the site file — the mock takes the same declaration)
 export LOOK_JSON=${LOOK_JSON:-$(cd ../.. && PYTHONPATH=src python3 -c 'import json, tomllib; from portal.site import Site, _look; print(json.dumps(Site((), _look(tomllib.load(open("deploy/site.toml", "rb")))).look_in("ko"), ensure_ascii=False))')}
@@ -27,4 +28,7 @@ line=$(head -1 layout.log)
 echo "layout: $line"
 grep '^BAD' layout.log | head -20
 case "$line" in *"violations: 0"*) ok=$((ok + 1));; *) bad=$((bad + 1));; esac
+if node appearance.js; then ok=$((ok + 1)); else bad=$((bad + 1)); fi
+if node procedure.js; then ok=$((ok + 1)); else bad=$((bad + 1)); fi
 echo "steps: $ok ok, $bad failed"
+test "$bad" -eq 0

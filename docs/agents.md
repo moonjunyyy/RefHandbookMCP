@@ -443,7 +443,9 @@ when the run ends done — the person's checkout changes only then, and runs sid
   branch the repository has checked out (fast-forward when it can be). A merge that conflicts, or that would overwrite
   changes the person has not committed, is undone (`git merge --abort`) and the branch is left for them; a run that ended
   cancelled or failed keeps its work on the branch and merges nothing; a branch that gained nothing is deleted. The
-  worktrees and their registrations are removed. The run keeps what became of each repository (`branches` on the run:
+  worktrees and their registrations are removed after successful finalization. If finalization fails before Git
+  confirms the work is on the run branch, the worktree and its registration are preserved and the run reports
+  its location for recovery. The run keeps what became of each repository (`branches` on the run:
   merged · kept · unchanged · failed · lost, the number of files, what git said), and its page shows it.
 - **Every git command on a repository runs in the sandbox**, under the run's policy (its `sh` and `git`, its layers and
   limits, no network, only the binds it needs): an agent can write a repository's config, attributes and hooks, and none

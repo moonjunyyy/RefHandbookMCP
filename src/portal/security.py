@@ -36,6 +36,16 @@ def csrf_ok(session: dict, submitted: str | None) -> bool:
     return bool(expected and submitted and hmac.compare_digest(expected, submitted))
 
 
+def user_key(uid: str) -> str:
+    """The throttle key of an account's failed sign-ins and expired-password changes on a sign-in page."""
+    return f"uid:{uid}"
+
+
+def password_key(uid: str) -> str:
+    """The throttle key of an account's failed password changes on its account page."""
+    return f"pw:{uid}"
+
+
 class Throttle:
     """At most `limit` failures per key in `window` seconds. In-memory: run a single worker."""
 

@@ -6,19 +6,22 @@ account, a reset) is in the answer once and kept nowhere.
 
     GET    me                          the signed-in person: profile, groups, roles, what they may do
     PATCH  me                          {displayName, mail, loginShell}
-    POST   me/password                 {old, new, confirm}
+    POST   me/password                 {old, new, confirm} → {changed[, warning]}
     GET    users?q=                    (helpdesk, admin)
-    POST   users                       {uid, name, mail, loginShell} → {user, password}   (admin)
+    POST   users                       {uid, name, mail, loginShell} → {user, password[, warning]}   (admin)
     GET    users/{uid}                 the account, and what the caller may do to it
-    POST   users/{uid}/reset           → {user, password}
-    POST   users/{uid}/unlock
-    PATCH  users/{uid}                 {enabled}
+    POST   users/{uid}/reset           → {user, password[, warning]}
+    POST   users/{uid}/unlock          the site's lock after failed passwords, and the KDC's → the account[, warning]
+    PATCH  users/{uid}                 {enabled} → the account[, warning]
     PUT    users/{uid}/groups/{group}  /  DELETE users/{uid}/groups/{group}
     DELETE users/{uid}?confirm={uid}
     GET    groups
-    GET    requests                    POST requests/{id}/approve {loginShell} → {user, password}
+    GET    requests                    POST requests/{id}/approve {loginShell} → {user, password[, warning]}
                                        POST requests/{id}/reject
     GET    invites                     POST invites {note} → {invite, link}   POST invites/{id}/revoke
+
+A warning: the site has set a password or disabled an account in Kerberos, and the SMB side could not
+follow (docs/smb.md); the change itself stands.
 """
 
 from __future__ import annotations
@@ -36,6 +39,11 @@ from .rbac import Actor
 from .validators import ValidationError
 
 PREFIX = "/api/v1"
+
+
+def warned(out: dict[str, Any], warning: str | None) -> dict[str, Any]:
+    """An answer, with the warning when there is one."""
+    return {**out, "warning": warning} if warning else out
 ACTIONS = ("view_users", "create_user", "reset_password", "unlock", "set_enabled", "manage_groups", "delete_user",
            "review_requests", "manage_invites")
 
@@ -91,11 +99,11 @@ def install(app: Any, acc: Accounts, *, signed_in_uid: Callable[[Request], str |
         actor = await who(request)
         d = await body(request)
         try:
-            await call(acc.change_password, actor, str(d.get("old", "")), str(d.get("new", "")),
-                       str(d.get("confirm", "")), ip(request))
+            warning = await call(acc.change_password, actor, str(d.get("old", "")), str(d.get("new", "")),
+                                 str(d.get("confirm", "")), ip(request))
         except KerberosError as e:  # a wrong current password, a rejected new one: the person's to fix
             raise bad(str(e)) from e
-        return {"changed": True}
+        return warned({"changed": True}, warning)
 
     @route("/users", ["GET"])
     async def users(request: Request) -> Any:
@@ -106,8 +114,8 @@ def install(app: Any, acc: Accounts, *, signed_in_uid: Callable[[Request], str |
     async def users_create(request: Request) -> Any:
         actor = await who(request)
         d = await body(request)
-        user, password = await call(acc.create, actor, d, ip(request))
-        return answer({"user": user_json(user), "password": password}, 201)
+        user, password, warning = await call(acc.create, actor, d, ip(request))
+        return answer(warned({"user": user_json(user), "password": password}, warning), 201)
 
     @route("/users/{uid}", ["GET"])
     async def user(request: Request) -> Any:
@@ -120,13 +128,14 @@ def install(app: Any, acc: Accounts, *, signed_in_uid: Callable[[Request], str |
     @route("/users/{uid}/reset", ["POST"])
     async def reset(request: Request) -> Any:
         actor = await who(request)
-        target, password = await call(acc.reset_password, actor, request.path_params["uid"], ip(request))
-        return {"user": user_json(target), "password": password}
+        target, password, warning = await call(acc.reset_password, actor, request.path_params["uid"], ip(request))
+        return warned({"user": user_json(target), "password": password}, warning)
 
     @route("/users/{uid}/unlock", ["POST"])
     async def unlock(request: Request) -> Any:
         actor = await who(request)
-        return user_json(await call(acc.unlock, actor, request.path_params["uid"], ip(request)))
+        target, warning = await call(acc.unlock, actor, request.path_params["uid"], ip(request))
+        return warned(user_json(target), warning)
 
     @route("/users/{uid}", ["PATCH"])
     async def user_patch(request: Request) -> Any:
@@ -134,7 +143,8 @@ def install(app: Any, acc: Accounts, *, signed_in_uid: Callable[[Request], str |
         d = await body(request)
         if not isinstance(d.get("enabled"), bool):
             raise bad("enabled: true or false")
-        return user_json(await call(acc.set_enabled, actor, request.path_params["uid"], d["enabled"], ip(request)))
+        target, warning = await call(acc.set_enabled, actor, request.path_params["uid"], d["enabled"], ip(request))
+        return warned(user_json(target), warning)
 
     @route("/users/{uid}/groups/{group}", ["PUT", "DELETE"])
     async def membership(request: Request) -> Any:
@@ -164,9 +174,9 @@ def install(app: Any, acc: Accounts, *, signed_in_uid: Callable[[Request], str |
     async def request_approve(request: Request) -> Any:
         actor = await who(request)
         d = await body(request)
-        user, password = await call(acc.approve_request, actor, request.path_params["rid"],
-                                    str(d.get("loginShell", "")), ip(request))
-        return answer({"user": user_json(user), "password": password}, 201)
+        user, password, warning = await call(acc.approve_request, actor, request.path_params["rid"],
+                                             str(d.get("loginShell", "")), ip(request))
+        return answer(warned({"user": user_json(user), "password": password}, warning), 201)
 
     @route("/requests/{rid}/reject", ["POST"])
     async def request_reject(request: Request) -> Any:

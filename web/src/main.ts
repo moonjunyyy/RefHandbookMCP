@@ -3,8 +3,10 @@
 // the portal's pages and the agents' pages; the sign-in, Claude's consent and the approvals are server
 // pages of their own.
 
-import { frame, h, header, keys, load, main, message, pageHead, replace, section, showPending } from '/auth/static/site.js';
+import { chrome, frame, h, header, keys, load, main, message, pageHead, replace, section, showPending } from '/auth/static/site.js';
 import { t } from './lib/i18n';
+import { canLeave } from './lib/navigation';
+import { closeGuide, pageGuide } from './lib/guides';
 import * as account from './pages/account';
 import * as agents from './pages/agents';
 import { presets } from './pages/flows';
@@ -50,6 +52,7 @@ function routes(): [RegExp, Page][] {
 }
 
 async function render(): Promise<void> {
+  closeGuide();
   const path = location.pathname;
   keys([]);  // a page declares its own keys as it draws (docs/frame.md §5 R14); none carry over
   for (const [re, page] of routes()) {
@@ -58,6 +61,7 @@ async function render(): Promise<void> {
     try {
       await page(...m.slice(1).filter((x): x is string => x !== undefined).map(decodeURIComponent));
       showPending();
+      pageGuide(path);
     } catch (e) {
       replace(main(), pageHead(t('문제가 생겼습니다')), section('', h('p', null, message(e))));
     }
@@ -70,8 +74,14 @@ async function render(): Promise<void> {
 
 async function start(): Promise<void> {
   await load();
-  header();
-  window.addEventListener('popstate', () => void render());
+  chrome();
+  let accepted = location.href;
+  window.addEventListener('popstate', () => {
+    if (!canLeave()) { history.pushState(null, '', accepted); return; }
+    accepted = location.href;
+    void render();
+  });
+  document.addEventListener('vault-note-navigation', () => { accepted = location.href; });
   await render();
 }
 

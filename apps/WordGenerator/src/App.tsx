@@ -139,8 +139,9 @@ export default function App() {
         textarea.style.opacity = '0';
         document.body.appendChild(textarea);
         textarea.select();
-        document.execCommand('copy');
+        const copied = document.execCommand('copy');
         document.body.removeChild(textarea);
+        if (!copied) throw new Error('clipboard unavailable');
       }
       if (customText) {
         setCopiedId(customText);
@@ -292,11 +293,11 @@ export default function App() {
   }, [handleGenerate, handleCopy]);
 
   return (
-    <div className="min-h-screen bg-[#FBF9F5] text-stone-900 flex flex-col justify-between selection:bg-amber-100 selection:text-amber-900">
+    <div className="min-h-screen text-ink flex flex-col justify-between selection:bg-accent-soft selection:text-accent">
       {/* Toast Notification */}
       {toastMessage && (
-        <div className="fixed bottom-6 right-6 z-50 bg-stone-900 text-white text-xs px-4 py-2.5 rounded-md shadow-lg border border-stone-700 animate-fade-in flex items-center gap-2">
-          <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+        <div className="fixed bottom-6 right-6 z-50 bg-action text-on-action text-xs px-4 py-2.5 rounded-control shadow-lg border border-edge animate-fade-in flex items-center gap-2">
+          <span className="w-1.5 h-1.5 rounded-full bg-accent-soft" />
           <span>{toastMessage}</span>
         </div>
       )}
@@ -319,24 +320,24 @@ export default function App() {
           {activeTab === 'generator' && (
             <>
               {/* Editorial Intro Banner */}
-              <div className="border-b border-stone-200 pb-4">
+              <div className="border-b border-edge pb-4">
                 <div className="flex flex-col sm:flex-row sm:items-baseline justify-between gap-2">
-                  <div className="flex items-center gap-2 text-xs text-stone-500 uppercase tracking-widest font-mono">
+                  <div className="flex items-center gap-2 text-xs text-muted uppercase tracking-widest font-mono">
                     <span>CREATIVE WRITING ENGINE</span>
                     <span aria-hidden="true">·</span>
                     <span>KOREAN NOVEL PROMPTS</span>
                   </div>
-                  <div className="text-xs text-stone-400">
+                  <div className="text-xs text-muted">
                     {place?.backend === 'account'
-                      ? <>저장: <span className="text-stone-600 font-medium">{place.uid}</span> 계정</>
+                      ? <>저장: <span className="text-muted font-medium">{place.uid}</span> 계정</>
                       : '저장: 이 브라우저에만'}
                   </div>
-                  <div className="text-xs text-stone-400 hidden sm:block">
+                  <div className="text-xs text-muted hidden sm:block">
                     단축키:{' '}
                     {SHORTCUTS.map((s, i) => (
                       <React.Fragment key={s.action}>
                         {i > 0 && ' · '}
-                        <kbd className="px-1.5 py-0.5 bg-stone-200/80 rounded text-[11px] font-mono text-stone-700">{s.label}</kbd>{' '}
+                        <kbd className="px-1.5 py-0.5 bg-soft rounded-control text-[11px] font-mono text-ink">{s.label}</kbd>{' '}
                         {s.description}
                       </React.Fragment>
                     ))}
@@ -376,8 +377,8 @@ export default function App() {
               {/* Grid of Individual Keyword Cards */}
               <section className="space-y-3">
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2 text-xs text-stone-500">
-                    <span className="font-semibold text-stone-800 uppercase tracking-wider">
+                  <div className="flex items-center gap-2 text-xs text-muted">
+                    <span className="font-semibold text-ink uppercase tracking-wider">
                       개별 키워드 카드 ({keywords.length})
                     </span>
                     <span aria-hidden="true">·</span>
@@ -439,20 +440,20 @@ export default function App() {
       />
 
       {/* Quiet Literary Editorial Footer */}
-      <footer className="mt-16 border-t border-stone-200 bg-stone-100/50 py-8 text-xs text-stone-500">
+      <footer className="mt-16 border-t border-edge bg-soft py-8 text-xs text-muted">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2">
-            <span className="font-serif-kr font-bold text-stone-800">글타래</span>
+            <span className="font-serif font-bold text-ink">글타래</span>
             <span aria-hidden="true">·</span>
             <span>소설 창작용 한국어 키워드 생성기</span>
           </div>
 
-          <p className="font-serif-kr italic text-stone-400 text-center sm:text-right">
+          <p className="font-serif italic text-muted text-center sm:text-right">
             &ldquo;하나의 사물과 뜻밖의 성향이 부딪칠 때, 닫혀 있던 첫 문장이 열린다.&rdquo;
           </p>
         </div>
         <div className="max-w-6xl mx-auto px-4 sm:px-6 mt-3">
-          <LexiconCredits lexicons={lexicons} className="text-[11px] text-stone-400 text-center sm:text-left" />
+          <LexiconCredits lexicons={lexicons} className="text-[11px] text-muted text-center sm:text-left" />
         </div>
       </footer>
     </div>

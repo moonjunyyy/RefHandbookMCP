@@ -46,6 +46,12 @@ function values(form2) {
   return out;
 }
 const EN = {
+  "건너뛰기": "Skip",
+  "다음": "Next",
+  "사용 안내": "Usage guide",
+  "시작하기": "Get started",
+  "안내 완료 상태를 저장하지 못했습니다. 다시 시도하거나 Escape로 닫을 수 있습니다.": "Could not save guide completion. Retry or press Escape to close.",
+  "이전": "Back",
   "서버에 닿지 않습니다. 잠시 뒤 다시 시도하세요.": "The server is not reachable. Try again in a moment.",
   "요청이 실패했습니다 ({status})": "The request failed ({status})",
   "내 메뉴": "My menu",
@@ -61,7 +67,12 @@ const EN = {
   "더 보기": "More",
   "닫기": "Close",
   "이 페이지의 키": "Keys on this page",
-  "이 목록": "this list"
+  "이 목록": "this list",
+  // the widgets' parts (frame/widgets.ts)
+  "{n}개 더": "{n} more",
+  "{n}개": "{n}",
+  "이전 달": "Previous month",
+  "다음 달": "Next month"
 };
 const LANGS = [["ko", "한국어"], ["en", "English"]];
 const CATALOGS = { en: EN };
@@ -84,7 +95,78 @@ function t(text, values2) {
   const out = (current$1 === "ko" ? void 0 : CATALOGS[current$1]?.[text]) ?? text;
   return values2 ? out.replace(/\{(\w+)\}/g, (m, k) => k in values2 ? String(values2[k]) : m) : out;
 }
-const LOOK_KINDS = ["palette", "corner", "type", "size"];
+const COLOR_ROLES = ["bg", "card", "soft", "text", "muted", "line", "accent", "link", "ok", "warn", "bad"];
+function normalizeHex(value) {
+  if (typeof value !== "string") return void 0;
+  const hex2 = value.trim().replace(/^#/, "").toLowerCase();
+  if (/^[0-9a-f]{3}$/.test(hex2)) return "#" + [...hex2].map((c) => c + c).join("");
+  return /^[0-9a-f]{6}$/.test(hex2) ? "#" + hex2 : void 0;
+}
+const parseRgb = (hex2) => [1, 3, 5].map((i) => parseInt(hex2.slice(i, i + 2), 16));
+const hex = (color) => "#" + color.map((c) => c.toString(16).padStart(2, "0")).join("");
+const luma = (color) => color.reduce((sum, channel, i) => {
+  const c = channel / 255;
+  return sum + [0.2126, 0.7152, 0.0722][i] * (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+}, 0);
+const contrast = (a, b) => (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+const gray = (n) => [n, n, n];
+const mix = (a, b, t2) => a.map((n, i) => Math.round(n + (b[i] - n) * t2));
+function readable(value, surfaces, ratio = 4.5) {
+  const source = parseRgb(value);
+  const fits = (color) => surfaces.every((surface) => contrast(luma(color), surface) >= ratio);
+  if (fits(source)) return value;
+  for (let step = 1; step <= 255; step++) {
+    for (const end of [0, 255]) {
+      const candidate = mix(source, gray(end), step / 255);
+      if (fits(candidate)) return hex(candidate);
+    }
+  }
+  for (let n = 0; n <= 255; n++) {
+    if (fits(gray(n))) return hex(gray(n));
+  }
+  return void 0;
+}
+function paletteTokens(colors) {
+  const { bg, card, soft, line, accent } = colors;
+  const tint = hex(mix(parseRgb(card), parseRgb(accent), 0.08));
+  const surfaces = [bg, card, soft].map((c) => luma(parseRgb(c)));
+  const tinted = [...surfaces, luma(parseRgb(tint))];
+  const tintedText = readable(colors.text, tinted);
+  const text = tintedText ?? readable(colors.text, surfaces);
+  if (!text) return void 0;
+  const accentSoft = tintedText ? tint : card;
+  const inks = tintedText ? tinted : surfaces;
+  const inkFor = (color) => readable(color, inks) ?? text;
+  const muted = inkFor(colors.muted);
+  const link2 = inkFor(colors.link);
+  const ok = inkFor(colors.ok);
+  const warn = inkFor(colors.warn);
+  const bad = inkFor(colors.bad);
+  const hover = inkFor(hex(mix(parseRgb(link2), parseRgb(text), 0.22)));
+  const inkOn = (fill) => luma(parseRgb(fill)) >= Math.sqrt(0.0525) - 0.05 ? 0 : 255;
+  const ink = inkOn(accent);
+  return {
+    bg,
+    card,
+    soft,
+    line,
+    text,
+    muted,
+    ok,
+    warn,
+    bad,
+    "bad-text": hex(gray(inkOn(bad))),
+    accent: link2,
+    "accent-hover": hover,
+    "accent-text": hex(gray(inkOn(link2))),
+    "accent-soft": accentSoft,
+    "accent-fill": accent,
+    "accent-fill-hover": hex(mix(parseRgb(accent), gray(255 - ink), 0.14)),
+    "accent-fill-text": hex(gray(ink))
+  };
+}
+const LOOK_KINDS = ["palette", "corner", "type", "heading", "mono", "size"];
+const FONT_KINDS = ["type", "heading", "mono"];
 const THEMES = ["auto", "light", "dark"];
 const DEFAULTS = { lang: "auto", theme: "auto", start: "/", apps: [], home: [], seen: [], look: {} };
 const frame = {
@@ -98,17 +180,69 @@ const frame = {
   cards: [],
   menu: [],
   sizes: [],
-  look: { palette: [], corner: [], type: [], size: [], columns: [] }
+  look: { palette: [], corner: [], type: [], heading: [], mono: [], size: [], columns: [], fonts: "", groups: {} }
 };
 const IMAGE = /^(https:\/\/|\/(?!\/))[^\s"'()\\<>;{}]{1,500}$/;
 const LOOK = "look";
+function lookColors(look, p, scheme) {
+  const style = getComputedStyle(document.documentElement);
+  const preset = look.palette.find((c) => c.id === p.palette)?.[scheme];
+  const overrides = p.colors?.[scheme];
+  const legacy = normalizeHex(p.accent);
+  const result = Object.fromEntries(COLOR_ROLES.map((role) => {
+    const token = role === "link" ? "accent" : role;
+    const base = preset?.[token] ?? style.getPropertyValue("--" + scheme + "-" + token);
+    return [role, normalizeHex(overrides?.[role]) ?? (role === "accent" || role === "link" ? legacy : void 0) ?? normalizeHex(base) ?? normalizeHex(style.getPropertyValue("--" + token)) ?? "#" + (scheme === "dark" ? "f" : "0").repeat(6)];
+  }));
+  return result;
+}
+function editedColors(look, p, scheme) {
+  return paletteTokens(lookColors(look, p, scheme));
+}
+const inRange = (value, max) => typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= max;
+const fontSheet = (id, look = frame.look) => `${look.fonts}${id}.css`;
+function previewFonts(ids = []) {
+  for (const id of ids) {
+    const href = fontSheet(id);
+    if (!frame.look.fonts || document.head.querySelector(`link[data-font-preview="${CSS.escape(id)}"]`)) continue;
+    const l = document.createElement("link");
+    l.rel = "stylesheet";
+    l.href = href;
+    l.dataset.fontPreview = id;
+    document.head.append(l);
+  }
+}
 function lookTokens(look, p) {
   const pick = (k) => look[k]?.find((c) => c.id === p[k]);
   const pal = pick("palette");
-  const both = { ...pick("corner")?.tokens, ...pick("type")?.tokens, ...pick("size")?.tokens };
-  if (p.columns && look.columns.includes(p.columns)) both["home-grid"] = `repeat(${p.columns}, minmax(0, 1fr))`;
-  if (p.image && IMAGE.test(p.image)) both["page-image"] = `url("${p.image}")`;
-  return { light: { ...pal?.light }, dark: { ...pal?.dark }, both };
+  const both = {
+    ...pick("corner")?.tokens,
+    ...pick("type")?.tokens,
+    ...pick("heading")?.tokens,
+    ...pick("mono")?.tokens,
+    ...pick("size")?.tokens
+  };
+  const fonts = look.fonts ? [...new Set(FONT_KINDS.flatMap((k) => pick(k)?.fonts ?? []))].map((id) => fontSheet(id, look)) : [];
+  if (p.columns && look.columns.includes(p.columns)) {
+    const gap = p.columns - 1;
+    both["home-grid"] = "repeat(auto-fill, minmax(min(100%, max(12rem, calc((100% - " + gap + " * var(--gap)) / " + p.columns + "))), 1fr))";
+  }
+  if (inRange(p.radius, 100)) {
+    both.radius = Math.round(p.radius * 0.24) + "px";
+    both["radius-s"] = Math.round(p.radius * 0.1) + "px";
+  }
+  if (p.image && IMAGE.test(p.image)) {
+    both["page-image"] = 'url("' + p.image + '")';
+    both["page-blur"] = (inRange(p.imageBlur, 30) ? p.imageBlur : 0) + "px";
+    both["page-dim"] = (inRange(p.imageDim, 100) ? p.imageDim : 25) + "%";
+    both["page-surface"] = "var(--bg)";
+  }
+  const custom = (scheme) => {
+    const own = p.colors?.[scheme];
+    if (!normalizeHex(p.accent) && !COLOR_ROLES.some((role) => normalizeHex(own?.[role]))) return {};
+    return editedColors(look, p, scheme) ?? {};
+  };
+  return { light: { ...pal?.light, ...custom("light") }, dark: { ...pal?.dark, ...custom("dark") }, both, fonts };
 }
 function applyLook() {
   const t2 = lookTokens(frame.look, prefs.look ?? {});
@@ -124,6 +258,16 @@ function putLook(t2) {
   const set = el.getAttribute("data-theme");
   const dark = set ? set === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
   for (const [k, v] of Object.entries({ ...dark ? t2.dark : t2.light, ...t2.both })) el.style.setProperty(`--${k}`, v);
+  const kept = Array.from(document.head.querySelectorAll("link[data-look-font]"));
+  for (const l of kept) if (!t2.fonts.includes(l.getAttribute("href") ?? "")) l.remove();
+  for (const href of t2.fonts) {
+    if (kept.some((l2) => l2.getAttribute("href") === href && l2.isConnected)) continue;
+    const l = document.createElement("link");
+    l.rel = "stylesheet";
+    l.href = href;
+    l.setAttribute("data-look-font", "");
+    document.head.append(l);
+  }
 }
 let schemeWatched = false;
 function sizeOf(id) {
@@ -149,6 +293,7 @@ function fromStored(raw, cards) {
   const p = { ...DEFAULTS, ...raw, apps: [...DEFAULTS.apps] };
   if ("apps" in raw) p.apps = Array.isArray(raw.apps) ? raw.apps : [];
   if (!Array.isArray(p.home)) p.home = [];
+  p.guides = Array.isArray(p.guides) ? p.guides.filter((x) => typeof x === "string") : [];
   if (!("apps" in raw) && (Array.isArray(raw.order) || Array.isArray(raw.hidden))) {
     const hidden = new Set(raw.hidden ?? []);
     const order = raw.order ?? [];
@@ -181,7 +326,17 @@ async function load() {
   frame.menu ??= [];
   frame.sizes = Array.isArray(frame.sizes) && frame.sizes.length ? frame.sizes : [{ id: "1x1", cols: 1, rows: 1 }];
   const given = frame.look ?? {};
-  frame.look = { palette: given.palette ?? [], corner: given.corner ?? [], type: given.type ?? [], size: given.size ?? [], columns: given.columns ?? [] };
+  frame.look = {
+    palette: given.palette ?? [],
+    corner: given.corner ?? [],
+    type: given.type ?? [],
+    heading: given.heading ?? [],
+    mono: given.mono ?? [],
+    size: given.size ?? [],
+    columns: given.columns ?? [],
+    fonts: given.fonts ?? "",
+    groups: given.groups ?? {}
+  };
   DEFAULTS.apps = frame.cards.filter((c) => c.default && c.optional).map((c) => c.id);
   let raw = {};
   try {
@@ -212,22 +367,30 @@ async function load() {
   remember();
   return frame;
 }
-async function savePrefs(change) {
-  Object.assign(prefs, change);
-  if ("lang" in change) setLang(prefs.lang);
-  remember();
-  if (!frame.uid) return;
-  const r = await fetch(STORE, {
-    method: "PUT",
-    credentials: "same-origin",
-    body: JSON.stringify(prefs),
-    headers: { "Content-Type": "application/json", "X-Requested-With": "fetch" }
+let preferenceWrite = Promise.resolve();
+function savePrefs(update) {
+  const write = preferenceWrite.then(async () => {
+    const change = typeof update === "function" ? update() : update;
+    const next = { ...prefs, ...change };
+    if (frame.uid) {
+      const r = await fetch(STORE, {
+        method: "PUT",
+        credentials: "same-origin",
+        body: JSON.stringify(next),
+        headers: { "Content-Type": "application/json", "X-Requested-With": "fetch" }
+      });
+      if (!r.ok) throw new Error(`prefs: ${r.status}`);
+      try {
+        localStorage.setItem(KNOWN, "1");
+      } catch {
+      }
+    }
+    Object.assign(prefs, next);
+    if ("lang" in change) setLang(prefs.lang);
+    remember();
   });
-  if (!r.ok) throw new Error(`prefs: ${r.status}`);
-  try {
-    localStorage.setItem(KNOWN, "1");
-  } catch {
-  }
+  preferenceWrite = write.catch(() => void 0);
+  return write;
 }
 const onApps = () => prefs.apps.map((id) => frame.cards.find((c) => c.id === id && c.optional)).filter((c) => !!c);
 function ownCard(base = document.baseURI) {
@@ -320,6 +483,20 @@ function hoverMenu(d) {
   });
   return d;
 }
+let pageHelp = null;
+function setHelp(open) {
+  pageHelp = open;
+  header();
+}
+function chrome() {
+  let top = document.getElementById("nav")?.closest("header");
+  if (!top) {
+    top = h("header", null, h("a", { class: "brand", href: "/", id: "brand" }), h("nav", { id: "nav" }));
+    document.body.prepend(top);
+  }
+  header();
+  return top;
+}
 function header() {
   const brand = document.getElementById("brand");
   if (brand) brand.textContent = frame.title;
@@ -354,15 +531,13 @@ function header() {
           own.flatMap((c) => [h("a", { href: c.href }, c.title), ...c.links.filter((l) => l.href !== c.href).map((l) => h("a", { href: l.href }, l.label))]),
           h("a", { href: "/apps" }, t("앱")),
           h("a", { href: "/settings" }, t("설정")),
+          pageHelp && h("button", { type: "button", onclick: () => pageHelp?.() }, t("사용 안내")),
           h("hr"),
           h("a", { href: `${frame.signin}/logout` }, t("로그아웃"))
         )
       ))
     ],
-    !frame.uid && [
-      h("a", { href: "/apps" }, t("앱")),
-      h("a", { href: `${frame.signin}/login?next=${encodeURIComponent(location.pathname)}` }, t("로그인"))
-    ]
+    !frame.uid && h("a", { href: `${frame.signin}/login?next=${encodeURIComponent(location.pathname)}` }, t("로그인"))
   );
   if (!closing) {
     closing = true;
@@ -630,9 +805,9 @@ function menu(at, sections, opts = {}) {
       back?.focus();
     }
   };
-  const items = () => Array.from(el.querySelectorAll(".menu-item:not(:disabled)"));
+  const items2 = () => Array.from(el.querySelectorAll(".menu-item:not(:disabled)"));
   el.addEventListener("keydown", (ev) => {
-    const list = items();
+    const list = items2();
     const i = list.indexOf(document.activeElement);
     if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
       ev.preventDefault();
@@ -676,7 +851,7 @@ function menu(at, sections, opts = {}) {
       window.addEventListener("scroll", done, true);
     }
   });
-  items()[0]?.focus();
+  items2()[0]?.focus();
   return el;
 }
 function onMenu(el, build, opts = {}) {
@@ -754,7 +929,7 @@ function spanStyle(sizeId) {
   const s = sizeOf(sizeId);
   return `grid-column: span ${s.cols}; grid-row: span ${s.rows};`;
 }
-async function mount(cell, c, w) {
+async function mount(cell, c, w, size = sizeOf(w.size)) {
   const body = h("div", { class: "widget-body" });
   replace(cell, w.id === LAUNCHER ? null : h(
     "div",
@@ -774,20 +949,270 @@ async function mount(cell, c, w) {
       w.href
     );
     if (typeof mod.default !== "function") throw new Error(`${w.href}: no default export`);
-    await mod.default(body, { frame, prefs, t, lang: lang(), theme: frame.theme, go, api, card: c, widget: w });
+    await mod.default(body, { frame, prefs, t, lang: lang(), theme: frame.theme, go, api, card: c, widget: w, size });
   } catch (e) {
     console.warn("widget", c.id, w.id, e);
     replace(body, launcher(c));
   }
 }
-function widgetList(items, none) {
-  return items.length ? h("ul", { class: "widget-list" }, items.map((i) => h("li", null, h("a", { href: i.href }, i.text), i.aside && [" ", h("span", { class: "muted small" }, i.aside)]))) : h("p", { class: "muted small" }, none);
+function fit(ctx) {
+  const per = Number.parseInt(getComputedStyle(document.documentElement).getPropertyValue("--cell-items"), 10);
+  return ctx.size.rows * (per > 0 ? per : 1);
+}
+const pad = (n) => String(n).padStart(2, "0");
+const dayKey = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+function ago(when2, now = Date.now()) {
+  const ms = (when2 instanceof Date ? when2.getTime() : when2) - now;
+  const units = [["year", 31536e6], ["month", 2592e6], ["week", 6048e5], ["day", 864e5], ["hour", 36e5], ["minute", 6e4]];
+  const rtf = new Intl.RelativeTimeFormat(locale(), { numeric: "auto" });
+  for (const [unit, size] of units) if (Math.abs(ms) >= size) return rtf.format(Math.round(ms / size), unit);
+  return rtf.format(0, "minute");
+}
+function mark(el, colour) {
+  if (colour && CSS.supports("color", colour)) el.style.setProperty("--mark", colour);
+  return el;
+}
+function itemRow(i) {
+  return h(
+    "li",
+    { class: "item", "data-state": i.state ?? null },
+    i.lead !== void 0 && i.lead !== null && h("span", { class: "item-lead" }, i.lead),
+    i.mark !== void 0 && mark(h("span", { class: "item-mark", "aria-hidden": "true" }), i.mark),
+    h(
+      "span",
+      { class: "item-main" },
+      i.href ? h("a", { class: "item-text", href: i.href, title: i.title ?? null }, i.text) : h("span", { class: "item-text", title: i.title ?? null }, i.text),
+      i.sub !== void 0 && i.sub !== null && i.sub !== "" && h("span", { class: "item-sub" }, i.sub)
+    ),
+    i.aside !== void 0 && i.aside !== null && i.aside !== "" && h("span", { class: "item-aside" }, i.aside)
+  );
+}
+const isGroups = (x) => x.length > 0 && "items" in x[0];
+function groupHead(title2, aside) {
+  return h("p", { class: "items-group" }, h("span", null, title2), aside !== void 0 && aside !== null && h("span", { class: "items-count" }, aside));
+}
+function items(list, none, more) {
+  const groups = isGroups(list) ? list.filter((g) => g.items.length) : [];
+  if (!groups.length && (isGroups(list) || !list.length)) return h("p", { class: "items-none muted small" }, none);
+  return h(
+    "div",
+    { class: "items" },
+    groups.length ? groups.map((g) => [groupHead(g.title, g.aside), h("ul", { class: "items-list" }, g.items.map(itemRow))]) : h("ul", { class: "items-list" }, list.map(itemRow)),
+    more && more.n > 0 && h("a", { class: "items-more small", href: more.href }, t("{n}개 더", { n: more.n }))
+  );
+}
+function widgetList(list, none) {
+  return items(list.map((i) => ({ href: i.href, text: i.text, aside: i.aside })), none);
+}
+function stats(list) {
+  return h("div", { class: "stats" }, list.map((s) => {
+    const body = [h("b", { class: "stat-n" }, String(s.n)), h("span", { class: "stat-label" }, s.label)];
+    return s.href ? h("a", { class: "stat", href: s.href, "data-tone": s.tone || null }, body) : h("span", { class: "stat", "data-tone": s.tone || null }, body);
+  }));
+}
+function meter(value, max, label) {
+  const bar = h("span", { class: "meter-bar" });
+  bar.style.setProperty("--v", String(max > 0 ? Math.min(1, value / max) : 0));
+  return h(
+    "div",
+    { class: "meter" },
+    h("span", { class: "meter-track", role: "progressbar", "aria-valuemin": 0, "aria-valuemax": max, "aria-valuenow": value, "aria-label": label }, bar),
+    h("span", { class: "meter-label small muted" }, label)
+  );
+}
+const LEVELS = 3;
+const level = (n, max) => n <= 0 || max <= 0 ? 0 : Math.max(1, Math.ceil(LEVELS * n / max));
+function dayStrip(days, today = /* @__PURE__ */ new Date()) {
+  const max = Math.max(0, ...days.map((d) => d.n));
+  const now = dayKey(today);
+  return h("ol", { class: "day-strip" }, days.map((d) => {
+    const label = `${d.date.toLocaleDateString(locale(), { month: "long", day: "numeric", weekday: "long" })} · ${t("{n}개", { n: d.n })}`;
+    const dots = h(
+      "span",
+      { class: "day-dots", "aria-hidden": "true" },
+      [...new Set(d.marks?.length ? d.marks : d.n ? [""] : [])].slice(0, LEVELS).map((c) => mark(h("span", { class: "day-dot" }), c || void 0))
+    );
+    const inner = [
+      h("span", { class: "day-wd" }, d.date.toLocaleDateString(locale(), { weekday: "narrow" })),
+      h("span", { class: "day-num" }, String(d.date.getDate())),
+      dots
+    ];
+    return h(
+      "li",
+      { class: "day", "data-today": dayKey(d.date) === now ? "" : null, "data-level": level(d.n, max) },
+      d.href ? h("a", { href: d.href, "aria-label": label, title: label }, inner) : h("span", { "aria-label": label, title: label }, inner)
+    );
+  }));
+}
+function monthGrid(m) {
+  const first = new Date(m.year, m.month, 1);
+  const start = new Date(first);
+  start.setDate(1 - (first.getDay() + 6) % 7);
+  const days = [...Array(42)].map((_, i) => {
+    const d = new Date(start);
+    d.setDate(start.getDate() + i);
+    return d;
+  });
+  const weeks = days[35].getMonth() === m.month ? 6 : 5;
+  const max = Math.max(0, ...m.counts.values());
+  const now = dayKey(m.today ?? /* @__PURE__ */ new Date());
+  const names = days.slice(0, 7).map((d) => d.toLocaleDateString(locale(), { weekday: "narrow" }));
+  const nav = (by, text, label) => m.move && h("button", { type: "button", class: "month-nav", "aria-label": label, onclick: () => m.move?.(by) }, text);
+  return h(
+    "div",
+    { class: "month" },
+    h(
+      "div",
+      { class: "month-head" },
+      nav(-1, "‹", t("이전 달")),
+      h("span", { class: "month-title" }, first.toLocaleDateString(locale(), { year: "numeric", month: "long" })),
+      nav(1, "›", t("다음 달"))
+    ),
+    h(
+      "div",
+      { class: "month-grid", role: "grid" },
+      names.map((n) => h("span", { class: "month-wd", "aria-hidden": "true" }, n)),
+      days.slice(0, weeks * 7).map((d) => {
+        const k = dayKey(d);
+        const n = m.counts.get(k) ?? 0;
+        return h("button", {
+          type: "button",
+          class: "month-day",
+          "data-level": level(n, max),
+          "data-today": k === now ? "" : null,
+          "data-out": d.getMonth() !== m.month ? "" : null,
+          "aria-pressed": m.picked ? String(k === m.picked) : null,
+          "aria-label": `${d.toLocaleDateString(locale(), { month: "long", day: "numeric", weekday: "short" })} · ${t("{n}개", { n })}`,
+          onclick: () => m.pick?.(k)
+        }, String(d.getDate()));
+      })
+    )
+  );
+}
+function bars(list, none) {
+  if (!list.length) return h("p", { class: "items-none muted small" }, none);
+  const max = Math.max(...list.map((b) => b.n));
+  return h("ul", { class: "bars" }, list.map((b) => {
+    const fill = h("span", { class: "bar-fill" });
+    fill.style.setProperty("--v", String(max > 0 ? b.n / max : 0));
+    const inner = [h("span", { class: "bar-label" }, b.label), h("span", { class: "bar-track", "aria-hidden": "true" }, fill), h("span", { class: "bar-n" }, String(b.n))];
+    return h("li", null, b.href ? h("a", { href: b.href }, inner) : h("span", null, inner));
+  }));
+}
+function activity(days, label) {
+  const max = Math.max(0, ...days.map((d) => d.n));
+  return h("div", { class: "activity", role: "img", "aria-label": label }, days.map((d) => {
+    const col = h("span", { class: "act", "data-level": level(d.n, max), title: `${d.date.toLocaleDateString(locale(), { month: "numeric", day: "numeric" })} · ${d.n}` });
+    col.style.setProperty("--v", String(max > 0 ? d.n / max : 0));
+    return col;
+  }));
 }
 const openWord = () => t("열기");
+function guide(id, title2, steps, _host) {
+  if (!steps.length || !frame.uid) return () => void 0;
+  let sheet;
+  let target = null;
+  let previous = null;
+  const clearTarget = () => {
+    target?.classList.remove("guide-target");
+    target = null;
+  };
+  function close() {
+    clearTarget();
+    sheet?.close();
+    sheet?.remove();
+    sheet = void 0;
+    const back = previous?.isConnected && previous.closest("details:not([open])")?.querySelector("summary") || previous;
+    if (back?.isConnected) back.focus({ preventScroll: true });
+  }
+  function open() {
+    if (sheet) return;
+    previous = document.activeElement;
+    let index = 0;
+    const heading = h("h2", { id: "guide-heading" });
+    const text = h("p", { id: "guide-text" });
+    const count = h("p", { class: "muted small", "aria-live": "polite" });
+    const error = h("p", { class: "guide-error", role: "alert" });
+    const back = h("button", { type: "button", class: "secondary", onclick: () => {
+      index--;
+      draw();
+    } }, t("이전"));
+    const next = h("button", { type: "button", onclick: () => {
+      if (index < steps.length - 1) {
+        index++;
+        draw();
+      } else void finish();
+    } });
+    const skip = h("button", { type: "button", class: "secondary", onclick: () => {
+      void finish();
+    } }, t("건너뛰기"));
+    async function finish() {
+      back.disabled = next.disabled = skip.disabled = true;
+      try {
+        await savePrefs(() => ({ guides: [.../* @__PURE__ */ new Set([...prefs.guides ?? [], id])] }));
+        close();
+      } catch {
+        error.textContent = t("안내 완료 상태를 저장하지 못했습니다. 다시 시도하거나 Escape로 닫을 수 있습니다.");
+        next.disabled = skip.disabled = false;
+        back.disabled = index === 0;
+      }
+    }
+    function draw() {
+      clearTarget();
+      const step = steps[index];
+      heading.textContent = `${title2} · ${step.title}`;
+      text.textContent = step.text;
+      count.textContent = `${index + 1} / ${steps.length}`;
+      back.disabled = index === 0;
+      next.textContent = index < steps.length - 1 ? t("다음") : t("시작하기");
+      target = step.target ? document.querySelector(step.target) : null;
+      target?.classList.add("guide-target");
+      if (target) target.scrollIntoView({ block: "center", behavior: "instant" });
+      next.focus();
+    }
+    sheet = h(
+      "dialog",
+      { class: "site-guide", "aria-labelledby": "guide-heading", "aria-describedby": "guide-text" },
+      count,
+      heading,
+      text,
+      error,
+      h("div", { class: "actions" }, skip, back, next)
+    );
+    sheet.addEventListener("keydown", (ev) => {
+      ev.stopPropagation();
+      if (ev.key !== "Tab") return;
+      const controls = Array.from(sheet.querySelectorAll("button:not(:disabled)"));
+      const first = controls[0], last = controls[controls.length - 1];
+      if (ev.shiftKey && document.activeElement === first) {
+        ev.preventDefault();
+        last.focus();
+      } else if (!ev.shiftKey && document.activeElement === last) {
+        ev.preventDefault();
+        first.focus();
+      }
+    });
+    sheet.addEventListener("cancel", (ev) => {
+      ev.preventDefault();
+      close();
+    });
+    document.body.append(sheet);
+    sheet.showModal();
+    draw();
+  }
+  setHelp(open);
+  if (!(prefs.guides ?? []).includes(id)) open();
+  return () => {
+    close();
+    setHelp(null);
+  };
+}
 const version = 1;
 export {
   ApiError,
+  COLOR_ROLES,
   DEFAULTS,
+  FONT_KINDS,
   IMAGE,
   LANGS,
   LAUNCHER,
@@ -795,24 +1220,36 @@ export {
   THEMES,
   account,
   act,
+  activity,
   agents,
+  ago,
   api,
   append,
   applyLook,
   applyTheme,
+  bars,
   button,
   choice,
+  chrome,
   closeMenu,
+  dayKey,
+  dayStrip,
   dialog,
+  editedColors,
   empty,
+  fit,
   flash,
   flashNext,
+  fontSheet,
   form,
   frame,
   go,
+  groupHead,
+  guide,
   h,
   header,
   help,
+  items,
   keys,
   keysDialog,
   lang,
@@ -820,14 +1257,18 @@ export {
   link,
   load,
   locale,
+  lookColors,
   lookTokens,
   main,
   menu,
   menuButton,
   message,
   meta,
+  meter,
+  monthGrid,
   mount,
   n_,
+  normalizeHex,
   num,
   onApps,
   onMenu,
@@ -835,6 +1276,7 @@ export {
   ownCard,
   pageHead,
   prefs,
+  previewFonts,
   primaryLink,
   replace,
   resolveLang,
@@ -846,6 +1288,7 @@ export {
   site,
   sizeOf,
   spanStyle,
+  stats,
   svg,
   t,
   tag,

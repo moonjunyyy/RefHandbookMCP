@@ -11,6 +11,8 @@
 import { api, button, choice, dialog, empty, flash, frame, go, h, help, keys, main, menuButton, message, onMenu, pageHead, primaryLink, replace, tag, title, toggle } from '/auth/static/site.js';
 import type { Json, MenuSection } from '/auth/static/site.js';
 import { n_, t } from '../lib/i18n';
+import { copyText } from '../lib/clipboard';
+import { canLeave, watchDraft } from '../lib/navigation';
 
 const vaults = api('/vault/api/v1');
 const LAST = 'vault.last';  // the vault this browser opened last
@@ -98,7 +100,7 @@ export async function vault(vid = '', path = ''): Promise<void> {
   const vaultMenu = (): MenuSection[] => [
     { title: current.name, items: [
       { label: t('이름 바꾸기…'), run: async () => { if (await renameVault(current)) await vault(current.id, opened?.path ?? ''); } },
-      { label: t('경로'), detail: current.path, run: async () => { await navigator.clipboard?.writeText(current.path); flash('ok', t('복사했습니다.')); } },
+      { label: t('경로'), detail: current.path, run: () => copyText(current.path) },
       { label: t('다시 시도'), detail: t('폴더를 고친 뒤'), disabled: current.status === 'ok', run: async () => { await vaults.post(`/vaults/${current.id}/retry`); await vault(current.id); } },
       { label: t('볼트 빼기'), danger: true, detail: t('파일은 남습니다'), run: async () => { if (await removeVault(current)) { try { localStorage.removeItem(LAST); } catch { /* off */ } await vault(); } } } ] },
     { items: [{ label: t('볼트 추가…'), run: async () => { if (await addVault(roots)) await vault(current.id, opened?.path ?? ''); } }] }];
@@ -151,6 +153,7 @@ export async function vault(vid = '', path = ''): Promise<void> {
     let q = to.value.trim().replace(/^\/+|\/+$/g, '');
     if (!q || q === p) return;
     if (p.endsWith('.md') && !/\.\w+$/.test(q)) q += '.md';
+    if (dirty() && !await leaveEditor()) return;
     try { await v.post('/move', { from: p, to: q }); go(noteHref(current.id, q)); } catch (e) { flash('error', message(e)); }
   }
 
@@ -189,28 +192,33 @@ export async function vault(vid = '', path = ''): Promise<void> {
     for (let d = li.parentElement?.closest('details'); d; d = d.parentElement?.closest('details')) d.open = true;
   }
 
-  function drawSide(hits?: Json[]): void {
-    const search = h('input', { type: 'search', placeholder: t('노트 찾기'), 'aria-label': t('노트 찾기'),
-                                value: (aside.querySelector('input[type=search]') as HTMLInputElement | null)?.value ?? '' });
-    let timer = 0;
-    search.addEventListener('input', () => {
-      window.clearTimeout(timer);
-      const q = search.value.trim();
-      timer = window.setTimeout(async () => {
-        if (!q) { drawSide(); return; }
-        try { drawSide((await v.get(`/search?q=${encodeURIComponent(q)}`)).hits); } catch (e) { flash('error', message(e)); }
-      }, 250);
-    });
-    replace(aside,
-      vaultHead(),
-      search,
-      h('p', { class: 'tree-head' }, button(t('새 노트'), () => newNote(folder), 'secondary')),
-      hits ? h('ul', { class: 'tree hits' }, hits.length ? hits.map(x => h('li', null, h('a', { href: noteHref(current.id, x.path) }, x.title),
-                                                                           h('p', { class: 'snippet small muted' }, x.snippet))) : h('li', { class: 'muted' }, t('없음')))
-           : treeList(tree));
-    const again = aside.querySelector('input[type=search]') as HTMLInputElement | null;
-    if (hits && again) { again.focus(); again.setSelectionRange(again.value.length, again.value.length); }
+  const search = h('input', { type: 'search', placeholder: t('노트 찾기'), 'aria-label': t('노트 찾기') });
+  const found = h('div');
+  let timer = 0, queryVersion = 0;
+  search.addEventListener('input', () => {
+    const version = ++queryVersion;
+    window.clearTimeout(timer);
+    const q = search.value.trim();
+    if (!q) { drawTree(); return; }
+    timer = window.setTimeout(async () => {
+      try {
+        const { hits } = await v.get('/search?q=' + encodeURIComponent(q));
+        if (version !== queryVersion || !found.isConnected) return;
+        replace(found, h('ul', { class: 'tree hits' }, hits.length ? hits.map((x: Json) => h('li', null,
+          h('a', { href: noteHref(current.id, x.path) }, x.title), h('p', { class: 'snippet small muted' }, x.snippet)))
+          : h('li', { class: 'muted' }, t('없음'))));
+      } catch (e) { if (version === queryVersion && found.isConnected) flash('error', message(e)); }
+    }, 250);
+  });
+  function drawTree(): void {
+    replace(found, treeList(tree));
   }
+  replace(aside, vaultHead(), search,
+    h('p', { class: 'tree-head' }, button(t('새 노트'), () => newNote(folder), 'secondary')), found);
+  drawTree();
+  // ?q=… opens the page on a search (the main page's tags widget leads here with a tag)
+  const asked = new URLSearchParams(location.search).get('q');
+  if (asked) { search.value = asked; search.dispatchEvent(new Event('input')); }
 
   async function newNote(dir = ''): Promise<void> {
     const name = h('input', { type: 'text', required: true, value: dir ? `${dir}/` : '', autofocus: true });
@@ -219,6 +227,7 @@ export async function vault(vid = '', path = ''): Promise<void> {
     let p = name.value.trim().replace(/^\/+|\/+$/g, '');
     if (!p) return;
     if (!/\.\w+$/.test(p)) p += '.md';
+    if (dirty() && !await leaveEditor()) return;
     try {
       await v.put(`/file?path=${encodeURIComponent(p)}`, { text: `# ${p.split('/').pop()!.replace(/\.md$/, '')}\n\n` });
       go(noteHref(current.id, p));
@@ -239,11 +248,12 @@ export async function vault(vid = '', path = ''): Promise<void> {
   const dirty = () => !!(editing && area && opened && area.value !== opened.text);
 
   /** Leave the editor: back to the view; a change not yet saved asks first. */
-  async function leaveEditor(): Promise<void> {
-    if (!editing) return;
-    if (dirty() && !await dialog(t('저장하지 않은 변경'), h('p', null, t('저장하지 않고 보기로 돌아갑니다.')), { ok: t('돌아가기'), danger: true })) return;
+  async function leaveEditor(): Promise<boolean> {
+    if (!editing) return true;
+    if (dirty() && !await dialog(t('저장하지 않은 변경'), h('p', null, t('저장하지 않고 보기로 돌아갑니다.')), { ok: t('돌아가기'), danger: true })) return false;
     editing = false;
     await drawNote();
+    return true;
   }
 
   async function drawNote(): Promise<void> {
@@ -253,10 +263,14 @@ export async function vault(vid = '', path = ''): Promise<void> {
     }
     const o = opened;
     const links = h('span', { class: 'backlinks-slot' });
+    const editorToggle = toggle(t('편집'), editing, async on => {
+      if (on) { editing = true; await drawNote(); }
+      else if (!await leaveEditor()) editorToggle.querySelector('input')!.checked = true;
+    });
     const head = onMenu(h('div', { class: 'note-head' },
       h('h1', null, o.path.replace(/\.md$/, '')),
       h('span', { class: 'actions' },
-        toggle(t('편집'), editing, async on => { if (on) { editing = true; await drawNote(); } else await leaveEditor(); }),
+        editorToggle,
         links,
         menuButton(() => noteMenu(o.path, true)))), () => noteMenu(o.path, true));
     backlinks(links, o.path);
@@ -264,6 +278,7 @@ export async function vault(vid = '', path = ''): Promise<void> {
       area = null;
       const body = h('div', { class: 'note-body' });
       if (o.path.endsWith('.md') && md.hasMath(o.text)) await md.loadMath();  // KaTeX, the first time a note needs it
+      if (opened !== o || editing) return;
       body.innerHTML = o.path.endsWith('.md') ? render(o.text) : `<pre class="wrap"></pre>`;
       if (!o.path.endsWith('.md')) body.querySelector('pre')!.textContent = o.text;
       replace(article, head, body);
@@ -274,8 +289,10 @@ export async function vault(vid = '', path = ''): Promise<void> {
     const saved = h('span', { class: 'muted small', role: 'status' });
     // the hash the note was read with goes along: a change made elsewhere is refused, never overwritten
     const save = button(t('저장'), async () => {
-      const r = await fetchPut(`/file?path=${encodeURIComponent(o.path)}`, { text: ta.value }, o.sha256);
-      o.text = ta.value; o.sha256 = r.sha256;
+      const submitted = ta.value;
+      const r = await fetchPut(`/file?path=${encodeURIComponent(o.path)}`, { text: submitted }, o.sha256);
+      o.text = submitted; o.sha256 = r.sha256;
+      if (ta.value !== submitted) { replace(saved, t('아직 저장하지 않은 변경이 있습니다.')); return; }
       replace(saved, t('저장됨 {time}', { time: new Date().toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) }));
     });
     ta.addEventListener('keydown', ev => { if ((ev.metaKey || ev.ctrlKey) && ev.key === 's') { ev.preventDefault(); save.click(); } });
@@ -291,19 +308,24 @@ export async function vault(vid = '', path = ''): Promise<void> {
     return data;
   }
 
+  let noteVersion = 0;
   async function open(p: string): Promise<void> {
+    const version = ++noteVersion;
     editing = false;
     if (!p) p = paths.has(HOME) ? HOME : (notes[0]?.[0] ?? '');
-    if (!p) { opened = null; folder = ''; drawSide(); await drawNote(); return; }
+    if (!p) { opened = null; folder = ''; drawTree(); await drawNote(); return; }
     try {
-      opened = await v.get(`/file?path=${encodeURIComponent(p)}`);
+      const next = await v.get(`/file?path=${encodeURIComponent(p)}`);
+      if (version !== noteVersion || !article.isConnected) return;
+      opened = next;
     } catch (e) {
+      if (version !== noteVersion || !article.isConnected) return;
       flash('error', message(e));
       opened = null;
     }
     folder = p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '';
     title(`${p.replace(/\.md$/, '')} · ${t('노트')}`);
-    if (aside.querySelector('ul.tree')) markCurrent(); else drawSide();  // the tree is drawn once per vault
+    markCurrent();
     await drawNote();
   }
 
@@ -314,16 +336,20 @@ export async function vault(vid = '', path = ''): Promise<void> {
     const base = `/vault/${current.id}/`;
     if (!a || !a.getAttribute('href')?.startsWith(base)) return;
     ev.preventDefault();
-    history.pushState(null, '', a.getAttribute('href')!);
-    void open(a.getAttribute('href')!.slice(base.length).split('/').map(decodeURIComponent).join('/').split('#')[0]);
+    if (!canLeave()) return;
+    const url = new URL(a.href);
+    history.pushState(null, '', url);
+    document.dispatchEvent(new Event('vault-note-navigation'));
+    void open(url.pathname.slice(base.length).split('/').map(decodeURIComponent).join('/'));
   };
   keys([
     { key: '/', label: t('노트 찾기'), run: () => { (aside.querySelector('input[type=search]') as HTMLInputElement | null)?.focus(); } },
     { key: 'n', label: t('새 노트'), run: () => newNote(folder) },
     { key: 'e', label: t('편집'), run: async () => { if (!opened) return; if (editing) await leaveEditor(); else { editing = true; await drawNote(); } }, when: () => !!opened },
-    { key: 'Escape', label: t('보기로'), run: leaveEditor, when: () => editing },
+    { key: 'Escape', label: t('보기로'), run: async () => { await leaveEditor(); }, when: () => editing },
   ]);
   const page = h('div', { class: 'vault', onclick: within }, aside, article);
   replace(main(), page);
+  watchDraft(page, dirty);
   await open(path);
 }

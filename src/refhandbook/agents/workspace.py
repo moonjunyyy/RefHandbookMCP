@@ -484,6 +484,8 @@ class Workspace:
         rel = (rel or ".").strip()
         rel = rel[len("/work"):] if rel == "/work" or rel.startswith("/work/") else rel
         parts = [p for p in rel.split("/") if p not in ("", ".")]
+        if "\x00" in rel:
+            raise WorkspaceError("a workspace path cannot contain NUL")
         if any(p == ".." for p in parts):
             raise WorkspaceError(f"{rel!r} is outside the workspace (no '..')")
         return parts
@@ -603,7 +605,7 @@ class Workspace:
     def move(self, src: str, dst: str) -> str:
         """Renames `src` to `dst`, both inside the workspace: a file, or a folder with what it holds; a
         symlink moves as itself, never followed. `dst` is the new path (folder/name), its missing folders
-        made; a name already there is refused (checked just before the rename: nothing is overwritten),
+        made; a name already there is refused atomically,
         and so is a folder moved into itself. The new path is returned."""
         a, b = self._parts(src), self._parts(dst)
         if not a:
@@ -621,11 +623,11 @@ class Workspace:
             dd = self._dir_fd(b[:-1], create=True)
             try:
                 try:
-                    os.stat(b[-1], dir_fd=dd, follow_symlinks=False)
-                except FileNotFoundError:
-                    os.rename(a[-1], b[-1], src_dir_fd=sd, dst_dir_fd=dd)
-                else:
-                    raise WorkspaceError(f"{dst!r} already exists")
+                    sandbox.rename_noreplace(a[-1], b[-1], sd, dd)
+                except FileExistsError as e:
+                    raise WorkspaceError(f"{dst!r} already exists") from e
+                except OSError as e:
+                    raise WorkspaceError(f"cannot move {src!r} to {dst!r}: {e.strerror}") from e
             finally:
                 os.close(dd)
         finally:
@@ -642,10 +644,13 @@ class Workspace:
         move is checked before any is made — a source missing, a name already there, two sources with one
         name, a folder moved into itself — so a refusal leaves everything where it was. The new paths."""
         dest = self._parts(into)
-        names = [self._parts(s)[-1:] for s in srcs]
-        if not srcs or any(not n for n in names):
+        sources = [tuple(self._parts(s)) for s in srcs]
+        if not sources or any(not p for p in sources):
             raise WorkspaceError("name what to move (not the workspace itself)")
-        flat = [n[0] for n in names]
+        selected = set(sources)
+        if any(p[:i] in selected for p in sources for i in range(1, len(p))):
+            raise WorkspaceError("select a folder or its contents, not both")
+        flat = [p[-1] for p in sources]
         if len(set(flat)) != len(flat):
             raise WorkspaceError("two of them have one name: move them one at a time")
         targets = ["/".join(dest + [n]) for n in flat]
@@ -673,14 +678,19 @@ class Workspace:
         finally:
             os.close(top)
 
-    def zip_paths(self, rels: list[str], out: IO[bytes]) -> int:
-        """Writes several entries to `out` as one zip, each under its own name: a file as itself, a folder with
-        what it holds (a link or a special file is left out, as in zip_dir). Two entries with one name are refused."""
+    def zip_selection(self, rels: list[str]) -> list[list[str]]:
+        """Normalize archive paths and reject colliding names before a response starts."""
         parts = [self._parts(r) for r in rels]
         if any(not p for p in parts):
             raise WorkspaceError("name the entries (the workspace itself is zip_dir)")
         if len({p[-1] for p in parts}) != len(parts):
             raise WorkspaceError("two of them have one name")
+        return parts
+
+    def zip_paths(self, rels: list[str], out: IO[bytes]) -> int:
+        """Writes several entries to `out` as one zip, each under its own name: a file as itself, a folder with
+        what it holds (a link or a special file is left out, as in zip_dir). Two entries with one name are refused."""
+        parts = self.zip_selection(rels)
         packed = 0
         with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_DEFLATED) as z:
             for p in parts:

@@ -240,3 +240,39 @@ def test_a_flow_preset_and_a_flow_run(api):
     assert d["flow_path"] == [] and d["goal"].startswith("pipeline · ") and d["input"] == ""  # no input: named for the preset
     r = call(api, "POST", "/runs", {"goal": "ad hoc", "flow": flow, "save_as": "again"})
     assert r.status_code == 201 and call(api, "GET", "/presets").json()[0]["name"] == "again"
+
+
+def test_move_preserves_a_concurrently_created_destination(api, monkeypatch):
+    from refhandbook.agents import sandbox
+
+    ws = Workspace(server._user_store("moon"))
+    ws.write("source.txt", "source")
+    rename = sandbox.rename_noreplace
+
+    def interleave(src, dst, src_fd, dst_fd):
+        ws.write("destination.txt", "concurrent write")
+        rename(src, dst, src_fd, dst_fd)
+
+    monkeypatch.setattr(sandbox, "rename_noreplace", interleave)
+    r = call(api, "POST", "/files/move", {"from": "source.txt", "to": "destination.txt"})
+    assert r.status_code == 400
+    assert (ws.work / "source.txt").read_text() == "source"
+    assert (ws.work / "destination.txt").read_text() == "concurrent write"
+
+
+def test_batch_move_rejects_a_folder_with_its_child_before_moving(api):
+    ws = Workspace(server._user_store("moon"))
+    ws.write("folder/item.txt", "item")
+    r = call(api, "POST", "/files/move", {"from": ["folder", "folder/./item.txt"], "into": "out"})
+    assert r.status_code == 400
+    assert (ws.work / "folder/item.txt").is_file()
+    assert not (ws.work / "out").exists()
+
+
+def test_download_rejects_duplicate_archive_names_before_streaming(api):
+    ws = Workspace(server._user_store("moon"))
+    ws.write("a/item.txt", "first")
+    ws.write("b/item.txt", "second")
+    r = call(api, "GET", "/files/download?path=a/item.txt&path=b/item.txt")
+    assert r.status_code == 400
+    assert "two of them have one name" in r.json()["error"]["message"]

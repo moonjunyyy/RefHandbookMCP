@@ -1,5 +1,11 @@
 // The frame's words in English (frame/i18n.ts). Korean is the key.
 export const EN: Record<string, string> = {
+  '건너뛰기': 'Skip',
+  '다음': 'Next',
+  '사용 안내': 'Usage guide',
+  '시작하기': 'Get started',
+  '안내 완료 상태를 저장하지 못했습니다. 다시 시도하거나 Escape로 닫을 수 있습니다.': 'Could not save guide completion. Retry or press Escape to close.',
+  '이전': 'Back',
   '서버에 닿지 않습니다. 잠시 뒤 다시 시도하세요.': 'The server is not reachable. Try again in a moment.',
   '요청이 실패했습니다 ({status})': 'The request failed ({status})',
   '내 메뉴': 'My menu',
@@ -16,4 +22,9 @@ export const EN: Record<string, string> = {
   '닫기': 'Close',
   '이 페이지의 키': 'Keys on this page',
   '이 목록': 'this list',
+  // the widgets' parts (frame/widgets.ts)
+  '{n}개 더': '{n} more',
+  '{n}개': '{n}',
+  '이전 달': 'Previous month',
+  '다음 달': 'Next month',
 };

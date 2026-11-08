@@ -13,7 +13,7 @@ const EQ = process.env.EQ_ROOT;           // eq-sandbox public/ (widget.js)
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
                 '.woff2': 'font/woff2', '.woff': 'font/woff', '.ttf': 'font/ttf' };
 
-const store = { site: new Map(), 'eq-sandbox': new Map() };
+const store = { site: new Map(), 'eq-sandbox': new Map(), wordgen: new Map() };
 const W = (app) => `/apps/site/widgets/${app}.js`;
 const CARDS = [
   { id: 'account', title: '계정', description: '내 프로필과 비밀번호', about: '프로필과 비밀번호를 고칩니다.', tags: [], code: '', icon: '👤', href: '/account/', optional: false,
@@ -22,9 +22,11 @@ const CARDS = [
     links: [{ label: '프로젝트', href: '/projects' }], widgets: [{ id: 'mine', title: '내 프로젝트', description: '내가 든 프로젝트와 그 캘린더로 바로', href: W('projects'), size: '1x1' }] },
   { id: 'calendar', title: '캘린더', description: '내 일정과 프로젝트 일정을 한 달력에', about: '내 캘린더와 프로젝트의 캘린더를 한 달력에 겹쳐 봅니다. 구독 주소를 폰에 넣을 수 있습니다.', tags: ['일정'], code: '', icon: '📅', href: '/calendar', optional: true, default: true,
     links: [{ label: '캘린더', href: '/calendar' }], widgets: [{ id: 'today', title: '오늘', description: '오늘의 일정과 마감인 할 일 — 넓은 칸', href: W('calendar'), size: '2x1' }, { id: 'upcoming', title: '다가오는 일', description: '앞으로 7일의 일정', href: W('calendar'), size: '1x1' },
+             { id: 'month', title: '이번 달', description: '한 달을 한눈에', href: W('calendar'), size: '2x2' },
              { id: 'tasks', title: '할 일', description: '체크리스트 — 홈에서 바로 적고, 끝나면 체크', href: W('calendar'), size: '1x1' }] },
   { id: 'vault', title: '노트', description: 'Obsidian 볼트를 브라우저에서', about: '내 저장소의 마크다운 볼트를 읽고 고칩니다. 검색, 백링크, 최근 노트.', tags: ['글쓰기', '연구'], code: '', icon: '📝', href: '/vault', optional: true, default: true,
-    links: [{ label: '노트', href: '/vault' }], widgets: [{ id: 'recent', title: '최근 노트', description: '마지막으로 고친 노트 다섯', href: W('vault'), size: '1x1' }, { id: 'home', title: 'Home', description: '볼트의 Home 노트를 그대로 — 큰 칸', href: W('vault'), size: '2x2' }] },
+    links: [{ label: '노트', href: '/vault' }], widgets: [{ id: 'recent', title: '최근 노트', description: '마지막으로 고친 노트 다섯', href: W('vault'), size: '1x1' },
+                                                          { id: 'tags', title: '태그', description: '볼트의 태그', href: W('vault'), size: '1x1' }, { id: 'home', title: 'Home', description: '볼트의 Home 노트를 그대로 — 큰 칸', href: W('vault'), size: '2x2' }] },
   { id: 'eq-sandbox', title: '수식 플립플롭', description: '수식을 블록처럼 뒤집고 옮기는 작업판', about: '방정식의 항을 끌어 옮기고 뒤집어 정리합니다.', tags: ['연구', '도구'], code: '', icon: '🧮', href: '/apps/eq-sandbox/', optional: true,
     links: [{ label: '열기', href: '/apps/eq-sandbox/' }], widgets: [{ id: 'boards', title: '최근 작업판', description: '최근에 연 작업판으로 바로', href: '/apps/eq-sandbox/widget.js', size: '1x1' }] },
   { id: 'wordgen', title: '글타래', description: '소설을 위한 키워드와 집필 메모', about: '무작위 키워드로 이야기를 틔웁니다.', tags: ['글쓰기'], code: '', icon: '✍️', href: '/apps/wordgen/', optional: true,
@@ -36,7 +38,9 @@ const PAGES = ['/', '/apps', '/settings', '/account', '/account/', '/agents', '/
 // the sizes a cell may have (portal/site.py SIZES, as /me carries them)
 const SIZES = [{ id: '1x1', cols: 1, rows: 1 }, { id: '2x1', cols: 2, rows: 1 }, { id: '1x2', cols: 1, rows: 2 }, { id: '2x2', cols: 2, rows: 2 }];
 // the look's choices (the site file's [look], as /me carries them — run.sh reads them with portal/site.py)
+const GUIDES = ['home', 'apps', 'calendar', 'vault', 'projects', 'agents', 'settings', 'account', 'wordgen'].map(id => id + ':1');
 const LOOK = JSON.parse(process.env.LOOK_JSON || 'null') || { palette: [], corner: [], type: [], size: [], columns: [] };
+let extraCards = [];
 let slowLinks = 0;  // ms the /links answer is held back (the page must not wait for it)
 let uid = 'tester';
 
@@ -103,6 +107,7 @@ function resetWork() {
 
 function reset() {
   for (const s of Object.values(store)) s.clear();
+  extraCards = [];
   uid = 'tester';
   calendars = [{ id: 'u-1', owner: 'tester', kind: 'user', name: '내 캘린더', color: '', main: true, created: 1 },
                { id: 'g-1', owner: 'lab', kind: 'group', name: 'lab', color: '#33aa55', main: true, created: 2 }];
@@ -137,11 +142,12 @@ async function handle(route) {
   }
   if (p === '/auth/api/v1/me') {
     const theme = ['light', 'dark'].includes(cookie(req, 'theme')) ? cookie(req, 'theme') : 'auto';
-    return json(route, 200, { uid, title: '모의 사이트', signin: '/auth', portal: '/account', lang: 'ko', theme, frame: 1, cards: CARDS, menu: [], sizes: SIZES, look: LOOK });
+    return json(route, 200, { uid, title: '모의 사이트', signin: '/auth', portal: '/account', lang: 'ko', theme, frame: 1, cards: [...CARDS, ...extraCards], menu: [], sizes: SIZES, look: LOOK });
   }
+  if (p === '/apps/wordgen/api/me') return json(route, 200, { uid });
   if (p.startsWith('/auth/static/')) return file(route, STATIC, p.slice('/auth/static/'.length));
   let m;
-  if ((m = /^\/apps\/(site|eq-sandbox)\/api\/store(?:\/([a-z0-9_.-]{1,64}))?$/.exec(p))) {
+  if ((m = /^\/apps\/(site|eq-sandbox|wordgen)\/api\/store(?:\/([a-z0-9_.-]{1,64}))?$/.exec(p))) {
     const s = store[m[1]];
     if (!m[2]) return json(route, 200, { keys: [...s.keys()].map((key) => ({ key })) });
     if (req.method() === 'GET') { const v = s.get(m[2]); return v === undefined ? json(route, 404, { error: 'no such key' }) : route.fulfill({ status: 200, contentType: 'application/json', body: v }); }
@@ -267,6 +273,11 @@ async function handle(route) {
       if (what === 'links' && slowLinks) { await new Promise((r) => setTimeout(r, slowLinks)); }
       if (what === 'links') { const own = links((files.get(rel) || { text: '' }).text).map((x) => ({ path: resolve(x), text: x })); const back = [...files].filter(([src, f]) => src !== rel && links(f.text).some((x) => resolve(x) === rel)).map(([src]) => src).sort(); return json(route, 200, { path: rel, links: own, backlinks: back }); }
       if (what === 'recent') return json(route, 200, { notes: [...files].filter(([k]) => k.endsWith('.md')).sort((a, b) => b[1].mtime - a[1].mtime).slice(0, +(q.get('n') || 10)).map(([k, f]) => ({ path: k, title: k.split('/').pop().replace(/\.md$/, ''), mtime: f.mtime, size: f.text.length })) });
+      if (what === 'tags') {  // portal/vault.py tags(): each tag with the notes that carry it, the most first
+        const count = new Map();
+        for (const [, f] of files) for (const tag of new Set([...f.text.matchAll(/(?:^|\s)#([\w/-]+)/g)].map((x) => x[1]))) count.set(tag, (count.get(tag) || 0) + 1);
+        return json(route, 200, { tags: [...count].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).map(([tag, notes]) => ({ tag, notes })) });
+      }
       if (what === 'raw') return route.fulfill({ status: 404, body: 'not found' });
     }
     return json(route, 404, { error: 'no such api' });
@@ -335,6 +346,7 @@ async function handle(route) {
   }
   if (p === '/apps/eq-sandbox/widget.js') return file(route, EQ, 'widget.js');
   if (p.startsWith('/apps/site/')) return file(route, DIST, p.slice('/apps/site/'.length));
+  if (p.startsWith('/apps/wordgen/') && process.env.WORDGEN_ROOT) return file(route, process.env.WORDGEN_ROOT, p.slice('/apps/wordgen/'.length) || 'index.html');
   if (p.startsWith('/apps/eq-sandbox/')) return route.fulfill({ status: 200, contentType: TYPES['.html'], body: '<!doctype html><html><head><script src="/auth/static/theme.js"></script><link rel="stylesheet" href="/auth/static/style.css"></head><body><header><a class="brand" id="brand" href="/"></a><nav id="nav"></nav></header><main id="main"><h1>eq</h1></main><script type="module">import { load, header } from "/auth/static/site.js"; await load(); header(); document.body.dataset.ready = "1";</script></body></html>' });
   if (PAGES.includes(p) || p.startsWith('/account/') || p.startsWith('/app/') || p.startsWith('/vault/') || p.startsWith('/projects/') || p.startsWith('/agents/')) return file(route, DIST, 'index.html');
   return route.fulfill({ status: 404, body: 'not found' });
@@ -342,10 +354,11 @@ async function handle(route) {
 
 module.exports = {
   ORIGIN,
+  addCard: card => extraCards.push(card),
   install: (context) => context.route(`${ORIGIN}/**`, handle),
   reset,
   signOut: () => { uid = null; },
-  put: (app, key, value) => { store[app].set(key, JSON.stringify(value)); },
+  put: (app, key, value) => { store[app].set(key, JSON.stringify(app === 'site' && key === 'prefs' ? { guides: GUIDES, ...value } : value)); },
   get: (app, key) => { const v = store[app].get(key); return v === undefined ? undefined : JSON.parse(v); },
   events: () => events.slice(),
   tasks: () => tasks.slice(),

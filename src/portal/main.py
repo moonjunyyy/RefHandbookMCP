@@ -20,7 +20,7 @@ from .kerberos import KAdmin, Kerberos, KerberosError, LoginResult
 from .projects import Projects, ProjectStore
 from .rbac import Actor, can, roles_for
 from .requests import RequestError, RequestStore
-from .security import SecurityHeadersMiddleware, Throttle, csrf_ok, csrf_token
+from .security import SecurityHeadersMiddleware, Throttle, csrf_ok, csrf_token, user_key
 from .i18n import t
 from .validators import ValidationError
 
@@ -174,7 +174,7 @@ def create_app(settings: Settings | None = None, directory=None, kerberos=None, 
             raise Forbidden("Sign in at the site sign-in page.")
         data = await form(request)
         raw_uid, password = str(data.get("uid", "")).strip().lower(), str(data.get("password", ""))
-        keys = (f"ip:{ip(request)}", f"uid:{raw_uid}")
+        keys = (f"ip:{ip(request)}", user_key(raw_uid))
         if throttle.blocked(*keys):
             audit.record(raw_uid, "login", None, False, ip(request), "throttled")
             flash(request, "error", "Too many failed attempts. Try again in 15 minutes.")
@@ -196,7 +196,7 @@ def create_app(settings: Settings | None = None, directory=None, kerberos=None, 
             flash(request, "error", "Invalid username or password."
                   if result is LoginResult.BAD else "This account is disabled or locked.")
             return redirect("/login")
-        throttle.reset(f"uid:{uid}")
+        throttle.reset(user_key(uid))
         request.session.clear()  # new session on login
         request.session.update(uid=uid, login_at=time.time())
         return redirect("/")
@@ -213,7 +213,7 @@ def create_app(settings: Settings | None = None, directory=None, kerberos=None, 
             raise Forbidden("Change it at the site sign-in page.")
         data = await form(request)
         raw_uid = str(data.get("uid", "")).strip().lower()
-        keys = (f"ip:{ip(request)}", f"uid:{raw_uid}")
+        keys = (f"ip:{ip(request)}", user_key(raw_uid))
         if throttle.blocked(*keys):
             flash(request, "error", "Too many failed attempts. Try again in 15 minutes.")
             return redirect("/expired")
@@ -227,8 +227,11 @@ def create_app(settings: Settings | None = None, directory=None, kerberos=None, 
             flash(request, "error", str(e))
             return redirect("/expired")
         audit.record(uid, "change_expired_password", uid, True, ip(request))
+        warning = acc.smb_password(uid, uid, new, ip(request))
         request.session.pop("expired_uid", None)
         flash(request, "ok", "Password changed. Please sign in with your new password.")
+        if warning:
+            flash(request, "error", warning)
         return redirect("/login")
 
     @app.post("/logout")
@@ -262,17 +265,22 @@ def create_app(settings: Settings | None = None, directory=None, kerberos=None, 
         actor = current_actor(request)
         data = await form(request)
         try:
-            acc.change_password(actor, str(data.get("old", "")), str(data.get("new", "")), str(data.get("confirm", "")),
-                                ip(request))
+            warning = acc.change_password(actor, str(data.get("old", "")), str(data.get("new", "")),
+                                          str(data.get("confirm", "")), ip(request))
         except (ValidationError, KerberosError, Forbidden) as e:
             flash(request, "error", str(e))
             return redirect("/")
         flash(request, "ok", "Password changed.")
+        if warning:
+            flash(request, "error", warning)
         return redirect("/")
 
-    def shown_once(request: Request, actor: Actor, made: tuple[User, str], created: bool):
-        """The page with a one-time password (made or reset): shown once, never kept."""
-        user, password = made
+    def shown_once(request: Request, actor: Actor, made: tuple[User, str, str | None], created: bool):
+        """The page with a one-time password (made or reset): shown once, never kept; with the warning
+        when its SMB password could not be set."""
+        user, password, warning = made
+        if warning:
+            flash(request, "error", warning)
         return render(request, "temp_password.html", actor, target=user, password=password, created=created)
 
     # ---- account requests (public) -------------------------------------------------------------
@@ -364,13 +372,15 @@ def create_app(settings: Settings | None = None, directory=None, kerberos=None, 
             resp.status_code = 404
             return resp
         try:
-            acc.make_account(uid, uid, name, mail, s.allowed_shells[0], password, False, ip(request),
-                             detail=f"invited by {inv.created_by}")
+            _, warning = acc.make_account(uid, uid, name, mail, s.allowed_shells[0], password, False, ip(request),
+                                          detail=f"invited by {inv.created_by}")
         except (DirectoryError, KerberosError) as e:
             store.restore(inv)  # the link still works: the person can try again
             join_throttle.fail(key)
             flash(request, "error", t("계정을 만들지 못했습니다: {reason}", reason=e))
             return join_page(request, token, 400, **values)
+        if warning:
+            flash(request, "error", warning)
         return render(request, "join_done.html", uid=uid)
 
     # ---- admin / helpdesk (the operations are portal/accounts.py's) ---------------------------
@@ -455,8 +465,10 @@ def create_app(settings: Settings | None = None, directory=None, kerberos=None, 
     async def unlock(request: Request, uid: str):
         actor = current_actor(request)
         await form(request)
-        target = acc.unlock(actor, uid, ip(request))
+        target, warning = acc.unlock(actor, uid, ip(request))
         flash(request, "ok", f"{target.uid} unlocked.")
+        if warning:
+            flash(request, "error", warning)
         return redirect(f"/admin/users/{target.uid}")
 
     @app.post("/admin/users/{uid}/enabled")
@@ -464,8 +476,10 @@ def create_app(settings: Settings | None = None, directory=None, kerberos=None, 
         actor = current_actor(request)
         data = await form(request)
         enabled = data.get("enabled") == "1"
-        target = acc.set_enabled(actor, uid, enabled, ip(request))
+        target, warning = acc.set_enabled(actor, uid, enabled, ip(request))
         flash(request, "ok", f"{target.uid} {'enabled' if enabled else 'disabled'}.")
+        if warning:
+            flash(request, "error", warning)
         return redirect(f"/admin/users/{target.uid}")
 
     @app.post("/admin/users/{uid}/delete")

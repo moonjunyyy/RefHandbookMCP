@@ -101,7 +101,7 @@ class Mirror:
                               "intact: export it (research_ledgers action=export) and report the problem.")
         self.sync_ledger(r, L)
 
-    def sync_ledger(self, r: legacy.Research, L: str, force: bool = False) -> None:
+    def sync_ledger(self, r: legacy.Research, L: str, force: bool = False, actor: str = "kernel") -> None:
         """Re-project ledger L if it changed since the last projection, or drop it if it is gone.
 
         A quarantine belongs to the data, not the name: deleting the ledger lifts it, and every
@@ -126,10 +126,11 @@ class Mirror:
                     self._derive(r, L)
                 return
             data = r.export(L, include_log=False)
-            if self.g.get_node(L) is not None:
-                migrate.drop_ledger(self.g, L, keep_log=True)
-            migrate.ledger_to_graph(self.g, data)
-            migrate.relink_incoming(self.g, r.db, L)
+            if first:
+                migrate.ledger_to_graph(self.g, data)
+                migrate.relink_incoming(self.g, r.db, L)
+            else:  # in place: only what differs from a redraw changes; the rest keeps its history (docs/entry-graph.md §8)
+                migrate.apply_ledger(self.g, L, data, r.db, actor=actor)
             if first:
                 diffs = verify.roundtrip(r, self.g, L)
                 if diffs:
@@ -180,8 +181,10 @@ class Mirror:
         if self.meta("sync:handbook") == fp:
             return
         with self.g.tx():
+            kept = migrate.foreign_edges(self.g, migrate.HANDBOOK_IMAGE)  # an entry's refs to cards, their tags
             migrate.drop_handbook(self.g)
             migrate.handbook_to_graph(self.g, self.hb.export())
+            migrate.restore_edges(self.g, kept)
             self.set_meta("sync:handbook", fp)
 
     # ── migrations ───────────────────────────────────────────────────────
@@ -262,6 +265,7 @@ class Mirror:
 
     def _upgrade(self, digest: str) -> list[str]:
         from .graph import rule_sha
+        from .packages import entry as entry_pkg
         from .packages import handbook as hb_pkg
         from .packages import research as rs_pkg
 
@@ -278,6 +282,7 @@ class Mirror:
                 self.g.log("kernel", f"package dropped rule {rid}, kept: {e}", rid)
         rs_pkg.install(self.g, skip=keep)
         hb_pkg.install(self.g)
+        entry_pkg.install(self.g)
         conflicts = []
         for rid, spec in new.items():
             if rid in keep:

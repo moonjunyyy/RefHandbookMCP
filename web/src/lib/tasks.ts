@@ -1,9 +1,10 @@
 // The to-do list (docs/apps-vault-calendar.md §7.3): the person's own lines, kept by the calendar service
-// (/calendar/api/v1/tasks). Drawn by the main page's `tasks` widget and by the calendar's day panel (the
-// ones due that day): a line is written in place (Enter), checked off in place, and the rest — a due day,
-// the text, taking it out — is on its menu (⋯ or right-click: R10).
+// (/calendar/api/v1/tasks). Drawn by the main page's `tasks` widget — grouped by when they are due (지남,
+// 오늘, 7일 안, 나중, 기한 없음, then the done ones) under how much is done — and by the calendar's day
+// panel (the ones due that day, flat): a line is written in place (Enter), checked off in place, and the
+// rest — a due day, the text, taking it out — is on its menu (⋯ or right-click: R10).
 
-import { api, button, dialog, h, menuButton, onMenu, replace } from '/auth/static/site.js';
+import { api, button, dialog, groupHead, h, menuButton, meter, onMenu, replace, stats } from '/auth/static/site.js';
 import type { MenuSection } from '/auth/static/site.js';
 import { t } from './i18n';
 
@@ -26,8 +27,24 @@ export function dueWord(due: string, today = dayKey(new Date())): { text: string
 }
 
 /** The to-do list, drawn into `host`; `filter` keeps only some (the day panel shows the ones due that day). */
-export async function taskList(host: HTMLElement, opts: { filter?: (x: Task) => boolean; compact?: boolean; due?: string } = {}): Promise<() => Promise<void>> {
-  const list = h('ul', { class: 'tasks' });
+/** Where a to-do falls by its due day: overdue, today, the next seven days, later, none — or done. */
+type Bucket = 'late' | 'today' | 'week' | 'later' | 'none' | 'done';
+const WEEK = 7;  // the days ahead that count as soon (the main page's 'upcoming' shows as many)
+function bucketOf(x: Task, today: Date): Bucket {
+  if (x.done) return 'done';
+  if (!x.due) return 'none';
+  const key = dayKey(today);
+  const week = new Date(today); week.setDate(today.getDate() + WEEK);
+  return x.due < key ? 'late' : x.due === key ? 'today' : x.due <= dayKey(week) ? 'week' : 'later';
+}
+const BUCKETS: [Bucket, () => string][] = [['late', () => t('지남')], ['today', () => t('오늘')], ['week', () => t('7일 안')],
+                                          ['later', () => t('나중')], ['none', () => t('기한 없음')], ['done', () => t('끝남')]];
+
+/** The to-do list, drawn into `host`; `filter` keeps only some (the day panel shows the ones due that day);
+ * `grouped`: by when they are due, under the numbers (overdue, today, done of all) — the main page's widget. */
+export async function taskList(host: HTMLElement, opts: { filter?: (x: Task) => boolean; compact?: boolean; due?: string; grouped?: boolean } = {}): Promise<() => Promise<void>> {
+  const list = h(opts.grouped ? 'div' : 'ul', { class: opts.grouped ? 'task-groups' : 'tasks' });
+  const summary = h('div', { class: 'widget-top' });
   const input = h('input', { type: 'text', name: 'task', maxlength: 200, autocomplete: 'off',
                              placeholder: t('할 일을 적고 Enter'), 'aria-label': t('새 할 일') });
   const foot = h('div', { class: 'tasks-foot small muted' });
@@ -83,13 +100,25 @@ export async function taskList(host: HTMLElement, opts: { filter?: (x: Task) => 
   }
   function draw(items: Task[]): void {
     const open = items.filter(x => !x.done);
-    replace(list, items.map(row));
+    if (opts.grouped) {
+      const now = new Date();
+      const by = new Map<Bucket, Task[]>();
+      for (const x of items) by.set(bucketOf(x, now), [...(by.get(bucketOf(x, now)) ?? []), x]);
+      replace(list, BUCKETS.filter(([b]) => by.get(b)?.length).map(([b, title]) => [groupHead(title(), String(by.get(b)!.length)),
+                                                                                    h('ul', { class: 'tasks' }, by.get(b)!.map(row))]));
+      const late = by.get('late')?.length ?? 0, due = by.get('today')?.length ?? 0;
+      replace(summary, stats([{ n: open.length, label: t('남음') }, { n: due, label: t('오늘 마감'), tone: due ? 'warn' : '' },
+                              ...(late ? [{ n: late, label: t('지남'), tone: 'bad' as const }] : [])]),
+        items.length > 0 && meter(items.length - open.length, items.length, t('{n}개 중 {m}개 끝남', { n: items.length, m: items.length - open.length })));
+    } else {
+      replace(list, items.map(row));
+    }
     replace(foot,
       items.length === 0 ? (opts.filter ? t('이 날까지인 할 일이 없습니다.') : t('할 일이 없습니다. 위에 적으세요.'))
         : open.length ? t('{n}개 남음', { n: open.length }) : t('다 끝났습니다.'),
       items.some(x => x.done) && button(t('끝난 것 치우기'), async () => { await cal.post('/tasks/clear-done'); await load(); }, 'link'));
   }
-  replace(host, h('div', { class: `tasks-widget${opts.compact ? ' compact' : ''}` }, add, list, foot));
+  replace(host, h('div', { class: `tasks-widget${opts.compact ? ' compact' : ''}` }, opts.grouped && summary, add, list, foot));
   await load();
   return load;
 }

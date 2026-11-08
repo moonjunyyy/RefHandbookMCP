@@ -47,6 +47,7 @@ export const ACCOUNT: Record<string, string> = {
   '비밀번호를 초기화했습니다': 'Password reset',
   '잠금을 풀었습니다.': 'Unlocked.',
   '로그인 실패 잠금 풀기': 'Unlock after failed sign-ins',
+  '이 사이트에서 비밀번호를 여러 번 틀려 걸린 잠금과 Kerberos의 로그인 실패 잠금을 풉니다. 로그인 화면의 잠금은 정해진 시간이 지나면 풀립니다.': 'Lifts the lock this site puts on an account after repeated wrong passwords, and the Kerberos lock after failed sign-ins. The sign-in page\'s own lock lifts by itself after its time.',
   '활성화했습니다.': 'Enabled.',
   '비활성화했습니다.': 'Disabled.',
   '계정 활성화': 'Enable account',

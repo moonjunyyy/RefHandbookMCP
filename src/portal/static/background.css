@@ -1,0 +1,8 @@
+/* Shared page image layer; UI surfaces remain independent of blur and dim. */
+body { isolation: isolate; }
+body::before {
+  content: ""; pointer-events: none; z-index: -1;
+  background: var(--page-image) center / cover no-repeat;
+  filter: blur(var(--page-blur)) brightness(calc(100% - var(--page-dim)));
+}
+body::before { position: fixed; inset: calc(-2 * var(--page-blur)); }

@@ -10,7 +10,9 @@ signed in, and the site file's services); /auth/check answers nginx for every pr
 - nothing valid -> 401; nginx redirects to /auth/login?next=...
 
 This process holds only the HTTP service keytab (to prove the KDC is genuine), never the portal's
-kadmin keytab: it is the most exposed piece, so it gets the least. Run it as its own user.
+kadmin keytab: it is the most exposed piece, so it gets the least. Run it as its own user. When the site
+keeps SMB passwords (docs/smb.md), a password changed here becomes the person's SMB password written as
+that person (a ticket from the new password), so it has no LDAP identity of its own either.
 """
 import time
 from pathlib import Path
@@ -26,10 +28,12 @@ from starlette.middleware.sessions import SessionMiddleware
 from . import audit, i18n, tokens, validators
 from . import membership
 from . import site as site_mod
+from .accounts import SMB_WARNINGS
 from .config import Settings
+from .directory import Directory, DirectoryError
 from .facts import SIGNIN, facts
 from .kerberos import Kerberos, KerberosError, LoginResult
-from .security import SecurityHeadersMiddleware, Throttle, csrf_ok, csrf_token
+from .security import SecurityHeadersMiddleware, Throttle, csrf_ok, csrf_token, user_key
 from .i18n import t
 from .validators import ValidationError
 
@@ -60,12 +64,14 @@ def next_from_query(query: str) -> str:
     return safe_next(unquote(query[i + 6:])) if i >= 0 else "/"
 
 
-def create_app(settings: Settings | None = None, kerberos=None, signing_key=None) -> FastAPI:
+def create_app(settings: Settings | None = None, kerberos=None, signing_key=None, directory=None) -> FastAPI:
     s = settings or Settings()
     audiences = s.audiences()  # apps.toml is read at start: a bad file stops the SSO, not a request
     if len(s.sso_secret) < 32:
         raise RuntimeError("PORTAL_SSO_SECRET must be set to at least 32 random characters.")
     kerberos = kerberos or Kerberos(s)
+    # only to write a person's own SMB password, bound as them (docs/smb.md)
+    directory = directory or (Directory(s) if s.smb_passwords else None)
     signing_key = signing_key or tokens.load_private_key(s.sso_signing_key_file)
     throttle = Throttle()
     audit.setup(s.audit_log)
@@ -105,7 +111,7 @@ def create_app(settings: Settings | None = None, kerberos=None, signing_key=None
 
     def verify(raw_uid: str, password: str, addr: str) -> tuple[str | None, LoginResult]:
         """Throttled Kerberos check. Returns (uid, result)."""
-        keys = (f"ip:{addr}", f"uid:{raw_uid}")
+        keys = (f"ip:{addr}", user_key(raw_uid))
         if throttle.blocked(*keys):
             return None, LoginResult.BAD
         try:
@@ -116,7 +122,7 @@ def create_app(settings: Settings | None = None, kerberos=None, signing_key=None
         if uid and password and "\x00" not in password:
             result = kerberos.verify_password(s.principal(uid), password)
         if result is LoginResult.OK:
-            throttle.reset(f"uid:{uid}")
+            throttle.reset(user_key(uid))
         elif result is not LoginResult.EXPIRED:  # an expired password is a right one
             throttle.fail(*keys)
         return (uid if result is LoginResult.OK else None), result
@@ -200,6 +206,19 @@ def create_app(settings: Settings | None = None, kerberos=None, signing_key=None
 
     # ---- one-time and expired passwords (kpasswd; no admin rights) ----------------------------
 
+    def smb_password(uid: str, password: str, addr: str) -> str | None:
+        """The password Kerberos has just taken, as the person's SMB password too (docs/smb.md), written as
+        them. A failure is recorded and comes back as a warning; the Kerberos change stands."""
+        if directory is None:
+            return None
+        try:
+            directory.set_own_smb_password(uid, password)
+        except DirectoryError as e:
+            audit.record(uid, "smb_password", uid, False, addr, str(e))
+            return t(SMB_WARNINGS["smb_password"], reason=e)
+        audit.record(uid, "smb_password", uid, True, addr)
+        return None
+
     @app.get(f"{SIGNIN}/expired")
     async def expired_page(request: Request):
         uid = request.session.get("expired_uid") or request.query_params.get("uid", "")[:64]
@@ -212,7 +231,7 @@ def create_app(settings: Settings | None = None, kerberos=None, signing_key=None
             flash(request, "error", "Invalid or missing CSRF token. Reload the page and try again.")
             return redirect(f"{SIGNIN}/expired")
         raw_uid = str(data.get("uid", "")).strip().lower()[:64]
-        keys = (f"ip:{ip(request)}", f"uid:{raw_uid}")
+        keys = (f"ip:{ip(request)}", user_key(raw_uid))
         if throttle.blocked(*keys):
             flash(request, "error", t("실패가 너무 많습니다. 15분 뒤 다시 시도하세요."))
             return redirect(f"{SIGNIN}/expired")
@@ -226,9 +245,12 @@ def create_app(settings: Settings | None = None, kerberos=None, signing_key=None
             flash(request, "error", str(e))
             return redirect(f"{SIGNIN}/expired")
         audit.record(uid, "change_expired_password", uid, True, ip(request))
+        warning = await run_in_threadpool(smb_password, uid, new, ip(request))
         nxt = request.session.pop("expired_next", "/")
         request.session.pop("expired_uid", None)
         flash(request, "ok", t("비밀번호를 바꿨습니다. 새 비밀번호로 로그인하세요."))
+        if warning:
+            flash(request, "error", warning)
         return redirect(f"{SIGNIN}/login?next=" + nxt)
 
     @app.get(f"{SIGNIN}/api/v1/me")
@@ -247,7 +269,7 @@ def create_app(settings: Settings | None = None, kerberos=None, signing_key=None
 
         def card(a):  # noqa: ANN001, ANN202 — `href`: where the app opens (its first link, or its menu's)
             return {"id": a.id, "title": a.text("title", lang), "description": a.text("description", lang),
-                    "about": a.text("about", lang), "tags": [t(x) for x in a.tags], "code": [{"label": c.label_in(lang), "value": c.value} for c in a.code], "icon": a.icon, "href": a.menu_href or (a.links[0].href if a.links else ""),
+                    "about": a.text("about", lang), "tags": [t(x) for x in a.tags], "code": [{"label": c.label_in(lang), "value": c.value} for c in a.code], "icon": a.icon, "href": a.menu_href or (a.links[0].href if a.links else f"/app/{a.id}"),
                     "optional": a.optional, "default": a.default,
                     "links": [{"label": ln.label_in(lang), "href": ln.href} for ln in a.links],
                     "widgets": [{"id": w.id, "title": w.text("title", lang), "description": w.text("description", lang),
@@ -257,8 +279,9 @@ def create_app(settings: Settings | None = None, kerberos=None, signing_key=None
                              "lang": lang, "theme": theme, "frame": site_mod.FRAME,
                              "sizes": [{"id": k, "cols": c, "rows": r} for k, (c, r) in site_mod.SIZES.items()],
                              "look": site.look_in(lang),
-                             "cards": [card(a) for a in site.cards(groups)],
-                             "menu": [{"label": ln.label, "href": ln.href} for ln in site.menu(groups, lang)]},
+                             # signed out: nothing of the site's apps (their names, abouts, addresses) — the sign-in only
+                             "cards": [card(a) for a in site.cards(groups)] if uid else [],
+                             "menu": [{"label": ln.label, "href": ln.href} for ln in site.menu(groups, lang)] if uid else []},
                             headers={"Cache-Control": "no-store", "Vary": "Cookie, Accept-Language"})
 
     @app.get(f"{SIGNIN}/healthz")

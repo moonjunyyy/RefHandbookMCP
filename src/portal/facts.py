@@ -19,6 +19,7 @@ derivation.
     portal_root   /account                where the account portal is served
     title         <realm>                 the site's name as every page shows it (M00NNY.KR)
     admin_group   admin                   the POSIX group of the site's administrators
+    workgroup     M00NNY                  Samba's workgroup: the realm's first label, uppercased (docs/smb.md)
     helpdesk_group helpdesk               the group that may reset passwords and unlock accounts
     router        (none)                  a TLS-terminating proxy in front (IP or CIDR, or a list of
                                           them): nginx then serves plain HTTP on `listen` (80) to it
@@ -54,7 +55,8 @@ RUNS_AS = {"runner": "handbook"}
 # Where the site sign-in lives (portal/sso.py): its pages, its check for nginx, its stylesheet.
 SIGNIN = "/auth"
 USED = {"realm", "name", "base_dn", "domain", "users_ou", "groups_ou", "projects_ou", "ldap_uri", "sso_issuer", "http_service",
-        "code", "ports", "aliases", "router", "listen", "portal_root", "title", "admin_group", "helpdesk_group"}
+        "code", "ports", "aliases", "router", "listen", "portal_root", "title", "admin_group", "helpdesk_group",
+        "workgroup"}
 
 
 class FactError(ValueError):
@@ -100,6 +102,7 @@ class Facts:
     admin_group: str = "admin"
     helpdesk_group: str = "helpdesk"
     projects_ou: str = ""  # the groups people make themselves (projects), one level under the groups' OU
+    workgroup: str = ""  # Samba's workgroup (its domain entry in the directory is named after it)
 
     def unit(self, role: str) -> str:
         return f"{self.name}-{role}"
@@ -213,7 +216,7 @@ def facts(site_file: str | None = None) -> Facts:
         router=router, listen=int(given.get("listen", 80)),
         portal_root=get("portal_root", Facts.portal_root).rstrip("/"), title=get("title", realm),
         admin_group=get("admin_group", Facts.admin_group), helpdesk_group=get("helpdesk_group", Facts.helpdesk_group),
-        projects_ou=get("projects_ou", f"ou=Projects,{groups_ou}"))
+        projects_ou=get("projects_ou", f"ou=Projects,{groups_ou}"), workgroup=get("workgroup", realm.split(".")[0].upper()))
 
 
 def running_dir(kind: str, fallback: str) -> str:

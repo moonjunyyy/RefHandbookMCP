@@ -133,6 +133,9 @@ LANG: dict[str, str] = {
     '최근에 쓴 비밀번호는 다시 쓸 수 없습니다.': "You can't reuse a recent password.",
     '비밀번호를 바꾸지 못했습니다: {reason}': "Couldn't change the password: {reason}",
     '비밀번호를 바꾸지 못했습니다.': "Couldn't change the password.",
+    '비밀번호는 바뀌었지만 SMB 비밀번호는 바꾸지 못했습니다: {reason}': "The password changed, but the SMB password couldn't follow: {reason}",
+    '계정 상태는 바뀌었지만 SMB 계정에는 반영하지 못했습니다: {reason}': "The account changed, but its SMB account couldn't follow: {reason}",
+    '이 사이트의 잠금은 풀었지만 Kerberos(KDC)의 잠금은 풀지 못했습니다: {reason} — KDC에서 kadmin.local -q "modprinc -unlock {principal}"로 풉니다.': 'The site\'s lock is lifted, but not the Kerberos (KDC) one: {reason} — lift it on the KDC with kadmin.local -q "modprinc -unlock {principal}".',
     '비활성화되었거나 잠긴 계정입니다. 나중에 다시 시도하거나 관리자에게 문의하세요.': 'This account is disabled or locked. Try again later or contact an administrator.',
     '신청이 너무 많습니다. 한 시간 뒤 다시 시도해 주세요.': 'Too many requests. Try again in an hour.',
     '개인정보 수집·이용에 동의해야 신청할 수 있습니다.': 'You must agree to the collection and use of personal information to apply.',
@@ -465,4 +468,10 @@ LANG: dict[str, str] = {
     '폐기 예정으로': 'Mark deprecated',
     '한 줄에 하나: 원본 경로, 샌드박스 안의 경로, 쓰기 허용이면 rw. 공백이 든 경로는 따옴표로 감쌉니다. 예:': 'One per line: the source path, the path inside the sandbox, and rw to allow writing. Quote a path that has spaces. For example:',
     '함께 옮긴 것: {names}': 'Moved along: {names}',
+    # the groups the settings page lists the fonts under (portal/site.py FONT_GROUPS)
+    '고딕': 'Sans',
+    '명조': 'Serif',
+    '손글씨': 'Handwriting',
+    '제목용': 'Display',
+    '고정폭': 'Monospace',
 }

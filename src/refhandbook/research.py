@@ -348,9 +348,9 @@ class Research:
 
     def _sealed(self, ledger: str) -> None:
         """After every write that seals the ledger, inside its transaction: the kernel's projection
-        follows (a rollback undoes both)."""
+        follows (a rollback undoes both). The write is a tool call's, so what it adds is the model's."""
         if self.k is not None:
-            self.k.sync_ledger(self, ledger)
+            self.k.sync_ledger(self, ledger, actor="model")
 
     def _claim(self, *keys: str) -> None:
         """The objects this write changes: refused if another session changed one since this one read it."""

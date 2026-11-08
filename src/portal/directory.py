@@ -1,8 +1,11 @@
 """LDAP side, bound as the portal service principal over LDAPS + SASL/GSSAPI.
 
-The portal never writes krb* attributes itself; kadmind owns those (kldap backend)."""
+The portal never writes krb* attributes itself; kadmind owns those (kldap backend). It writes an
+account's SMB side (docs/smb.md): the sambaSamAccount class, the NT hash of a password it has just set
+in Kerberos, the disabled flag."""
 import ssl
 import threading
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 
@@ -11,9 +14,11 @@ from ldap3 import (BASE, KERBEROS, LEVEL, MODIFY_ADD, MODIFY_DELETE, MODIFY_REPL
 from ldap3.core.exceptions import LDAPException, LDAPNoSuchObjectResult
 from ldap3.utils.conv import escape_filter_chars
 
+from . import ntlm
 from .config import Settings
 
 DISALLOW_ALL_TIX = 0x40
+SMB_ATTRS = ["objectClass", "uidNumber", "sambaSID", "sambaAcctFlags"]
 USER_ATTRS = ["uid", "cn", "givenName", "sn", "displayName", "mail", "loginShell", "uidNumber",
               "gidNumber", "homeDirectory", "krbPrincipalName", "krbTicketFlags", "krbLoginFailedCount",
               "krbLastPwdChange", "krbPasswordExpiration"]
@@ -62,6 +67,32 @@ def _first(entry, attr, default=""):
     return default if v is None else v
 
 
+def has_smb(entry: dict) -> bool:
+    return ntlm.ACCOUNT_CLASS.lower() in {str(c).lower() for c in entry.get("objectClass") or []}
+
+
+def smb_password_mods(entry: dict, sid: str | None, hashed: str, now: int) -> dict:
+    """The modification that makes `hashed` an entry's SMB password: the account class and its SID when
+    the entry has none yet (`sid`), the hash and the time it was set, normal flags when there are none;
+    a LanMan hash goes (lanman auth stays off)."""
+    mods: dict = {}
+    if not has_smb(entry):
+        if not sid:
+            raise DirectoryError("an entry without an SMB account needs a SID")
+        mods["objectClass"] = [(MODIFY_ADD, [ntlm.ACCOUNT_CLASS])]
+        mods["sambaSID"] = [(MODIFY_REPLACE, [sid])]
+    if not _first(entry, "sambaAcctFlags"):
+        mods["sambaAcctFlags"] = [(MODIFY_REPLACE, [ntlm.encode_flags({ntlm.NORMAL})])]
+    mods |= own_password_mods(hashed, now)
+    return mods
+
+
+def own_password_mods(hashed: str, now: int) -> dict:
+    """What a person may write on their own entry: the hash, when it was set, no LanMan hash."""
+    return {"sambaNTPassword": [(MODIFY_REPLACE, [hashed])], "sambaPwdLastSet": [(MODIFY_REPLACE, [str(now)])],
+            "sambaLMPassword": [(MODIFY_REPLACE, [])]}
+
+
 class Directory:
     def __init__(self, settings: Settings):
         self.s = settings
@@ -71,9 +102,10 @@ class Directory:
         self._id_lock = threading.Lock()
 
     @contextmanager
-    def _conn(self):
+    def _conn(self, creds=None):
+        """Bound as the portal (its keytab), or as whoever `creds` are (gssapi credentials)."""
         import gssapi
-        creds = gssapi.Credentials(
+        creds = creds or gssapi.Credentials(
             name=gssapi.Name(self.s.service_principal, gssapi.NameType.kerberos_principal),
             usage="initiate",
             store={"client_keytab": self.s.service_keytab, "ccache": "MEMORY:portal"})
@@ -228,6 +260,71 @@ class Directory:
     def set_membership(self, group: str, uid: str, member: bool) -> None:
         with self._conn() as conn:
             conn.modify(self.s.group_dn(group), {"memberUid": [(MODIFY_ADD if member else MODIFY_DELETE, [uid])]})
+
+    # ---- SMB (docs/smb.md): what Samba's ldapsam reads of an account -------------------------------
+
+    def _smb_entry(self, conn, uid: str) -> dict:
+        try:
+            conn.search(self.s.user_dn(uid), "(objectClass=posixAccount)", BASE, attributes=SMB_ATTRS)
+        except LDAPNoSuchObjectResult:
+            raise DirectoryError(f"{uid}: no such account") from None
+        if not conn.response:
+            raise DirectoryError(f"{uid}: no such account")
+        return conn.response[0]["attributes"]
+
+    def _new_sid(self, conn, entry: dict) -> str:
+        """The SID Samba's algorithmic mapping gives the entry's uid, under the domain entry's SID; one
+        another entry holds already is refused."""
+        dn = self.s.samba_domain_dn
+        try:
+            conn.search(dn, f"(objectClass={ntlm.DOMAIN_CLASS})", BASE,
+                        attributes=["sambaSID", "sambaAlgorithmicRidBase"])
+            domain = conn.response[0]["attributes"] if conn.response else {}
+        except LDAPNoSuchObjectResult:
+            domain = {}
+        base = _first(domain, "sambaAlgorithmicRidBase", None)
+        if not _first(domain, "sambaSID") or base is None:
+            raise DirectoryError(f"{dn}: no Samba domain entry with its SID and algorithmic RID base "
+                                 "(the installer renders samba.ldif; docs/smb.md)")
+        sid = f"{_first(domain, 'sambaSID')}-{ntlm.user_rid(int(_first(entry, 'uidNumber')), int(base))}"
+        conn.search(self.s.base_dn, f"(sambaSID={escape_filter_chars(sid)})", SUBTREE, attributes=[NO_ATTRIBUTES])
+        held = [r["dn"] for r in conn.response if r.get("type") == "searchResEntry"]
+        if held:
+            raise DirectoryError(f"the SID {sid} is held by {held[0]}")
+        return sid
+
+    def set_smb_password(self, uid: str, password: str) -> None:
+        """The account's SMB password, as the portal: its NT hash, and the account class and SID first
+        when the entry has no SMB account yet."""
+        hashed = ntlm.nt_hash(password)
+        with self._conn() as conn:
+            entry = self._smb_entry(conn, uid)
+            sid = None if has_smb(entry) else self._new_sid(conn, entry)
+            conn.modify(self.s.user_dn(uid), smb_password_mods(entry, sid, hashed, int(time.time())))
+
+    def set_own_smb_password(self, uid: str, password: str) -> None:
+        """The account's SMB password, as the person: the site sign-in has no LDAP identity of its own, so
+        it binds with a ticket from the password just set and writes the person's own hash. The entry must
+        have its SMB account already (the portal adds it when it makes the account or sets a password)."""
+        import gssapi
+        from gssapi.raw import acquire_cred_with_password
+
+        hashed = ntlm.nt_hash(password)
+        name = gssapi.Name(self.s.principal(uid), gssapi.NameType.kerberos_principal)
+        try:
+            creds = gssapi.Credentials(acquire_cred_with_password(name, password.encode(), usage="initiate").creds)
+        except gssapi.exceptions.GSSError as e:
+            raise DirectoryError(f"no ticket for {uid} with the new password: {e}") from e
+        with self._conn(creds) as conn:
+            conn.modify(self.s.user_dn(uid), own_password_mods(hashed, int(time.time())))
+
+    def set_smb_enabled(self, uid: str, enabled: bool) -> None:
+        """The disabled flag of the account's SMB side; nothing when it has none."""
+        with self._conn() as conn:
+            entry = self._smb_entry(conn, uid)
+            if has_smb(entry):
+                flags = ntlm.flags_with(str(_first(entry, "sambaAcctFlags")), disabled=not enabled)
+                conn.modify(self.s.user_dn(uid), {"sambaAcctFlags": [(MODIFY_REPLACE, [flags])]})
 
     # ---- projects: the groups people make themselves, under the projects' OU (portal/projects.py) ----
 
