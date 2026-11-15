@@ -116,3 +116,18 @@ def test_the_line_names_the_most_recent_sessions_and_counts_the_rest():
     assert render.loop_state(live, now) == ("LOOP  open: l0 S1-0 (chat, used 30 s ago); l1 S1-1 (chat, used 10 min ago); "
                                             "l2 S1-2 (chat, used 4 h ago); and 2 older")
     assert render.loop_state([], now).startswith("LOOP  no session is open: this call ran outside the loop.")
+
+
+# 5 ── the instructions are the loop; a loop diagnosis reaches the rule review ──
+
+def test_a_loop_diagnosis_reaches_the_rule_review():
+    hb = Handbook(":memory:")
+    research.ensure_cards(hb)
+    assert hb.db.execute("SELECT 1 FROM relations WHERE src = 'rs-x3' AND type = 'pushes_to' AND dst = 'rs-rv'").fetchone()
+    assert "from X2 or X3" in hb.get_entry("rs-rv")["condition"]  # what RV's entry says now has its exit
+
+
+def test_the_instructions_name_the_line_the_device_prints():
+    marker = "LOOP  no session is open"
+    assert marker in server.INSTRUCTIONS and render.loop_state([], 0.0).startswith(marker)
+    assert server.INSTRUCTIONS.index("research_begin") < server.INSTRUCTIONS.index("save_entry")  # enter, then write back
