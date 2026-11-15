@@ -36,7 +36,7 @@
 
 ### 글꼴 (§1.3)
 
-본문·제목·코드의 글꼴은 각각 `--sans/--serif/--mono` 이고, 사람은 셋을 따로 고른다(사이트 파일 `[[look.type]]`·`[[look.heading]]`·`[[look.mono]]`). 각 토큰은 theme.css 에서 첫 글꼴과 대체 목록으로 나뉜다(`--sans: var(--sans-default)`, `--sans-default: "Plus Jakarta Sans", var(--sans-fallback)`). 선택지는 자기 글꼴을 앞에 두고 같은 대체 목록을 잇는다(`sans = '"Pretendard Variable", var(--sans-fallback)'`). 각 종류의 첫 선택지는 theme.css 그대로이며 아무 글꼴도 불러오지 않는다. 토큰은 몸 글꼴 → 제목 → 코드 순으로 얹혀, 고른 제목 글꼴이 본문 선택지가 말한 `--serif` 를 이긴다.
+본문·제목·코드의 글꼴은 각각 `--sans/--serif/--mono` 이고, 사람은 셋을 따로 고른다(사이트 파일 `[[look.type]]`·`[[look.heading]]`·`[[look.mono]]`). 각 토큰은 theme.css 에서 첫 글꼴과 대체 목록으로 나뉜다(`--sans: var(--sans-default)`, `--sans-default: "Plus Jakarta Sans", var(--sans-fallback)`). 선택지는 자기 글꼴을 앞에 두고 같은 대체 목록을 잇는다(`sans = '"Pretendard Variable", var(--sans-fallback)'`). 각 종류의 첫 선택지는 theme.css 그대로이고, theme.css 가 앞에 둔 글꼴이 열린 글꼴이면 그것을 불러온다(Plus Jakarta Sans·고운바탕·JetBrains Mono) — 고르지 않은 종류는 첫 선택지다. 토큰은 몸 글꼴 → 제목 → 코드 순으로 얹혀, 고른 제목 글꼴이 본문 선택지가 말한 `--serif` 를 이긴다.
 
 글꼴 파일은 사이트가 직접 싣는다. `web/fonts.json` 이 열린 글꼴(OFL)마다 id·글꼴 이름·npm 패키지·가져올 CSS·라이선스를 선언하고, `npm run build`(`build:fonts`, `web/scripts/fonts.mjs`)가 패키지의 `@font-face` 를 읽어 woff2 만 남기고(unicode-range 조각은 그대로) 이름을 선언대로 붙여 `dist/fonts/<id>.css` 와 `dist/fonts/<id>/`(파일과 라이선스)를 만든다. 페이지 앱이 dist 를 `/apps/site/` 에 내므로 같은 출처이고 CSP(`default-src 'self'`) 안이다. 선택지는 `fonts = [id…]` 로 필요한 글꼴을 이름으로 부르고, 사이트 파일 `[look] fonts` 가 그 주소의 뿌리다. 프레임은 고른 선택지의 스타일시트만 `<head>` 에 `link[data-look-font]` 로 붙이고(theme.js 가 첫 칠 전에, site.js 가 바뀔 때), 브라우저는 그 글꼴 중에서도 글이 쓰는 조각만 받는다. 설정의 글꼴 목록은 갈래(고딕·명조·손글씨·제목용·고정폭 — `portal/site.py` FONT_GROUPS)로 묶고 줄마다 그 글꼴로 쓴 견본을 보이며, 견본의 글꼴은 줄이 보일 때 불러온다. 앱은 글꼴 출처를 쓰지 않는다 — 글꼴은 프레임이 붙인다.
 

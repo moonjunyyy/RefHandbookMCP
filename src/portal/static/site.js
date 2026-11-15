@@ -222,7 +222,7 @@ function lookTokens(look, p) {
     ...pick("mono")?.tokens,
     ...pick("size")?.tokens
   };
-  const fonts = look.fonts ? [...new Set(FONT_KINDS.flatMap((k) => pick(k)?.fonts ?? []))].map((id) => fontSheet(id, look)) : [];
+  const fonts = look.fonts ? [...new Set(FONT_KINDS.flatMap((k) => (pick(k) ?? look[k]?.[0])?.fonts ?? []))].map((id) => fontSheet(id, look)) : [];
   if (p.columns && look.columns.includes(p.columns)) {
     const gap = p.columns - 1;
     both["home-grid"] = "repeat(auto-fill, minmax(min(100%, max(12rem, calc((100% - " + gap + " * var(--gap)) / " + p.columns + "))), 1fr))";

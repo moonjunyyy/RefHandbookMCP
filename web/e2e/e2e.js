@@ -685,29 +685,31 @@ async function run() {
     && (await page.$eval('main section .inline-field button', (b) => getComputedStyle(b).borderTopLeftRadius)) === corner.tokens['radius-s']
     && (await page.$eval('main section.card', (s) => getComputedStyle(s).borderTopLeftRadius)) === corner.tokens.radius,
     `${await prop('--radius')} ${await page.$eval('main section .inline-field button', (b) => getComputedStyle(b).borderTopLeftRadius)}`);
-  step('기본 글꼴은 열린 글꼴을 하나도 불러오지 않는다', (await page.$$('link[data-look-font]')).length === 0);
   const sheet = (id) => `${LOOK.fonts}${id}.css`;
+  const linked = () => page.$$eval('link[data-look-font]', (ls) => ls.map((l) => l.getAttribute('href')).sort());
+  const defaults = ['type', 'heading', 'mono'].flatMap((k) => LOOK[k][0].fonts).map(sheet).sort();
+  step('기본 글꼴은 theme.css 가 앞에 둔 열린 글꼴(본문·제목·코드)을 불러온다', defaults.length === 3 && JSON.stringify(await linked()) === JSON.stringify(defaults), JSON.stringify(await linked()));
   const pickFont = async (kind, c) => {
     await page.click(`[data-look=${kind}] button.font-choice:has(.font-name:text-is("${c.label}"))`);
     await page.waitForFunction(() => !document.querySelector('.settings-controls').inert);
     await page.waitForSelector(`[data-look=${kind}] button.font-choice[aria-pressed=true]`);
   };
   const loaded = (family) => page.evaluate(async (f) => { await document.fonts.ready; return [...document.fonts].some((x) => x.family.replace(/"/g, '') === f && x.status === 'loaded'); }, family);
-  const type = LOOK.type.find((c) => c.fonts.length === 1);
+  const type = LOOK.type.find((c, i) => i > 0 && c.fonts.length === 1);  // not the first: theme.css's own, which loads its open font without tokens
   const typeFamily = type.tokens.sans.split(',')[0].replace(/"/g, '');
   await pickFont('type', type);
   step('본문 글꼴: 본문이 그 글꼴이고, 그 글꼴의 스타일시트만 붙고, 실제로 내려받아 쓴다', (await page.evaluate(() => getComputedStyle(document.body).fontFamily)).startsWith(type.tokens.sans.split(',')[0])
-    && JSON.stringify(await page.$$eval('link[data-look-font]', (ls) => ls.map((l) => l.getAttribute('href')))) === JSON.stringify([sheet(type.fonts[0])])
+    && JSON.stringify(await linked()) === JSON.stringify([sheet(type.fonts[0]), ...defaults.filter((x) => !LOOK.type[0].fonts.map(sheet).includes(x))].sort())
     && (await loaded(typeFamily)) && mock.get('site', 'prefs').look.type === type.id,
     `${await page.evaluate(() => getComputedStyle(document.body).fontFamily)} ${JSON.stringify(await page.$$eval('link[data-look-font]', (ls) => ls.map((l) => l.getAttribute('href'))))}`);
   const heading = LOOK.heading.find((c) => c.group === 'display');
   await pickFont('heading', heading);
   step('제목 글꼴: 제목이 그 글꼴이고 본문은 그대로다', (await page.$eval('h1', (e) => getComputedStyle(e).fontFamily)).startsWith(heading.tokens.serif.split(',')[0])
     && (await page.evaluate(() => getComputedStyle(document.body).fontFamily)).startsWith(type.tokens.sans.split(',')[0])
-    && (await page.$$('link[data-look-font]')).length === 2, await page.$eval('h1', (e) => getComputedStyle(e).fontFamily));
-  const mono = LOOK.mono.find((c) => c.fonts.length === 1);
+    && (await linked()).includes(sheet(heading.fonts[0])) && !(await linked()).includes(sheet(LOOK.heading[0].fonts[0])) || false, await page.$eval('h1', (e) => getComputedStyle(e).fontFamily));
+  const mono = LOOK.mono.find((c, i) => i > 0 && c.fonts.length === 1);
   await pickFont('mono', mono);
-  step('코드 글꼴: --mono 가 그 글꼴이다', (await prop('--mono')).startsWith(mono.tokens.mono.split(',')[0]) && (await page.$$('link[data-look-font]')).length === 3, await prop('--mono'));
+  step('코드 글꼴: --mono 가 그 글꼴이다', (await prop('--mono')).startsWith(mono.tokens.mono.split(',')[0]) && (await linked()).length === 3 && (await linked()).includes(sheet(mono.fonts[0])), await prop('--mono'));
   step('글꼴 고르기: 줄마다 그 글꼴로 쓰인 견본, 보이는 줄의 글꼴만 불러온다', (await page.$$eval('[data-look=type] .font-sample', (els) => new Set(els.map((e) => e.style.fontFamily)).size)) === new Set(LOOK.type.map((c) => c.tokens.sans ?? '')).size
     && (await page.$$('link[data-font-preview]')).length > 0 && (await page.$$('link[data-font-preview]')).length < LOOK.type.length + LOOK.heading.length + LOOK.mono.length);
   await page.$eval('[data-look=type]', (e) => e.scrollIntoView());
@@ -791,7 +793,7 @@ async function run() {
   await page.click('button:text-is("모양 초기화")');
   await page.waitForFunction(() => document.querySelector('select[name=theme]').value === 'auto');
   step('모양 초기화는 테마와 모양을 되돌리고 홈 칸 수는 유지한다', (await prop('--radius')) === ownRadius
-    && (await page.evaluate(() => getComputedStyle(document.documentElement).fontSize)) === '16px' && (await page.$$('link[data-look-font]')).length === 0
+    && (await page.evaluate(() => getComputedStyle(document.documentElement).fontSize)) === '16px' && JSON.stringify(await linked()) === JSON.stringify(defaults)
     && mock.get('site', 'prefs').theme === 'auto' && JSON.stringify(mock.get('site', 'prefs').look) === JSON.stringify({ columns: n }));
   await page.click('[data-look=columns] button:text-is("자동")');
   await page.waitForFunction(() => !JSON.parse(localStorage.getItem('look')).both['home-grid']);

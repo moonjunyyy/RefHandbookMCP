@@ -160,6 +160,7 @@ fonts = "/apps/site/fonts/"  # where the pages app serves the open fonts (web/fo
   label = "기본 고딕"
   tr = { en = "Default sans" }
   group = "sans"
+  fonts = ["plus-jakarta-sans"]
   [[look.type]]
   id = "pretendard"
   label = "프리텐다드"
@@ -209,6 +210,27 @@ fonts = "/apps/site/fonts/"  # where the pages app serves the open fonts (web/fo
   fonts = ["nanum-gothic"]
   tokens = { sans = '"Nanum Gothic", var(--sans-fallback)' }
   [[look.type]]
+  id = "nanum-barun-gothic"
+  label = "나눔바른고딕"
+  tr = { en = "NanumBarunGothic" }
+  group = "sans"
+  fonts = ["nanum-barun-gothic"]
+  tokens = { sans = 'NanumBarunGothic, var(--sans-fallback)' }
+  [[look.type]]
+  id = "nanum-square"
+  label = "나눔스퀘어"
+  tr = { en = "NanumSquare" }
+  group = "sans"
+  fonts = ["nanum-square"]
+  tokens = { sans = 'NanumSquare, var(--sans-fallback)' }
+  [[look.type]]
+  id = "nanum-square-round"
+  label = "나눔스퀘어라운드"
+  tr = { en = "NanumSquareRound" }
+  group = "sans"
+  fonts = ["nanum-square-round"]
+  tokens = { sans = 'NanumSquareRound, var(--sans-fallback)' }
+  [[look.type]]
   id = "gothic-a1"
   label = "고딕 A1"
   tr = { en = "Gothic A1" }
@@ -251,6 +273,7 @@ fonts = "/apps/site/fonts/"  # where the pages app serves the open fonts (web/fo
   label = "기본 명조"
   tr = { en = "Default serif" }
   group = "serif"
+  fonts = ["gowun-batang"]
   tokens = { sans = 'var(--serif-default)' }
   [[look.type]]
   id = "noto-serif"
@@ -273,6 +296,13 @@ fonts = "/apps/site/fonts/"  # where the pages app serves the open fonts (web/fo
   group = "serif"
   fonts = ["gowun-batang"]
   tokens = { sans = '"Gowun Batang", var(--serif-fallback)' }
+  [[look.type]]
+  id = "maruburi"
+  label = "마루부리"
+  tr = { en = "MaruBuri" }
+  group = "serif"
+  fonts = ["maruburi"]
+  tokens = { sans = 'MaruBuri, var(--serif-fallback)' }
   [[look.type]]
   id = "hahmlet"
   label = "함렛"
@@ -300,6 +330,13 @@ fonts = "/apps/site/fonts/"  # where the pages app serves the open fonts (web/fo
   fonts = ["gaegu"]
   tokens = { sans = 'Gaegu, var(--sans-fallback)' }
   [[look.type]]
+  id = "nanum-barun-pen"
+  label = "나눔바른펜"
+  tr = { en = "NanumBarunpen" }
+  group = "hand"
+  fonts = ["nanum-barun-pen"]
+  tokens = { sans = 'NanumBarunpen, var(--sans-fallback)' }
+  [[look.type]]
   id = "hi-melody"
   label = "하이멜로디"
   tr = { en = "Hi Melody" }
@@ -317,6 +354,7 @@ fonts = "/apps/site/fonts/"  # where the pages app serves the open fonts (web/fo
   label = "기본 명조"
   tr = { en = "Default serif" }
   group = "serif"
+  fonts = ["gowun-batang"]
   [[look.heading]]
   id = "body"
   label = "본문과 같게"
@@ -330,6 +368,34 @@ fonts = "/apps/site/fonts/"  # where the pages app serves the open fonts (web/fo
   group = "sans"
   fonts = ["pretendard"]
   tokens = { serif = '"Pretendard Variable", var(--sans-fallback)' }
+  [[look.heading]]
+  id = "nanum-gothic"
+  label = "나눔고딕"
+  tr = { en = "Nanum Gothic" }
+  group = "sans"
+  fonts = ["nanum-gothic"]
+  tokens = { serif = '"Nanum Gothic", var(--sans-fallback)' }
+  [[look.heading]]
+  id = "nanum-barun-gothic"
+  label = "나눔바른고딕"
+  tr = { en = "NanumBarunGothic" }
+  group = "sans"
+  fonts = ["nanum-barun-gothic"]
+  tokens = { serif = 'NanumBarunGothic, var(--sans-fallback)' }
+  [[look.heading]]
+  id = "nanum-square"
+  label = "나눔스퀘어"
+  tr = { en = "NanumSquare" }
+  group = "sans"
+  fonts = ["nanum-square"]
+  tokens = { serif = 'NanumSquare, var(--sans-fallback)' }
+  [[look.heading]]
+  id = "nanum-square-round"
+  label = "나눔스퀘어라운드"
+  tr = { en = "NanumSquareRound" }
+  group = "sans"
+  fonts = ["nanum-square-round"]
+  tokens = { serif = 'NanumSquareRound, var(--sans-fallback)' }
   [[look.heading]]
   id = "noto-serif"
   label = "본명조 (Noto Serif KR)"
@@ -351,6 +417,13 @@ fonts = "/apps/site/fonts/"  # where the pages app serves the open fonts (web/fo
   group = "serif"
   fonts = ["gowun-batang"]
   tokens = { serif = '"Gowun Batang", var(--serif-fallback)' }
+  [[look.heading]]
+  id = "maruburi"
+  label = "마루부리"
+  tr = { en = "MaruBuri" }
+  group = "serif"
+  fonts = ["maruburi"]
+  tokens = { serif = 'MaruBuri, var(--serif-fallback)' }
   [[look.heading]]
   id = "hahmlet"
   label = "함렛"
@@ -407,6 +480,20 @@ fonts = "/apps/site/fonts/"  # where the pages app serves the open fonts (web/fo
   fonts = ["nanum-pen-script"]
   tokens = { serif = '"Nanum Pen Script", var(--sans-fallback)' }
   [[look.heading]]
+  id = "nanum-brush"
+  label = "나눔손글씨 붓"
+  tr = { en = "Nanum Brush Script" }
+  group = "hand"
+  fonts = ["nanum-brush-script"]
+  tokens = { serif = '"Nanum Brush Script", var(--sans-fallback)' }
+  [[look.heading]]
+  id = "nanum-barun-pen"
+  label = "나눔바른펜"
+  tr = { en = "NanumBarunpen" }
+  group = "hand"
+  fonts = ["nanum-barun-pen"]
+  tokens = { serif = 'NanumBarunpen, var(--sans-fallback)' }
+  [[look.heading]]
   id = "hi-melody"
   label = "하이멜로디"
   tr = { en = "Hi Melody" }
@@ -418,12 +505,13 @@ fonts = "/apps/site/fonts/"  # where the pages app serves the open fonts (web/fo
   label = "기본 고정폭"
   tr = { en = "Default monospace" }
   group = "mono"
+  fonts = ["jetbrains-mono"]
   [[look.mono]]
   id = "jetbrains-mono"
   label = "JetBrains Mono + D2Coding"
   group = "mono"
   fonts = ["jetbrains-mono", "d2coding"]
-  tokens = { mono = '"JetBrains Mono Variable", D2Coding, var(--mono-fallback)' }
+  tokens = { mono = '"JetBrains Mono", D2Coding, var(--mono-fallback)' }
   [[look.mono]]
   id = "d2coding"
   label = "D2Coding"

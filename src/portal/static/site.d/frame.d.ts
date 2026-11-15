@@ -135,7 +135,8 @@ export interface LookTokens {
     fonts: string[];
 }
 /** The tokens the person's look redeclares, by theme: the palette's for each, the rest for both (a heading chosen
- * wins over what a body font says of --serif); and the stylesheets of the open fonts its choices need. */
+ * wins over what a body font says of --serif); and the stylesheets of the open fonts its choices need — a kind
+ * not chosen is its first choice, theme.css's own, which names the open font theme.css puts first. */
 export declare function lookTokens(look: Look, p: LookPrefs): LookTokens;
 /** The look onto <html> as custom properties (the CSSOM, which the pages' CSP allows; an inline style outranks the
  * theme's selectors), the palette of the theme in force; and into this browser for the next first paint. */
