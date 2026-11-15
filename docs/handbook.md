@@ -169,8 +169,10 @@ JSON, `@FILE` or `-` (stdin), and an import's `data_file` names the export, so a
 goes through argv. Through the tools, a long text goes once with `research_blob` (in pieces if
 needed) and is passed on as `ref`. `export` takes `include_log=false`; `import` takes `to` (another name) and
 `dry_run`; `copy` makes a sandbox copy, `rename` renames, and `research_ledger_delete` deletes with
-`confirm` set to the ledger id. `lookup` searches the ordinary cards unless `scope="research"` or
-`"all"`.
+`confirm` set to the ledger id. `lookup` searches every card; `scope="handbook"` leaves the research
+cards out and `scope="research"` keeps only them. A Hangul query word is also searched by its first
+two syllables (`store.stems`): Korean writes particles and endings onto the word, so only the stem
+is a prefix of what a card says.
 
 When porting a hand-kept ledger: `check` also judges the basis of `proposed` rows, and
 `[unverified]` propagates only from the first token of the evidence cell.

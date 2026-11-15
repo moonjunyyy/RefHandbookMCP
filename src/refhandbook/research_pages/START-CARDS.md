@@ -9,7 +9,7 @@ the situation; return to the step that sent you.
 
 **Cards.** Every procedure is a card with id `rs-*`. `research_next` prints the
 card of the plan object it starts; `open_entry("rs-n1")` opens any card;
-`lookup("<symptom>", scope="research")` finds one by its cues. Every card has
+`lookup("<symptom>")` finds one by its cues (`scope="research"` leaves the ordinary cards out). Every card has
 the same parts:
 - ENTRY: the start condition, meaning the K it consumes and the rows it acts on;
 - numbered steps;

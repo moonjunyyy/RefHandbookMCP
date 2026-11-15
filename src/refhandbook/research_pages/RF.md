@@ -1,7 +1,7 @@
 # PAGE RF — Retrieve: sessions, files, memory, web
 KIND: checklist
 TAGS: research, normal
-TRIGGERS: last time; as we agreed; the lemma; that equation; which paper; unknown symbol; not in this conversation; other project
+TRIGGERS: last time; as we agreed; the lemma; that equation; which paper; unknown symbol; not in this conversation; other project; 하기로 했다; 전에 말한; 지난번; 원래는; 예전 구현; 합의한 것; 다른 대화에서; 모르는 기호
 OBJECTIVE: Resolve a reference from originals (sessions, files, memory pointers, web) and record it with a locator, or record the calls that failed.
 
 ENTRY — object: a K `@RF` `on` the item to resolve (a term, symbol, claim,

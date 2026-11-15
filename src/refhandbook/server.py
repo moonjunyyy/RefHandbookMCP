@@ -111,11 +111,12 @@ def lookup(
     situation: Annotated[str, Field(description="The symptom as observed: error text, alert name, or a few words.")],
     limit: int = 5,
     scope: Annotated[Literal["handbook", "research", "all"], Field(
-        description="handbook: the ordinary cards (default); research: only the research cards (rs-*); all: both.")] = "handbook",
+        description="all: every card (default); handbook: without the research loop's cards (rs-*); research: only those.")] = "all",
 ) -> str:
-    """Find the entries that fit a situation. Returns each candidate's condition and
-    objective so the right one can be confirmed before it is opened. The research loop's cards
-    (rs-*) are found with scope="research"."""
+    """Find the entries that fit a situation: a fault, a request, or what just happened in the
+    conversation (the user corrected something, a reference cannot be resolved, a step was refused).
+    Returns each candidate's condition and objective so the right one can be confirmed before it is
+    opened. The research loop's cards (rs-*) are among them; `scope` narrows the search."""
     return render.candidates(situation, handbook().lookup(situation, limit, scope))
 
 
