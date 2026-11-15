@@ -1,6 +1,6 @@
 // The site's pages, over the services' APIs (docs/site.md "APIs and pages"), on the frame the sign-in
 // serves (/auth/static/site.js, docs/frame.md). One app for every page path: nginx serves this for /,
-// the portal's pages and the agents' pages; the sign-in, Claude's consent and the approvals are server
+// the portal's pages, the agents' pages and the board; the sign-in, Claude's consent and the approvals are server
 // pages of their own.
 
 import { chrome, frame, h, header, keys, load, main, message, pageHead, replace, section, showPending } from '/auth/static/site.js';
@@ -9,6 +9,7 @@ import { canLeave } from './lib/navigation';
 import { closeGuide, pageGuide } from './lib/guides';
 import * as account from './pages/account';
 import * as agents from './pages/agents';
+import { boardPage } from './pages/board';
 import { presets } from './pages/flows';
 import { app, apps } from './pages/apps';
 import { calendar } from './pages/calendar';
@@ -29,6 +30,7 @@ function routes(): [RegExp, Page][] {
     [/^\/vault\/?$/, vault],
     [/^\/vault\/([a-z0-9]+)\/?(.*)$/, vault],
     [/^\/settings\/?$/, settings],
+    [/^\/board\/?$/, boardPage],
     [/^\/projects\/?$/, projects.projects],
     [/^\/projects\/join\/([^/]+)\/?$/, projects.join],
     [/^\/projects\/([^/]+)\/?$/, projects.project],

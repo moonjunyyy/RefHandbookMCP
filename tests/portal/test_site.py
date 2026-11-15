@@ -19,7 +19,7 @@ def test_the_shipped_file_declares_the_site():
     assert {a.id for a in s.apps} >= {"account", "agents", "refhandbook", "site", "projects", "calendar", "vault"}
     pages = next(a for a in s.apps if a.id == "site")
     assert pages.pages == ("/", "/apps", "/app/", "/settings", "/projects", "/projects/", "/account/", "/agents/",
-                           "/calendar", "/vault", "/vault/")
+                           "/calendar", "/vault", "/vault/", "/board")
     assert pages.public and not pages.card
     # its files are public; each person's settings are in its store, behind the sign-in, for it alone
     assert pages.audience == "site" and pages.storage
@@ -72,6 +72,10 @@ def test_a_service_app_declares_its_widgets_pages_and_routes():
     projects = next(a for a in s.apps if a.id == "projects")
     assert not projects.audience and not projects.routes and projects.widgets[0].href == "/apps/site/widgets/projects.js"
     assert next(a for a in s.apps if a.id == "account").links[0].href == "/account/"  # the projects link became an app
+    board = next(a for a in s.apps if a.id == "board")  # the public board: the handbook's API, the pages app's page
+    assert board.audience == "refhandbook" and board.upstream.endswith(":8765") and board.menu_href == "/board" and board.default
+    assert [(w.id, w.href) for w in board.widgets] == [("news", "/apps/site/widgets/board.js")]
+    assert [(r.path, r.signin) for r in board.routes] == [("/board/api/", False)]
 
 
 def _blocks(out):

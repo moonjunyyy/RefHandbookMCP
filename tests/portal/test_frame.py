@@ -217,7 +217,7 @@ def test_the_frame_declares_the_sizes_and_the_default_apps(app):
     from the site file through /me — no list in the code."""
     c, _ = sign_in(app)
     me = c.get("/auth/api/v1/me").json()
-    assert [c["id"] for c in me["cards"] if c["default"]] == ["projects", "calendar", "vault"]
+    assert [c["id"] for c in me["cards"] if c["default"]] == ["projects", "calendar", "vault", "board"]  # the board: the notices reach everyone
     assert all(c["optional"] for c in me["cards"] if c["default"])
     assert me["sizes"] == [{"id": k, "cols": c, "rows": r} for k, (c, r) in site.SIZES.items()]
     assert all(w["size"] in site.SIZES for c in me["cards"] for w in c["widgets"])
@@ -267,7 +267,7 @@ PAGES = WEB / "src" / "pages"
 # explanatory paragraphs the pages still carry (docs/frame.md §5): the rewritten pages have none, and the
 # others may only lose them. Raise a number here only with a reason in the same commit.
 RATCHET = {"account.ts": 0, "agents.ts": 0, "flows.ts": 0, "projects.ts": 0, "schedule.ts": 0, "grant.ts": 0,
-           "home.ts": 0, "apps.ts": 0, "settings.ts": 0, "tabs.ts": 0, "calendar.ts": 0, "vault.ts": 0}
+           "home.ts": 0, "apps.ts": 0, "settings.ts": 0, "tabs.ts": 0, "calendar.ts": 0, "vault.ts": 0, "board.ts": 0}
 EXPLANATION = re.compile(r"h\('p',\s*\{\s*class:\s*'(?:muted small|muted)'")
 
 

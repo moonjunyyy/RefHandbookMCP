@@ -2,7 +2,7 @@
 // background actually behind it (first non-transparent ancestor), on a board of the pages app — the
 // main page (widgets of the calendar, the notes, the projects and eq-sandbox), the name menu open,
 // editing, the widget dialog, the store, an app's page, the settings, the calendar with a day open, its week,
-// and the event dialog, the notes read and edited. The first line is the total (run.sh reads it);
+// and the event dialog, the notes read and edited, the board and a share's copy. The first line is the total (run.sh reads it);
 // then the worst offenders.
 const { chromium } = require('playwright');
 const mock = require('./mock');
@@ -11,9 +11,19 @@ const MEASURE = (scope) => {
   const parse = (c) => { const m = /rgba?\(([\d.]+), ([\d.]+), ([\d.]+)(?:, ([\d.]+))?\)/.exec(c); return m ? [+m[1], +m[2], +m[3], m[4] === undefined ? 1 : +m[4]] : null; };
   const lum = ([r, g, b]) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b); };
   const blend = (top, under) => top[3] >= 1 ? top : [0, 1, 2].map((i) => Math.round(top[i] * top[3] + under[i] * (1 - top[3]))).concat([1]);
+  // an SVG text's backdrop is the shape its group paints before it (a flow block's rect), not a CSS background
+  const shapeUnder = (el) => {
+    if (!(el instanceof SVGElement)) return null;
+    for (let s = el.previousElementSibling; s; s = s.previousElementSibling) {
+      const c = s.tagName === 'rect' ? parse(getComputedStyle(s).fill) : null;
+      if (c && c[3] > 0) return c;
+    }
+    return null;
+  };
   const bgOf = (el) => {
-    let acc = null;
-    for (let e = el; e; e = e.parentElement) {
+    let acc = shapeUnder(el);
+    if (acc && acc[3] >= 1) return acc;
+    for (let e = el.tagName === 'text' ? el.closest('svg') : el; e; e = e.parentElement) {  // an SVG's own parts have no CSS background
       const c = parse(getComputedStyle(e).backgroundColor);
       if (c && c[3] > 0) { acc = acc ? blend(acc, c) : c; if (acc[3] >= 1) return acc; }
     }
@@ -33,7 +43,7 @@ const MEASURE = (scope) => {
     const cs = getComputedStyle(el);
     if (cs.visibility === 'hidden' || +cs.opacity === 0) continue;
     const fg0 = parse(el.tagName === 'text' ? cs.fill : cs.color); if (!fg0) continue;
-    const bg = bgOf(el.tagName === 'text' ? el.closest('svg') : el);
+    const bg = bgOf(el);
     const fg = blend(fg0, bg);
     const l1 = lum(fg), l2 = lum(bg);
     const ratio = (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
@@ -170,6 +180,17 @@ const MEASURE = (scope) => {
   // a run's page with its branches (agents/branches.py): the merged, kept and unchanged tags
   await visit('/agents/runs/run:b1', 'ul.branches');
   await measure('run-branches', 'main');
+
+  // the public board: the notices, a hidden share's card as an administrator sees it, a share's copy
+  mock.boardAdmin(true);
+  Object.assign(mock.board().shares[0], { hidden: true, hidden_why: '확인 중' });
+  await visit('/board', '.notice');
+  await measure('board', 'main');
+  await page.click('[data-share=s1] h3 button');
+  await page.waitForSelector('dialog[open] .flow-canvas');
+  await measure('share', 'dialog');
+  await page.keyboard.press('Escape');
+  mock.boardAdmin(false);
 
   // disabled controls are allowed to be dim (WCAG exempts them); everything else must reach 4.5:1
   const all = passes.flatMap(([pass, rows]) => rows.filter((r) => r.where === 'on' && !r.disabled).map((r) => ({ ...r, pass })));

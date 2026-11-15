@@ -2,7 +2,8 @@
 
 import { ACCOUNT } from './account';
 import { AGENTS } from './agents';
+import { BOARD } from './board';
 import { PROJECTS } from './projects';
 import { SITE } from './site';
 
-export const EN: Record<string, string> = { ...SITE, ...ACCOUNT, ...AGENTS, ...PROJECTS };
+export const EN: Record<string, string> = { ...SITE, ...ACCOUNT, ...AGENTS, ...PROJECTS, ...BOARD };

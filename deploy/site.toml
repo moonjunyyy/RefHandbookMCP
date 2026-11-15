@@ -572,13 +572,13 @@ fonts = "/apps/site/fonts/"  # where the pages app serves the open fonts (web/fo
 [[app]]
 id = "site"
 title = "사이트 화면"
-description = "The site's pages (web/): the main page, the catalog, the settings, the account pages, the agents' pages, the calendar and the notes, over the services' APIs."
+description = "The site's pages (web/): the main page, the catalog, the settings, the account pages, the agents' pages, the calendar, the notes and the board, over the services' APIs."
 static = true
 public = true
 storage = true  # each person's settings (language, theme, start page, the apps they turned on, their main page)
 card = false
 build = "web/dist"
-pages = ["/", "/apps", "/app/", "/settings", "/projects", "/projects/", "@@portal_root@@/", "/agents/", "/calendar", "/vault", "/vault/"]
+pages = ["/", "/apps", "/app/", "/settings", "/projects", "/projects/", "@@portal_root@@/", "/agents/", "/calendar", "/vault", "/vault/", "/board"]
   [[app.route]]
   path = "/agents"
   match = "exact"
@@ -834,6 +834,33 @@ link = [{ label = "에이전트 실행", href = "/agents/", tr = { en = "Runs" }
   body = "1m"
   signin = false
   note = "the agents' JSON API: a 401 is answered as JSON, not sent to the sign-in page"
+
+[[app]]
+id = "board"
+default = true
+title = "공개 보드"
+icon = "📌"
+description = "공지, 함께 쓰는 프리셋과 레이어, 들어갈 수 있는 프로젝트"
+about = "관리자의 공지를 읽고, 사람들이 공유한 에이전트 프리셋과 샌드박스 레이어를 내 것으로 가져옵니다. 내 것도 공유할 수 있습니다 — API 키는 함께 가지 않습니다. 아직 들어가지 않은 프로젝트도 여기서 찾습니다."
+tags = ["AI", "도구"]
+tr.en = { title = "Public Board", description = "News, shared presets and layers, open projects", about = "Read the administrators' notices and take the agent presets and sandbox layers people share as your own. Share yours too — your API keys never travel with them. Find the projects you have not joined yet." }
+audience = "refhandbook"
+upstream = "@@upstream:handbook@@"
+menu_href = "/board"
+link = [{ label = "공개 보드", href = "/board", tr = { en = "Public board" } }]
+  [[app.widget]]
+  id = "news"
+  title = "공개 보드"
+  description = "공지 — 고정된 것부터 — 와 새로 공유된 프리셋·레이어"
+  module = "/apps/site/widgets/board.js"
+  tr.en = { title = "Public board", description = "The notices, pinned first, and the presets and layers shared last" }
+  [[app.route]]
+  path = "/board/api/"
+  limit = "api"
+  burst = 40
+  body = "64k"
+  signin = false
+  note = "the board's JSON API (refhandbook/board_api.py): a 401 is answered as JSON, not sent to the sign-in page"
 
 [[app]]
 id = "refhandbook"

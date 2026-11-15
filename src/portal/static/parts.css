@@ -438,6 +438,31 @@ ul.plain li { padding: var(--s1) 0; border-top: 1px solid var(--line); }
 .branches code { overflow-wrap: anywhere; }
 ul.plain li:first-child { border-top: 0; padding-top: 0; }
 
+/* ── the public board (docs/board.md): its search and actions on one row, the notices, a share's card (the store's), what a share carries */
+.board-tools { display: flex; flex-wrap: wrap; gap: var(--s3); align-items: center; }
+.board-tools input[type="search"] { flex: 1; min-width: min(100%, 16rem); margin: 0; }
+.board-tools .actions { margin: 0; }
+.notices { display: flex; flex-direction: column; gap: var(--s3); }
+.notice { padding: var(--s3); border: 1px solid var(--line); border-radius: var(--panel-radius); background: var(--card); }
+.notice.pinned { border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); }
+.notice .item-head button.more { margin-left: auto; }
+.notice .note-body { margin-top: var(--s2); font-size: .95rem; }
+.notice .note-body > :last-child { margin-bottom: 0; }
+.store-card.share { align-items: flex-start; }
+.store-card.share[data-hidden] { border-style: dashed; }
+.store-card.share h3 button.link { font: inherit; color: var(--text); text-align: left; }
+.store-card.share h3 button.link:hover { color: var(--accent); text-decoration: none; }
+.store-card .meta { margin: var(--s1) 0 0; }
+.store-card.share .meta > span { white-space: nowrap; }
+.board-tools + .chips { margin-bottom: var(--s4); }
+.store-card.share .app-tools { display: flex; gap: var(--s1); align-items: center; }
+.share-detail { width: min(40rem, 86vw); }
+.share-detail .meta { margin: 0 0 var(--s3); }
+.share-detail .flow-canvas.view { max-height: 40vh; }
+.share-steps { padding-left: var(--s4); }
+.share-steps li { margin: var(--s2) 0; }
+.share-script { max-height: 40vh; overflow: auto; }
+
 /* ── the calendar (§3.3): one head row, a month grid, the day opened under it */
 .cal-head { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s4); align-items: center; justify-content: space-between; margin-bottom: var(--s3); }
 .cal-nav { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1); }

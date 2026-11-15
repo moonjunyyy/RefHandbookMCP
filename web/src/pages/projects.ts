@@ -10,7 +10,7 @@ import { copyText } from '../lib/clipboard';
 const api = () => account();
 const P = '/projects';
 
-const POLICIES: Record<string, string> = {
+export const POLICIES: Record<string, string> = {
   open: n_('누구나 바로 들어옴'), request: n_('신청하면 소유자가 승인'), invite: n_('초대 링크로만'),
 };
 
