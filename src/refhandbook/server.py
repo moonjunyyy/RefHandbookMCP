@@ -117,7 +117,18 @@ def lookup(
     conversation (the user corrected something, a reference cannot be resolved, a step was refused).
     Returns each candidate's condition and objective so the right one can be confirmed before it is
     opened. The research loop's cards (rs-*) are among them; `scope` narrows the search."""
-    return render.candidates(situation, handbook().lookup(situation, limit, scope))
+    hb = handbook()
+    rows = hb.lookup(situation, limit, scope)
+    for r in rows:
+        r["routes"] = _routes(hb, r["id"])
+    return render.candidates(situation, rows)
+
+
+def _routes(hb: Handbook, card: str) -> list[tuple[str, list[str]]]:
+    """The entries that route to a card and their ledgers (entry_api.card_entries), from this store's graph."""
+    from .kernel import runtime
+
+    return entry_api.card_entries(runtime.attach(hb).g, card)
 
 
 @tool(READ)
@@ -128,7 +139,7 @@ def open_entry(id: str) -> str:
 
     hb = handbook()
     e = hb.get_entry(id)
-    card = render.card(e, hb.neighbors(id))
+    card = render.card(e, hb.neighbors(id), _routes(hb, e["id"]))
     parts = decomposition(e)
     if parts and not e["id"].startswith("rs-"):
         card = (f"SPLIT BEFORE USE: this card holds more than one topic ({' · '.join(parts)}). Split it first "

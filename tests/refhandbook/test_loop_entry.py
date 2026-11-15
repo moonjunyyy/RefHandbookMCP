@@ -2,7 +2,9 @@
 outside a session shows the loop's state, lookup reaches the procedure cards from the words a
 situation is told in, and a card names the entry its work is entered through."""
 
-from refhandbook import Handbook, research
+import asyncio
+
+from refhandbook import Handbook, entry_api, research, research_api, server
 from refhandbook.store import stems
 
 from .test_research import Turn, rs  # noqa: F401 (rs is a fixture)
@@ -53,3 +55,26 @@ def test_the_procedure_cards_are_found_from_a_situation_told_in_korean():
     assert "rs-x8" in top("그런 말은 없다고 말하려 한다")
     assert "rs-rv" in top("절차가 놓쳤다, 절차 개선")
     assert "rs-n1" in top("메시지마다 세션을 연다")
+
+
+# 3 ── a card names the entry its work is entered through ────────────────────
+
+def _call(name, **arguments):
+    return asyncio.run(server.make().call_tool(name, arguments)).content[0].text
+
+
+def test_a_card_shows_the_entry_that_routes_to_it(rs, monkeypatch):  # noqa: F811
+    research_api.bind(rs.hb)
+    monkeypatch.setattr(server, "_handbook", rs.hb)
+    rs.hb.save_entry(title="Geo: where things are", kind="reference", condition="the geo project is picked up again",
+                     body="notes")
+    eid = entry_api.entry_node("the geo project").split()[1].rstrip(":")
+    entry_api.ref(eid, "card:geo-where-things-are")
+    assert "ENTRY      the geo project (no ledger)." in _call("open_entry", id="geo-where-things-are")
+    entry_api.ref(eid, "geo")  # the entry stands for the ledger (the mark of a reconstructed ledger)
+    out = _call("open_entry", id="geo-where-things-are")
+    assert "ENTRY      the geo project — ledger geo." in out and 'research_begin(ledger="geo") first' in out
+    assert out.index("ENTRY ") < out.index("CONDITION ")  # read before the card is used
+    assert "    entry: the geo project — ledger geo" in _call("lookup", situation="geo project picked up again")
+    rs.hb.save_entry(title="Loose card", condition="nothing routes here", items=[{"text": "x"}])
+    assert "ENTRY " not in _call("open_entry", id="loose-card")

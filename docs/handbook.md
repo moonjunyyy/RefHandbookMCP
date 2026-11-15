@@ -102,7 +102,7 @@ search                                (FTS5: title, triggers, condition, body)
 | Tool | Purpose |
 | :- | :- |
 | `lookup` | Symptom to candidate cards, with condition and objective |
-| `open_entry` | The card, plus related entries |
+| `open_entry` | The card, plus related entries, and the entries that route to it with their ledgers (`ENTRY`: where the work the card describes is entered) |
 | `index` | Contents list grouped by tag, kind, or letter |
 | `traverse` | Walk relations outward from a card |
 | `save_entry` | Create or update a card |

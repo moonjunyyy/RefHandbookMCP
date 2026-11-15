@@ -52,13 +52,24 @@ def _step(number: int, item: dict[str, Any]) -> str:
     return f"{number:>3}. {line}".replace("\n", "\n     ")
 
 
-def card(entry: dict[str, Any], neighbors: list[dict[str, Any]]) -> str:
+def route(title: str, ledgers: list[str]) -> str:
+    """An entry that routes to a card, as one line: the topic, and the ledger its work is entered through."""
+    return f"{title} — ledger {', '.join(ledgers)}" if ledgers else f"{title} (no ledger)"
+
+
+def card(entry: dict[str, Any], neighbors: list[dict[str, Any]],
+         routes: list[tuple[str, list[str]]] | None = None) -> str:
     out = [f"# {entry['title']}", f"[{entry['id']}] {entry['kind']} · rev {entry['revision']} · {entry['updated_at']}"]
     if entry["tags"]:
         out[-1] += " · " + " ".join(f"#{t}" for t in entry["tags"])
     if note := device_note(entry["tags"]):
         out.append(note)
     out.append("")
+    for name, ledgers in routes or []:
+        # the card is one of an entry's routes: the work it describes is entered there, before the card is used
+        out.append(f"ENTRY      {route(name, ledgers)}." + "".join(
+            f' Work on this runs in a session of that ledger: research_begin(ledger="{led}") first (card rs-n1).'
+            for led in ledgers[:1]))
     if entry["condition"]:
         out.append(f"CONDITION  {entry['condition']}")
     if entry["triggers"]:
@@ -100,6 +111,8 @@ def candidates(situation: str, rows: list[dict[str, Any]]) -> str:
             out.append(f"    SUPERSEDED BY {r['superseded_by']} — open that instead")
         if note := device_note(r.get("device")):
             out.append(f"    {note}")
+        for name, ledgers in r.get("routes") or []:
+            out.append(f"    entry: {route(name, ledgers)}")
         if r["condition"]:
             out.append(f"    condition: {r['condition']}")
         if r["objective"]:
