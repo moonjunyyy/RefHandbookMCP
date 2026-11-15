@@ -1098,8 +1098,11 @@ class Research:
             busy = [r["id"] for r in ks if key(r["status"]) == "running" and r["id"] in mine]
             if busy:
                 raise ResearchError(f"REFUSED: this session already runs {busy[0]}; finish it with research_done first")
+            queued = [r for r in ks if key(r["status"]) == "queued"]
+            # the message's own objects before the queue earlier sessions left: what this session pushed, in order
+            own = [r for r in queued if r["turn_created"] == lg["turn"]]
             pick = [r for r in ks if (r["id"] == kid and key(r["status"]) in {"queued", "blocked"})] if kid else \
-                [r for r in ks if key(r["status"]) == "queued"][:1]
+                (own or queued)[:1]
             if not pick:
                 raise ResearchError("REFUSED: no queued K (or the given K is not queued/blocked)")
             r = pick[0]
