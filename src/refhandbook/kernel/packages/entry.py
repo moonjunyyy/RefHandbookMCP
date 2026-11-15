@@ -6,18 +6,30 @@ kernel's."""
 
 from __future__ import annotations
 
+import hashlib
+import json
+from typing import Any
+
 from ..graph import Graph
 
 PKG = "entry"
 
+# (name, kind, define_type keywords): the vocabulary as data, so that its digest is its version
+TYPES: list[tuple[str, str, dict[str, Any]]] = [
+    ("entry", "node", {"description": "A topic to route from: what belongs to it is what its refs reach."}),
+    ("tag", "node", {"description": "A keyword: everything carrying it is reached by its reverse refs."}),
+    ("ref", "edge", {"inverse": "ref_of", "classes": ["navigation"],
+                     "description": "An entry routes to a node (attrs: label, the node's name there; bookmark)."}),
+    ("tagged", "edge", {"inverse": "tag_of", "classes": ["navigation"], "description": "A node carries a tag."}),
+]
+
+
+def digest() -> str:
+    """The package's version: a hash of its vocabulary (runtime.upgrade_packages installs on a change)."""
+    return hashlib.sha256(json.dumps([PKG, TYPES], sort_keys=True).encode()).hexdigest()[:16]
+
 
 def install(g: Graph, actor: str = "kernel") -> None:
     with g.tx():
-        g.define_type("entry", "node", actor=actor, pkg=PKG,
-                      description="A topic to route from: what belongs to it is what its refs reach.")
-        g.define_type("tag", "node", actor=actor, pkg=PKG,
-                      description="A keyword: everything carrying it is reached by its reverse refs.")
-        g.define_type("ref", "edge", actor=actor, pkg=PKG, inverse="ref_of", classes=["navigation"],
-                      description="An entry routes to a node (attrs: label, the node's name there; bookmark).")
-        g.define_type("tagged", "edge", actor=actor, pkg=PKG, inverse="tag_of", classes=["navigation"],
-                      description="A node carries a tag.")
+        for name, kind, kw in TYPES:
+            g.define_type(name, kind, actor=actor, pkg=PKG, **kw)
