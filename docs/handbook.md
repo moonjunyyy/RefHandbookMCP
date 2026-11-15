@@ -114,6 +114,13 @@ search                                (FTS5: title, triggers, condition, body)
 | `cap` | Capability records of every kind (script, policy, layer, alias, rule, card): versioned, owned, reviewed on a TTL, deprecated and retired; a widening grant waits for the user (docs/kernel.md "Capabilities") |
 | `run`, `job`, `files` | Run a script in the user's sandbox as a background job, read jobs, and keep files in the workspace. No network of its own: a policy's egress profiles (pypi, npm, crates, github, …) reach out through the egress supervisor, HTTPS only, to those hosts only; the server's layers bring Python, Node and Rust (`refhandbook layers build`) |
 
+A tool that changes something outside a ledger (`save_entry`, `relate`, `run`, a `files` write, a
+`cap` change, an entry ref …) ends its result with one line, `LOOP  …`: the sessions the store has
+open, most recently used first, or that none is open. The session loop's state lives in the store,
+and this is where a caller that skipped `research_begin` (or lost it with its context) meets it: at
+the call that does the work. The line states what the store knows and nothing else; reads and the
+research tools do not carry it (`server.CHANGES` names the changing calls of the mixed tools).
+
 Read tools are annotated `readOnlyHint`, and deletes `destructiveHint`, so a client can ask for
 confirmation on the right ones. Tools return the rendered card as text, since the reader is a
 model. Failures a caller can fix come back as tool errors (`isError`), not protocol errors.

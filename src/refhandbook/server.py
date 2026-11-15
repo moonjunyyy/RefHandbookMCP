@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import functools
+import logging
 import threading
+import time
 from collections.abc import Callable
 from typing import Annotated, Any, Literal
 
@@ -62,6 +64,45 @@ def _serialized(fn: Callable[..., Any]) -> Callable[..., Any]:
 
     return run
 
+log = logging.getLogger("refhandbook.server")
+
+# The calls of a mixed tool that change something (its other calls only read, and what they return is
+# passed on as it is). A tool that is not read-only and not listed here changes something on every call.
+CHANGES: dict[str, set[str]] = {
+    "cap": {"add", "update", "deprecate", "remove", "restore", "rename"},
+    "files": {"write", "remove"}, "job": {"cancel"}, "agent_run": {"request", "cancel"},
+    "sandbox_script": {"add", "update", "retire", "test"}, "sandbox_files": {"write", "remove"},
+    "sandbox_job": {"cancel"}, "sandbox_policy": set(),
+}
+
+
+def _loop_line() -> str:
+    """render.loop_state for this store; never the reason a tool fails."""
+    from .kernel import runtime, sessions
+
+    try:
+        return render.loop_state(sessions.all_open(runtime.attach(handbook()).g), time.time())
+    except Exception:  # noqa: BLE001 — the line is a display; the tool's own result stands without it
+        log.exception("could not read the open sessions")
+        return ""
+
+
+def _outside_the_loop(fn: Callable[..., Any]) -> Callable[..., Any]:
+    """A tool that changes something outside a ledger (a card, a relation, a capability, a file, a job)
+    ends its result with the loop's state: the device shows whether a session is open at the place the
+    work happens. The research tools are the loop itself and carry their session; reads show nothing."""
+    actions = CHANGES.get(fn.__name__)
+
+    @functools.wraps(fn)
+    def run(*args: Any, **kwargs: Any) -> Any:
+        out = fn(*args, **kwargs)
+        if isinstance(out, str) and (actions is None or kwargs.get("action") in actions):
+            out = f"{out}\n\n{_loop_line()}".rstrip()
+        return out
+
+    return run
+
+
 TOOLS: list[tuple[Callable[..., Any], ToolAnnotations]] = []
 
 
@@ -82,6 +123,8 @@ def make(**settings: Any) -> MCPServer:
 
     server = MCPServer("refhandbook", instructions=INSTRUCTIONS, version=version(), **settings)
     for fn, annotations in TOOLS:
+        if annotations is not READ and fn.__name__ not in research_api.TOOLS:
+            fn = _outside_the_loop(fn)
         server.tool(annotations=annotations)(_serialized(fn))
     return server
 

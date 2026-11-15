@@ -101,6 +101,28 @@ def card(entry: dict[str, Any], neighbors: list[dict[str, Any]],
     return "\n".join(out)
 
 
+LOOP_SHOWN = 3  # how many open sessions the line names; the rest are counted
+
+
+def _ago(seconds: float) -> str:
+    for unit, size in (("d", 86400), ("h", 3600), ("min", 60)):
+        if seconds >= 2 * size:
+            return f"{int(seconds // size)} {unit}"
+    return f"{int(max(seconds, 0))} s"
+
+
+def loop_state(open_sessions: list[dict[str, Any]], now: float) -> str:
+    """The state of the session loop as the store has it, on one line: the open sessions (most recently
+    used first) or that there is none. A tool that changes something outside a ledger ends its result
+    with it, so whether the work is inside a session is shown where the work happens, not remembered."""
+    if not open_sessions:
+        return ("LOOP  no session is open: this call ran outside the loop. A message about the user's work is "
+                "answered inside a session of its ledger: research_begin(ledger=…) first (card rs-n1).")
+    shown = [f"{s['scope']} {s['id']} ({s['role']}, used {_ago(now - s['active'])} ago)" for s in open_sessions[:LOOP_SHOWN]]
+    more = len(open_sessions) - len(shown)
+    return "LOOP  open: " + "; ".join(shown) + (f"; and {more} older" if more > 0 else "")
+
+
 def candidates(situation: str, rows: list[dict[str, Any]]) -> str:
     if not rows:
         return f"No entry matches {situation!r}. Try other words, or browse with index."
