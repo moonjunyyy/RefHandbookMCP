@@ -134,10 +134,15 @@ def test_a_loop_diagnosis_reaches_the_rule_review():
     assert "from X2 or X3" in hb.get_entry("rs-rv")["condition"]  # what RV's entry says now has its exit
 
 
-def test_the_instructions_name_the_line_the_device_prints():
-    marker = "LOOP  no session is open"
-    assert marker in server.INSTRUCTIONS and render.loop_state([], 0.0).startswith(marker)
-    assert server.INSTRUCTIONS.index("research_begin") < server.INSTRUCTIONS.index("save_entry")  # enter, then write back
+def test_the_instructions_carry_the_program_counter_and_the_abnormal_signals():
+    text = server.INSTRUCTIONS
+    assert "the RECEIPT line that ends your previous reply" in text and "awaiting the user in the ledger" in text
+    assert 'open_entry("rs-start")' in text and "{abnormal}" not in text
+    for n in range(1, 10):
+        assert f"→ rs-x{n}" in text  # every abnormal card, from the pages
+    assert "Stop producing. Name the generating rule, then run a check. → rs-x3" in text  # the page's own memory item
+    assert "`LOOP` line" in text and render.loop_state([], 0.0).startswith("LOOP  ")
+    assert text.index("research_begin") < text.index("rs-x1")  # the counter first, then the signals
 
 
 # 6 ── the default lookup is the cards a situation leads to; a user's cues stay ──

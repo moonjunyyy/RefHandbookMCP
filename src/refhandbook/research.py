@@ -1852,6 +1852,19 @@ def load_pages() -> tuple[str, dict[str, Any]]:
                                         "description": "An exit of the source card returns plan objects for the target."}]}
 
 
+def abnormal_index() -> str:
+    """The abnormal cards as lines `signal ◆ memory item → card id`, from the pages. The server's
+    instructions carry it, so the nine signals are known at the start of a conversation, before any
+    card is open (the plugin's research skill carried the same table)."""
+    _, data = load_pages()
+    lines = []
+    for e in sorted((e for e in data["entries"] if "abnormal" in e["tags"]), key=lambda e: e["id"]):
+        signal = e["condition"].split("signal:", 1)[-1].strip()
+        memory = next((it["text"] for it in e["items"] if it.get("phase") == "memory"), "")
+        lines.append(f"- {signal} ◆ {memory} → {e['id']}")
+    return "\n".join(lines)
+
+
 def ensure_cards(hb: Handbook) -> str:
     """Load the research cards when the pages changed. Cards with the rs- prefix are managed
     here: edited copies are replaced, and rs- cards no longer in the pages are removed."""

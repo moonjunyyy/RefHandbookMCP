@@ -17,35 +17,36 @@ from pydantic import Field
 from . import agents_api, cap_api, entry_api, render, research_api
 from .store import Handbook, HandbookError
 
-INSTRUCTIONS = """\
-A handbook of short cards, a ledger for each piece of the user's work, and a sandbox. Together they
-are a loop that the work runs through, kept in the store instead of in the conversation. Every
-message about the user's work (a project, its code, a document, research) goes through it in this
-order, before any answer or change; only a message that concerns none of it (small talk, a general
-question) skips it:
-1. ENTER. `research_ledgers` lists the ledgers, one per project or question; `lookup` with the
-   project's name finds its card, whose ENTRY line names the ledger. `research_begin(ledger=…)` opens
-   the session: its first line is the SESSION token every later call names. Work that has no ledger
-   yet gets one (`research_ledgers(action="init")`).
-2. READ before saying anything about it. `research_begin` shows the obligations and the recent rows;
-   what the message refers to (an earlier agreement, an old implementation, a term, a file) is
-   retrieved from the ledger, the documents and past chats (card rs-rf): never answered around, and
-   never restated as a different claim.
-3. WORK the cards. Register the message (`research_add`), push its plan object (`research_push`), and
-   run each card `research_next` prints to an exit (`research_done`). `lookup` finds the card for what
-   is happening, told in the words it happens in: a fault, a correction by the user (rs-x6), the same
-   correction again (rs-x3), a meaning or a source you are not sure of (rs-x8). Check that a
-   candidate's CONDITION really matches, then `open_entry` and follow it in order: memory items
-   first, then the numbered steps, taking GO TO links when a step's IF holds. Stop at END. Keep
-   deferred items in mind until their moment arrives. RELATED lists what to open next.
-4. WRITE BACK where it belongs. What the user said, decided or corrected is a ledger row. What a
-   procedure missed is a change to that card or rule (card rs-rv), not a note beside it. Where
-   things are is the project's reference card. A situation no card covered, once solved, is a new
-   card (`save_entry`, linked with `relate`). A card is never the record of a conversation.
-5. CLOSE with `research_end` before the reply; its RECEIPT line ends the reply.
-A result that ends with `LOOP  no session is open` was made outside the loop: enter it (1) before
-going on. Sessions run side by side (another conversation, an agent with role="agent"); a CONFLICT
-names objects to re-read, nothing else is shared.
+# What a conversation is given at its start. It says where the procedure is and what carries it from
+# one message to the next; the procedure itself is the cards, and they win where the two differ.
+_INSTRUCTIONS = """\
+A quick reference handbook: short cards that say what to do when a known situation comes up.
+When something goes wrong or a recurring task starts, call `lookup` with the symptom (an error
+message, an alert, a few words, or what just happened in the conversation). Check a candidate's
+CONDITION really matches, then `open_entry` and follow it in order: memory items first, then the
+numbered steps, taking GO TO links when a step's IF holds. Stop at END. Keep deferred items in mind
+until their moment arrives.
+Cards are linked: RELATED lists what to open next (escalates_to, requires, see_also, ...), and a
+card's ENTRY line names the ledger its work is entered through.
+When you solve a problem no card covers, record it with `save_entry` and link it with `relate`. A
+card is a procedure, a set or an index, never the record of a conversation: what the user said or
+corrected is a ledger row, and what a procedure missed is a change to that card.
+Work that has a ledger (`research_ledgers` lists them: research questions and projects) runs as a
+session loop over the research cards (rs-*). Program counter: two places carry the loop from one
+message to the next, and nothing else does: the RECEIPT line that ends your previous reply, and the
+plan objects (K) awaiting the user in the ledger. If either exists, your first action is
+`research_begin` (card rs-n1), whatever the message says: one-word, meta, process and complaint
+messages included. Once per conversation, before it, `open_entry("rs-start")`. The first line of
+`research_begin` is the SESSION token every later call names; the session works the plan objects
+with `research_next` / `research_push` / `research_done` and closes with `research_end` before the
+reply, whose last line is the RECEIPT. A reply without a RECEIPT is a skipped cycle and says so.
+A tool result that ends with a `LOOP` line shows the loop as the store has it: the open sessions,
+and how many changing calls were made since a chat session was last used. Calls made with no
+session in use are missed messages: card rs-x7.
+Abnormal signals come before any other card (its memory item first, then the card):
+{abnormal}
+Sessions run side by side (another conversation, an agent with role="agent"); a CONFLICT names
+objects to re-read, nothing else is shared.
 Computation runs in the user's sandbox with `cap` (scripts, policies, layers, egress, rules, cards:
 versioned records you keep current), `run`, `job` and `files`: open_entry("rs-ref-sandbox") says how,
 including how packages and the network are reached. The cards are current.
@@ -53,6 +54,7 @@ A task too big for one conversation can go to a team of agents on the user's own
 agent_run(action="request", goal=…) asks for it; the user approves it on the approval page.
 A tool result that begins DEPRECATED names its replacement: switch now. Never ask the user to
 approve a run."""
+INSTRUCTIONS = _INSTRUCTIONS.format(abnormal=research_api.rs.abnormal_index())
 
 
 READ = ToolAnnotations(read_only_hint=True, open_world_hint=False)
