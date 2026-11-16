@@ -237,8 +237,16 @@ class Mirror:
         new rules cannot stand beside the store's other rules, the model's proposals are retired
         first (they are advice, and say so in the log); if the user's own rules are what conflicts,
         the upgrade is deferred and logged, and the store keeps its installed version."""
+        from .packages import VOCABULARIES
         from .packages import research as rs_pkg
 
+        # vocabulary packages first, each by its own digest: a store whose research package is current still
+        # gets a vocabulary added or changed later (the entry package reached no existing store before this)
+        for pkg in VOCABULARIES:
+            if self.meta(f"package:{pkg.PKG}") != pkg.digest():
+                with self.g.tx():
+                    pkg.install(self.g)
+                    self.set_meta(f"package:{pkg.PKG}", pkg.digest())
         digest = rs_pkg.digest()
         if self.meta("package:research") == digest:
             return []
@@ -265,8 +273,6 @@ class Mirror:
 
     def _upgrade(self, digest: str) -> list[str]:
         from .graph import rule_sha
-        from .packages import entry as entry_pkg
-        from .packages import handbook as hb_pkg
         from .packages import research as rs_pkg
 
         installed = {r["id"]: dict(r) for r in self.g.db.execute("SELECT * FROM k_rules WHERE pkg = ?", (rs_pkg.PKG,))}
@@ -281,8 +287,6 @@ class Mirror:
             except legacy.HandbookError as e:  # another rule still uses it: it stays, as a rule of the store
                 self.g.log("kernel", f"package dropped rule {rid}, kept: {e}", rid)
         rs_pkg.install(self.g, skip=keep)
-        hb_pkg.install(self.g)
-        entry_pkg.install(self.g)
         conflicts = []
         for rid, spec in new.items():
             if rid in keep:

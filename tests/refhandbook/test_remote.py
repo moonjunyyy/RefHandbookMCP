@@ -25,11 +25,15 @@ CALLBACK = "https://claude.ai/api/mcp/auth_callback"
 class FakeAccounts:
     """The account policy (NSS + group) in remote.Accounts; here a set of uids."""
 
-    def __init__(self, uids):
+    def __init__(self, uids, admins=()):
         self.present = set(uids)
+        self.admins = set(admins)
 
     def exists(self, uid):
         return uid in self.present
+
+    def is_admin(self, uid):
+        return uid in self.present and uid in self.admins
 
 
 @pytest.fixture

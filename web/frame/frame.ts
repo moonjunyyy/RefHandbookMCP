@@ -103,13 +103,14 @@ export function previewFonts(ids: string[] = []): void {
 export interface LookTokens { light: Record<string, string>; dark: Record<string, string>; both: Record<string, string>; fonts: string[] }
 
 /** The tokens the person's look redeclares, by theme: the palette's for each, the rest for both (a heading chosen
- * wins over what a body font says of --serif); and the stylesheets of the open fonts its choices need. */
+ * wins over what a body font says of --serif); and the stylesheets of the open fonts its choices need — a kind
+ * not chosen is its first choice, theme.css's own, which names the open font theme.css puts first. */
 export function lookTokens(look: Look, p: LookPrefs): LookTokens {
   const pick = (k: LookKind) => look[k]?.find(c => c.id === p[k]);
   const pal = pick('palette');
   const both: Record<string, string> = { ...pick('corner')?.tokens, ...pick('type')?.tokens, ...pick('heading')?.tokens, ...pick('mono')?.tokens,
                                          ...pick('size')?.tokens };
-  const fonts = look.fonts ? [...new Set(FONT_KINDS.flatMap(k => pick(k)?.fonts ?? []))].map(id => fontSheet(id, look)) : [];
+  const fonts = look.fonts ? [...new Set(FONT_KINDS.flatMap(k => (pick(k) ?? look[k]?.[0])?.fonts ?? []))].map(id => fontSheet(id, look)) : [];
   if (p.columns && look.columns.includes(p.columns)) {
     const gap = p.columns - 1;
     both['home-grid'] = 'repeat(auto-fill, minmax(min(100%, max(12rem, calc((100% - ' + gap

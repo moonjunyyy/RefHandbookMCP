@@ -7,7 +7,7 @@ import { defineConfig } from 'vite';
 export default defineConfig({
   base: '/apps/site/',
   build: {
-    lib: { entry: { calendar: 'widgets/calendar.ts', vault: 'widgets/vault.ts', projects: 'widgets/projects.ts' },
+    lib: { entry: { calendar: 'widgets/calendar.ts', vault: 'widgets/vault.ts', projects: 'widgets/projects.ts', board: 'widgets/board.ts' },
            formats: ['es'], fileName: (_format, name) => `widgets/${name}.js` },
     outDir: 'dist', emptyOutDir: false, sourcemap: false, target: 'es2022', cssCodeSplit: false,
     rollupOptions: { external: ['/auth/static/site.js'], output: { chunkFileNames: 'widgets/[name]-[hash].js' } },

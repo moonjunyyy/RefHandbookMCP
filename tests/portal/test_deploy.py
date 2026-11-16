@@ -288,14 +288,15 @@ def test_the_installer_takes_paths_from_where_it_is_run(tmp_path):
 
 def test_the_handbook_takes_its_settings_from_the_sites_facts(fresh, tmp_path):
     """Nothing in its unit is written by hand: the site's URL and issuer, the sign-in's key and path,
-    its port, and the audience of the apps that reach it."""
+    its port, the audience of the apps that reach it, and the group of its administrators (the board's)."""
     f = facts(str(SITE))
     unit = deploy.rendered(f, SITE)[f"/etc/systemd/system/{f.unit('handbook')}.service"][0]
     env = dict(line.split("=", 2)[1:] for line in unit.splitlines() if line.startswith("Environment="))
     assert env == {"RHB_PUBLIC_URL": f"https://{f.domain}", "RHB_PORT": str(f.ports["handbook"]),
                    "RHB_SSO_PUBLIC_KEY_FILE": f"{f.conf_dir('sso')}/sso-public.pem", "RHB_SSO_ISSUER": f.issuer,
                    "RHB_SSO_AUDIENCE": "refhandbook", "RHB_LOGIN_URL": "/auth/login",
-                   "RHB_SANDBOX_MOUNT_STAGE": f"/run/{f.name}-mounts", "RHB_SITE_TITLE": f.realm}
+                   "RHB_SANDBOX_MOUNT_STAGE": f"/run/{f.name}-mounts", "RHB_SITE_TITLE": f.realm,
+                   "RHB_ADMIN_GROUP": f.admin_group}
     files = deploy.rendered(f, SITE)
     runner = files[f"/etc/systemd/system/{f.unit('runner')}.service"][0]
     assert f"User={f.user('handbook')}" in runner and f"StateDirectory={f.unit('handbook')}" in runner
@@ -330,7 +331,7 @@ def test_the_pages_take_over_their_paths_once_published_and_not_before(fresh, tm
     assert "location = / {" not in after[f"/etc/nginx/sites-available/{f.domain}.conf"][0]
     apps = after[f"/etc/nginx/snippets/{f.name}-apps.conf"][0]
     n = len(next(a for a in site.load(SITE, f).apps if a.id == "site").pages)
-    assert "location = / {" in apps and apps.count("rewrite ^ /apps/site/index.html last;") == n == 11  # the site file's pages
+    assert "location = / {" in apps and apps.count("rewrite ^ /apps/site/index.html last;") == n == 12  # the site file's pages
 
 
 def test_the_calendar_and_the_vault_have_their_units():

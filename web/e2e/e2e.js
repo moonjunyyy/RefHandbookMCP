@@ -685,29 +685,31 @@ async function run() {
     && (await page.$eval('main section .inline-field button', (b) => getComputedStyle(b).borderTopLeftRadius)) === corner.tokens['radius-s']
     && (await page.$eval('main section.card', (s) => getComputedStyle(s).borderTopLeftRadius)) === corner.tokens.radius,
     `${await prop('--radius')} ${await page.$eval('main section .inline-field button', (b) => getComputedStyle(b).borderTopLeftRadius)}`);
-  step('기본 글꼴은 열린 글꼴을 하나도 불러오지 않는다', (await page.$$('link[data-look-font]')).length === 0);
   const sheet = (id) => `${LOOK.fonts}${id}.css`;
+  const linked = () => page.$$eval('link[data-look-font]', (ls) => ls.map((l) => l.getAttribute('href')).sort());
+  const defaults = ['type', 'heading', 'mono'].flatMap((k) => LOOK[k][0].fonts).map(sheet).sort();
+  step('기본 글꼴은 theme.css 가 앞에 둔 열린 글꼴(본문·제목·코드)을 불러온다', defaults.length === 3 && JSON.stringify(await linked()) === JSON.stringify(defaults), JSON.stringify(await linked()));
   const pickFont = async (kind, c) => {
     await page.click(`[data-look=${kind}] button.font-choice:has(.font-name:text-is("${c.label}"))`);
     await page.waitForFunction(() => !document.querySelector('.settings-controls').inert);
     await page.waitForSelector(`[data-look=${kind}] button.font-choice[aria-pressed=true]`);
   };
   const loaded = (family) => page.evaluate(async (f) => { await document.fonts.ready; return [...document.fonts].some((x) => x.family.replace(/"/g, '') === f && x.status === 'loaded'); }, family);
-  const type = LOOK.type.find((c) => c.fonts.length === 1);
+  const type = LOOK.type.find((c, i) => i > 0 && c.fonts.length === 1);  // not the first: theme.css's own, which loads its open font without tokens
   const typeFamily = type.tokens.sans.split(',')[0].replace(/"/g, '');
   await pickFont('type', type);
   step('본문 글꼴: 본문이 그 글꼴이고, 그 글꼴의 스타일시트만 붙고, 실제로 내려받아 쓴다', (await page.evaluate(() => getComputedStyle(document.body).fontFamily)).startsWith(type.tokens.sans.split(',')[0])
-    && JSON.stringify(await page.$$eval('link[data-look-font]', (ls) => ls.map((l) => l.getAttribute('href')))) === JSON.stringify([sheet(type.fonts[0])])
+    && JSON.stringify(await linked()) === JSON.stringify([sheet(type.fonts[0]), ...defaults.filter((x) => !LOOK.type[0].fonts.map(sheet).includes(x))].sort())
     && (await loaded(typeFamily)) && mock.get('site', 'prefs').look.type === type.id,
     `${await page.evaluate(() => getComputedStyle(document.body).fontFamily)} ${JSON.stringify(await page.$$eval('link[data-look-font]', (ls) => ls.map((l) => l.getAttribute('href'))))}`);
   const heading = LOOK.heading.find((c) => c.group === 'display');
   await pickFont('heading', heading);
   step('제목 글꼴: 제목이 그 글꼴이고 본문은 그대로다', (await page.$eval('h1', (e) => getComputedStyle(e).fontFamily)).startsWith(heading.tokens.serif.split(',')[0])
     && (await page.evaluate(() => getComputedStyle(document.body).fontFamily)).startsWith(type.tokens.sans.split(',')[0])
-    && (await page.$$('link[data-look-font]')).length === 2, await page.$eval('h1', (e) => getComputedStyle(e).fontFamily));
-  const mono = LOOK.mono.find((c) => c.fonts.length === 1);
+    && (await linked()).includes(sheet(heading.fonts[0])) && !(await linked()).includes(sheet(LOOK.heading[0].fonts[0])) || false, await page.$eval('h1', (e) => getComputedStyle(e).fontFamily));
+  const mono = LOOK.mono.find((c, i) => i > 0 && c.fonts.length === 1);
   await pickFont('mono', mono);
-  step('코드 글꼴: --mono 가 그 글꼴이다', (await prop('--mono')).startsWith(mono.tokens.mono.split(',')[0]) && (await page.$$('link[data-look-font]')).length === 3, await prop('--mono'));
+  step('코드 글꼴: --mono 가 그 글꼴이다', (await prop('--mono')).startsWith(mono.tokens.mono.split(',')[0]) && (await linked()).length === 3 && (await linked()).includes(sheet(mono.fonts[0])), await prop('--mono'));
   step('글꼴 고르기: 줄마다 그 글꼴로 쓰인 견본, 보이는 줄의 글꼴만 불러온다', (await page.$$eval('[data-look=type] .font-sample', (els) => new Set(els.map((e) => e.style.fontFamily)).size)) === new Set(LOOK.type.map((c) => c.tokens.sans ?? '')).size
     && (await page.$$('link[data-font-preview]')).length > 0 && (await page.$$('link[data-font-preview]')).length < LOOK.type.length + LOOK.heading.length + LOOK.mono.length);
   await page.$eval('[data-look=type]', (e) => e.scrollIntoView());
@@ -791,7 +793,7 @@ async function run() {
   await page.click('button:text-is("모양 초기화")');
   await page.waitForFunction(() => document.querySelector('select[name=theme]').value === 'auto');
   step('모양 초기화는 테마와 모양을 되돌리고 홈 칸 수는 유지한다', (await prop('--radius')) === ownRadius
-    && (await page.evaluate(() => getComputedStyle(document.documentElement).fontSize)) === '16px' && (await page.$$('link[data-look-font]')).length === 0
+    && (await page.evaluate(() => getComputedStyle(document.documentElement).fontSize)) === '16px' && JSON.stringify(await linked()) === JSON.stringify(defaults)
     && mock.get('site', 'prefs').theme === 'auto' && JSON.stringify(mock.get('site', 'prefs').look) === JSON.stringify({ columns: n }));
   await page.click('[data-look=columns] button:text-is("자동")');
   await page.waitForFunction(() => !JSON.parse(localStorage.getItem('look')).both['home-grid']);
@@ -998,6 +1000,101 @@ async function run() {
   await open(page4, `${BASE}/`, 'a.primary');
   step('로그아웃 상태의 홈은 이름 + 로그인 하나다(앱은 하나도 없다)', (await texts(page4, 'a.primary')).join() === '로그인' && (await page4.$$('.widgets .widget')).length === 0 && !(await page4.$('main p.muted.small')));
   await ctx4.close();
+
+  // (m) the public board (docs/board.md): the notices, the shares — a preset's blocks without its keys, taken under one's own name —
+  // sharing one's own (a layer that cannot travel says why), an administrator's notice and hiding, the board's widget
+  mock.reset();
+  mock.addCard({ id: 'board', title: '공개 보드', description: '공지, 함께 쓰는 프리셋과 레이어, 들어갈 수 있는 프로젝트', about: '관리자의 공지를 읽고 공유된 것을 가져옵니다.', tags: ['AI', '도구'],
+                 code: '', icon: '📌', href: '/board', optional: true, default: true, links: [{ label: '공개 보드', href: '/board' }],
+                 widgets: [{ id: 'news', title: '공개 보드', description: '공지와 새 공유', href: '/apps/site/widgets/board.js', size: '1x1' }] });
+  const ctx5 = await browser.newContext({ viewport: { width: 1100, height: 820 }, locale: 'ko-KR' });
+  await mock.install(ctx5);
+  const bp = await ctx5.newPage();
+  watch(bp);
+  const shareCard = (sel) => texts(bp, `.store-card.share${sel}`);
+  await open(bp, `${BASE}/board`, '.notice');
+  step('보드: 고정 공지가 그려지고, 공유 카드는 종류·올린 이·판·가져간 수를 말한다', !!(await bp.$('.notice.pinned .note-body strong'))
+    && (await shareCard('[data-share=s1]')).join().includes('bob') && (await shareCard('[data-share=s1]')).join().includes('판 1'), (await shareCard('')).join(' | '));
+  step('칩은 전체·공지·종류(서버가 말한 것)·프로젝트다', JSON.stringify(await texts(bp, '.chips button.chip')) === '["전체","공지","프리셋","레이어","프로젝트"]', JSON.stringify(await texts(bp, '.chips button.chip')));
+  await bp.click('.chips button.chip:text-is("레이어")');
+  step('레이어 칩: 프리셋 공유는 빠지고 공지도 빠지며 주소에 남는다', !(await bp.$('[data-share=s1]')) && !(await bp.$('.notice')) && bp.url().includes('view=layer'), bp.url());
+  await bp.click('.chips button.chip:text-is("전체")');
+  await bp.fill('.board-tools input[type=search]', '없는말');
+  step('검색이 공지와 공유를 함께 거른다', !(await bp.$('.notice')) && !(await bp.$('[data-share]')) && bp.url().includes('q='));
+  await bp.fill('.board-tools input[type=search]', '');
+  await bp.click('[data-share=s1] h3 button');
+  await bp.waitForSelector('dialog[open] .flow-canvas');
+  await shot(bp, 'm-share');
+  step('공유를 열면 블럭 그림·명령·한도가 보이고 키는 없다', (await texts(bp, 'dialog[open] .share-steps pre')).join() === '오늘의 보고를 쓴다'
+    && (await texts(bp, 'dialog[open] .share-preview dt code')).includes('max_turns') && !(await texts(bp, 'dialog[open]')).join().includes('anthropic/'));
+  await bp.click('dialog[open] button[type=submit]');
+  await bp.waitForSelector('dialog[open] input[name=as]');
+  step('가져올 이름은 공유의 이름이 기본이고, 내 키로 돈다고 말한다', (await bp.inputValue('dialog[open] input[name=as]')) === 'daily'
+    && (await texts(bp, 'dialog[open]')).join().includes('anthropic'));
+  allowed = 409;
+  await bp.click('dialog[open] button[type=submit]');
+  await bp.waitForSelector('.toast.error');
+  step('이미 있는 이름이면 까닭을 말한다', (await texts(bp, '.toast.error')).join().includes('이미 있는'), (await texts(bp, '.toast.error')).join());
+  allowed = 0;
+  await bp.click('[data-share=s1] .app-tools button:text-is("가져오기")');
+  await bp.waitForSelector('dialog[open] .share-detail');
+  await bp.click('dialog[open] button[type=submit]');
+  await bp.waitForSelector('dialog[open] input[name=as]');
+  await bp.fill('dialog[open] input[name=as]', 'morning');
+  await bp.click('dialog[open] button[type=submit]');
+  await bp.waitForSelector('.toast.ok');
+  await sleep(300);
+  step('다른 이름이면 내 프리셋이 되고, 알림에 열기가 있으며 가져간 수가 오른다', mock.board().mine.preset.some((x) => x.name === 'morning')
+    && (await texts(bp, '.toast.ok button')).join() === '열기' && (await shareCard('[data-share=s1]')).join().includes('1번 가져감'), (await shareCard('[data-share=s1]')).join());
+  await bp.click('.board-tools button:text-is("공유하기")');
+  await bp.waitForSelector('dialog[open] select[name=kind]');
+  await bp.selectOption('dialog[open] select[name=kind]', 'layer');
+  step('공유할 수 없는 레이어는 고를 수 없고 까닭이 보인다', JSON.stringify(await texts(bp, 'dialog[open] select[name=name] option')) === '["a hello tool (greeter)"]'
+    && (await texts(bp, 'dialog[open] ul.plain li')).join().includes('child'), JSON.stringify(await texts(bp, 'dialog[open] select[name=name] option')));
+  await bp.selectOption('dialog[open] select[name=kind]', 'preset');
+  await bp.fill('dialog[open] textarea[name=about]', '내 아침 보고');
+  await bp.click('dialog[open] button[type=submit]');
+  const mineSel = '.store-card.share:has(.tag.ok)';  // mine: the one share that carries the ok tag (내 공유)
+  await bp.waitForSelector(mineSel);
+  step('내 프리셋을 공유하면 내 공유 카드가 맨 앞에 서고, 내 것에는 가져오기가 없다', (await texts(bp, `${mineSel} .desc`)).join() === '내 아침 보고' && (await bp.$eval('.store-card.share', (e) => !!e.querySelector('.tag.ok')))
+    && !(await bp.$(`${mineSel} .app-tools button:text-is("가져오기")`)));
+  await bp.click(`${mineSel} button.more`);
+  await bp.waitForSelector('.menu[role=menu]');
+  step('내 공유의 메뉴: 다시 공유·내리기 (관리자가 아니면 숨기기는 없다)', JSON.stringify(await menuItems(bp)) === '["다시 공유","내리기"]', JSON.stringify(await menuItems(bp)));
+  await pickItem(bp, '다시 공유');
+  await bp.waitForSelector('dialog[open] select[name=kind][disabled]');
+  await bp.click('dialog[open] button[type=submit]');
+  await bp.waitForFunction((sel) => document.querySelector(sel)?.textContent.includes('판 2'), mineSel);
+  step('다시 공유하면 같은 카드의 판이 오른다', (await bp.$$(mineSel)).length === 1 && (await shareCard(':has(.tag.ok)')).join().includes('판 2') && (await texts(bp, `${mineSel} .tag.ok`)).join() === '내 공유');
+  step('관리자가 아니면 공지 쓰기가 없다', !(await bp.$('.board-tools button:text-is("공지 쓰기")')) && !(await bp.$('.notice button.more')));
+  mock.boardAdmin(true);
+  await open(bp, `${BASE}/board`, '.notice');
+  await bp.click('.board-tools button:text-is("공지 쓰기")');
+  await bp.waitForSelector('dialog[open] textarea[name=body]');
+  await bp.fill('dialog[open] input[name=title]', '새 기능');
+  await bp.fill('dialog[open] textarea[name=body]', '**공개 보드**가 열렸습니다.\n\n- 프리셋\n- 레이어');
+  await bp.click('dialog[open] button[type=submit]');
+  await bp.waitForSelector('.notice:has(b:text-is("새 기능"))');
+  step('관리자가 쓴 공지가 고정 공지 다음에 서고, 마크다운으로 그려진다', JSON.stringify(await texts(bp, '.notice .item-head b')) === '["점검 안내","새 기능"]'
+    && !!(await bp.$('.notice:has(b:text-is("새 기능")) .note-body li')), JSON.stringify(await texts(bp, '.notice .item-head b')));
+  await bp.click('[data-share=s1] button.more');
+  await bp.waitForSelector('.menu[role=menu]');
+  step('관리자의 남의 공유 메뉴: 숨기기·내리기', JSON.stringify(await menuItems(bp)) === '["숨기기","내리기"]', JSON.stringify(await menuItems(bp)));
+  await pickItem(bp, '숨기기');
+  await bp.waitForSelector('dialog[open] input[name=why]');
+  await bp.fill('dialog[open] input[name=why]', '확인 중');
+  await bp.click('dialog[open] button[type=submit]');
+  await bp.waitForSelector('[data-share=s1][data-hidden]');
+  step('숨기면 관리자에게는 까닭과 함께 숨김으로 보인다', (await shareCard('[data-share=s1]')).join().includes('숨김: 확인 중'));
+  await shot(bp, 'm-board');
+  mock.boardAdmin(false);
+  await open(bp, `${BASE}/board`, '.notice');
+  step('숨긴 공유는 다른 사람에게 보이지 않는다', !(await bp.$('[data-share=s1]')) && (await bp.$$('.store-card.share')).length === 1);
+  mock.put('site', 'prefs', { apps: ['board'], home: [{ app: 'board', widget: 'news' }] });
+  await open(bp, `${BASE}/`, '.widget[data-widget=news] .items');
+  const news = await texts(bp, '.widget[data-widget=news] .item-text');
+  step('보드 위젯: 공지(고정 먼저)와 새 공유를 보인다', news[0] === '점검 안내' && news.includes('아침 보고') && (await texts(bp, '.widget[data-widget=news] .stat-n')).join() === '2,1', JSON.stringify(news));
+  await ctx5.close();
 
   step('페이지 오류 0', report.pageErrors.length === 0, report.pageErrors.join(' | '));
   step('콘솔 오류 0', report.consoleErrors.length === 0, report.consoleErrors.join(' | '));

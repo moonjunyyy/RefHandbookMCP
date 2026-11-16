@@ -98,6 +98,7 @@ class Config:
     host: str = "127.0.0.1"
     port: int = 0  # RHB_PORT: the installer renders the handbook role's port (portal/facts.py ROLES)
     require_group: str | None = None  # a POSIX group (through NSS) the user must belong to
+    admin_group: str = "admin"  # RHB_ADMIN_GROUP: the site's administrators (portal/facts.py admin_group): the board's moderators
     redirect_allow: tuple[str, ...] = DEFAULT_REDIRECTS
     access_ttl: int = 3600
     refresh_ttl: int = 30 * 86400
@@ -140,6 +141,7 @@ class Config:
             host=_env("RHB_HOST", cls.host),  # type: ignore[arg-type]
             port=int(port),
             require_group=_env("RHB_REQUIRE_GROUP"),
+            admin_group=_env("RHB_ADMIN_GROUP", cls.admin_group),  # type: ignore[arg-type]
             redirect_allow=tuple(s.strip() for s in allow.split(",") if s.strip()) if allow else DEFAULT_REDIRECTS,
             access_ttl=int(_env("RHB_ACCESS_TTL", str(cls.access_ttl))),  # type: ignore[arg-type]
             refresh_ttl=int(_env("RHB_REFRESH_TTL", str(cls.refresh_ttl))),  # type: ignore[arg-type]
@@ -189,12 +191,14 @@ class Accounts:
         self.cfg = cfg
 
     def _in_group(self, name: str) -> bool:
+        group = self.cfg.require_group
+        return self.member(name, group) if group else True
+
+    def member(self, name: str, group: str) -> bool:
+        """Whether `name` is in the POSIX `group` (its primary group, or a member), through NSS."""
         import grp
         import pwd
 
-        group = self.cfg.require_group
-        if not group:
-            return True
         try:
             gid = grp.getgrnam(group).gr_gid
             pw = pwd.getpwnam(name)
@@ -215,6 +219,10 @@ class Accounts:
 
     def exists(self, uid: str) -> bool:
         return self._account(uid) == uid and self._in_group(uid)
+
+    def is_admin(self, uid: str) -> bool:
+        """One of the site's administrators (the board's moderators and the writers of its notices)."""
+        return self.exists(uid) and self.member(uid, self.cfg.admin_group)
 
 
 class SsoTokens:
@@ -634,6 +642,11 @@ def build(cfg: Config, accounts: Accounts | None = None, sso_tokens: SsoTokens |
 
     agents_api.install(m, stores=stores, who=who, data_dir=Path(cfg.data_dir), public_url=cfg.public_url,
                        lock=server._CALLS)
+
+    from . import board_api
+
+    board_api.install(m, stores=stores, who=who, is_admin=accounts.is_admin, data_dir=Path(cfg.data_dir),
+                      public_url=cfg.public_url, lock=server._CALLS)
 
     @m.custom_route("/healthz", methods=["GET"])
     async def healthz(request: Request) -> Response:

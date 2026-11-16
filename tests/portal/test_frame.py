@@ -217,7 +217,7 @@ def test_the_frame_declares_the_sizes_and_the_default_apps(app):
     from the site file through /me — no list in the code."""
     c, _ = sign_in(app)
     me = c.get("/auth/api/v1/me").json()
-    assert [c["id"] for c in me["cards"] if c["default"]] == ["projects", "calendar", "vault"]
+    assert [c["id"] for c in me["cards"] if c["default"]] == ["projects", "calendar", "vault", "board"]  # the board: the notices reach everyone
     assert all(c["optional"] for c in me["cards"] if c["default"])
     assert me["sizes"] == [{"id": k, "cols": c, "rows": r} for k, (c, r) in site.SIZES.items()]
     assert all(w["size"] in site.SIZES for c in me["cards"] for w in c["widgets"])
@@ -267,7 +267,7 @@ PAGES = WEB / "src" / "pages"
 # explanatory paragraphs the pages still carry (docs/frame.md §5): the rewritten pages have none, and the
 # others may only lose them. Raise a number here only with a reason in the same commit.
 RATCHET = {"account.ts": 0, "agents.ts": 0, "flows.ts": 0, "projects.ts": 0, "schedule.ts": 0, "grant.ts": 0,
-           "home.ts": 0, "apps.ts": 0, "settings.ts": 0, "tabs.ts": 0, "calendar.ts": 0, "vault.ts": 0}
+           "home.ts": 0, "apps.ts": 0, "settings.ts": 0, "tabs.ts": 0, "calendar.ts": 0, "vault.ts": 0, "board.ts": 0}
 EXPLANATION = re.compile(r"h\('p',\s*\{\s*class:\s*'(?:muted small|muted)'")
 
 
@@ -311,6 +311,18 @@ def _look() -> dict:
     return site._look(tomllib.loads(SITE.read_text()))
 
 
+def _face(kind: str, c: dict) -> str:
+    """The font list a choice sets its role to: its token, theme.css's own for a choice that redeclares nothing,
+    a var(--role-default) read as theme.css's value."""
+    role = FAMILY_TOKEN[kind]
+    value = c["tokens"].get(role) or f"var(--{role}-default)"
+    theme = (STATIC / "theme.css").read_text()
+    for r in ("sans", "serif", "mono"):
+        m = re.search(rf"--{r}-default:\s*([^;]+);", theme)
+        value = value.replace(f"var(--{r}-default)", m.group(1) if m else "")
+    return value
+
+
 def test_the_open_fonts_are_declared_once():
     """§1.3: web/fonts.json is what the pages app ships (built from npm packages it depends on); a choice of the look
     names a font by its id and its family; nothing shipped is left unused, nothing named is missing."""
@@ -326,7 +338,7 @@ def test_the_open_fonts_are_declared_once():
         for c in look[kind]:
             for f in c["fonts"]:
                 assert f in catalog, f"look.{kind}.{c['id']} names {f}, which web/fonts.json does not ship"
-                assert any(catalog[f]["family"] in v for v in c["tokens"].values()), f"look.{kind}.{c['id']}: its tokens do not name {catalog[f]['family']}"
+                assert catalog[f]["family"] in " ".join([_face(kind, c), *c["tokens"].values()]), f"look.{kind}.{c['id']}: its tokens do not name {catalog[f]['family']}"
                 used.add(f)
     assert set(catalog) == used, f"shipped and never offered: {sorted(set(catalog) - used)}"
     assert look["fonts"] == "/apps/site/fonts/"  # the pages app publishes its dist at /apps/site/
@@ -334,18 +346,23 @@ def test_the_open_fonts_are_declared_once():
 
 def test_a_font_choice_keeps_its_fallback_and_the_first_is_the_themes():
     """A font choice redeclares its role's token (--sans, --serif, --mono) with its own family first and the role's
-    fallback after (or another role's token); the first choice of each kind is theme.css's own and loads nothing."""
+    fallback after (or another role's token); the first choice of each kind is theme.css's own: it redeclares
+    nothing and loads the open font theme.css names first (U15: the defaults load what they name, open fonts)."""
     theme = (STATIC / "theme.css").read_text()
     for role in ("sans", "serif", "mono"):
         assert f"--{role}-fallback:" in theme and f"--{role}-default:" in theme and f"--{role}: var(--{role}-default)" in theme
     look = _look()
     for kind in site.FONT_KINDS:
+        import json
+        catalog = {f["id"]: f for f in json.loads(FONTS.read_text())["fonts"]}
         first, *rest = look[kind]
-        assert not first["tokens"] and not first["fonts"], f"look.{kind}: the first choice is theme.css's own"
+        assert not first["tokens"], f"look.{kind}: the first choice is theme.css's own"
+        lead = _face(kind, first).split(",")[0].strip().strip('"')
+        assert [catalog[f]["family"] for f in first["fonts"]] == [lead], f"look.{kind}: the first choice loads {lead}, what theme.css names first"
         for c in rest:
             v = c["tokens"].get(FAMILY_TOKEN[kind], "")
             assert v, f"look.{kind}.{c['id']} does not redeclare --{FAMILY_TOKEN[kind]}"
-            assert not c["fonts"] or re.search(r"var\(--(?:sans|serif|mono)-fallback\)$", v), f"look.{kind}.{c['id']}: an open font keeps the fallback"
+            assert not c["fonts"] or re.search(r"var\(--(?:sans|serif|mono)-fallback\)$", _face(kind, c)), f"look.{kind}.{c['id']}: an open font keeps the fallback"
 
 
 @pytest.mark.parametrize("bad,message", [

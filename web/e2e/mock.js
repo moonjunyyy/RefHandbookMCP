@@ -34,7 +34,7 @@ const CARDS = [
   { id: 'agents', title: '에이전트', description: '내 API 키로 돌리는 에이전트 팀과 샌드박스', about: '에이전트 팀을 실행합니다.', tags: ['AI', '도구'], code: '', icon: '🤖', href: '/agents/', optional: true,
     links: [{ label: '에이전트 실행', href: '/agents/' }, { label: '프리셋', href: '/agents/presets' }, { label: '파일', href: '/agents/files' }], widgets: [] },
 ];
-const PAGES = ['/', '/apps', '/settings', '/account', '/account/', '/agents', '/agents/', '/calendar', '/vault', '/projects'];
+const PAGES = ['/', '/apps', '/settings', '/account', '/account/', '/agents', '/agents/', '/calendar', '/vault', '/projects', '/board'];
 // the sizes a cell may have (portal/site.py SIZES, as /me carries them)
 const SIZES = [{ id: '1x1', cols: 1, rows: 1 }, { id: '2x1', cols: 2, rows: 1 }, { id: '1x2', cols: 1, rows: 2 }, { id: '2x2', cols: 2, rows: 2 }];
 // the look's choices (the site file's [look], as /me carries them — run.sh reads them with portal/site.py)
@@ -43,6 +43,18 @@ const LOOK = JSON.parse(process.env.LOOK_JSON || 'null') || { palette: [], corne
 let extraCards = [];
 let slowLinks = 0;  // ms the /links answer is held back (the page must not wait for it)
 let uid = 'tester';
+
+// ── the public board, in memory (refhandbook/board.py, board_api.py) ─────────
+let board;
+function resetBoard() {
+  const flow = { start: 'a', max_visits: 3, edges: [], steps: [{ id: 'a', title: '보고', provider: 'anthropic', model: 'claude-x', command: '오늘의 보고를 쓴다', team: false, x: 0, y: 0 }] };
+  board = { admin: false, seq: 1,
+    notices: [{ id: 'n1', title: '점검 안내', body: '토요일 밤 **두 시간** 멈춥니다.', author: 'root', pinned: true, created: 1, updated: 1 }],
+    shares: [{ id: 's1', kind: 'preset', name: 'daily', author: 'bob', title: '아침 보고', about: '매일 아침 보고서', version: 1, imports: 0, created: 1, updated: 1,
+               hidden: false, hidden_why: null, payload: { title: '아침 보고', goal: '오늘의 보고', limits: { policy: 'default', max_turns: 20 }, flow } }],
+    mine: { preset: [{ name: 'daily', title: '아침 보고', why: '' }],
+            layer: [{ name: 'greeter', title: 'a hello tool', why: '' }, { name: 'child', title: 'child', why: '이 레이어는 내 레이어 위에 쌓여 있어 공유할 수 없습니다: base@1' }] } };
+}
 
 // ── the calendar, in memory ───────────────────────────────────────────────
 let calendars, events, feeds, seq, tasks, devices;
@@ -113,6 +125,7 @@ function reset() {
                { id: 'g-1', owner: 'lab', kind: 'group', name: 'lab', color: '#33aa55', main: true, created: 2 }];
   events = []; feeds = []; seq = 0; tasks = []; devices = []; slowLinks = 0;
   resetWork();
+  resetBoard();
   vaults = [{ id: 'v1', name: 'Research', path: '/data/tester/Research', status: 'ok', reason: '', created: 1 }];
   files = new Map([
     ['Home.md', { text: '# Home\n\nStart at [[Ideas/Operators]] and [[Lie algebras|the algebras]]. An operator $T$ acts. #math\n\n$$\\int_0^1 x\\,dx = \\tfrac12$$\n', mtime: 3 }],
@@ -344,6 +357,76 @@ async function handle(route) {
     }
     return json(route, 404, { error: { code: 'not_found', message: 'no such api' } });
   }
+  if (p.startsWith('/board/api/v1/')) {  // the handbook's board: {error: {code, message}} as the handbook says it
+    if (!uid) return json(route, 401, { error: { code: 'unauthorized', message: 'sign in first' } });
+    const B = board, admin = B.admin, rest = p.slice('/board/api/v1/'.length), method = req.method();
+    const no = (status, message) => json(route, status, { error: { code: { 403: 'forbidden', 404: 'not_found', 409: 'conflict' }[status] || 'invalid', message } });
+    const seen = (x) => !x.hidden || x.author === uid || admin;
+    const bare = ({ payload, ...x }) => x;  // eslint-disable-line no-unused-vars
+    const now = () => Date.now() / 1000;
+    if (rest === '' && method === 'GET') {
+      return json(route, 200, { me: { uid, admin }, kinds: ['preset', 'layer'], limits: { title: 80, about: 240, notice: 4000 },
+        shares: B.shares.filter(seen).sort((a, b) => b.updated - a.updated).map(bare),
+        notices: [...B.notices].sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.updated - a.updated) });
+    }
+    if (rest === 'mine' && method === 'GET') return json(route, 200, B.mine);
+    if (rest === 'shares' && method === 'POST') {
+      const d = body(req);
+      const item = (B.mine[d.kind] || []).find((x) => x.name === d.name && !x.why);
+      if (!item) return no(404, `no such ${d.kind}: ${d.name}`);
+      let x = B.shares.find((y) => y.kind === d.kind && y.name === d.name && y.author === uid);
+      if (x) Object.assign(x, { title: d.title || item.title, about: d.about || '', version: x.version + 1, updated: now() });
+      else {
+        x = { id: `s${++B.seq}`, kind: d.kind, name: d.name, author: uid, title: d.title || item.title, about: d.about || '', version: 1, imports: 0, created: now(), updated: now(),
+              hidden: false, hidden_why: null, payload: d.kind === 'preset' ? B.shares[B.shares.length - 1].payload : { script: 'echo hi\n', parents: ['sys:python@3'], env: {}, description: item.title } };
+        B.shares.push(x);
+      }
+      return json(route, 201, bare(x));
+    }
+    let b;
+    if ((b = /^shares\/([^/]+)(?:\/(import|hide|show))?$/.exec(rest))) {
+      const x = B.shares.find((y) => y.id === b[1]);
+      if (!x || !seen(x)) return no(404, '그런 공유가 없습니다.');
+      if (!b[2] && method === 'GET') return json(route, 200, x);
+      if (!b[2] && method === 'DELETE') {
+        if (x.author !== uid && !admin) return no(403, '자기 공유만 내릴 수 있습니다.');
+        B.shares.splice(B.shares.indexOf(x), 1);
+        return json(route, 200, { deleted: x.id });
+      }
+      if (b[2] === 'import') {
+        const name = String(body(req).as || x.name).trim().toLowerCase();
+        if (B.mine[x.kind].some((y) => y.name === name)) return no(409, `이미 있는 프리셋 이름입니다: ${name}`);
+        B.mine[x.kind].push({ name, title: x.title, why: '' });
+        x.imports += 1;
+        return json(route, 201, { kind: x.kind, name });
+      }
+      if (!admin) return no(403, '관리자만 숨길 수 있습니다.');
+      if (b[2] === 'hide') {
+        const why = String(body(req).why || '').trim();
+        if (!why) return no(400, '숨기는 까닭 을(를) 적으세요.');
+        Object.assign(x, { hidden: true, hidden_why: why });
+      } else Object.assign(x, { hidden: false, hidden_why: null });
+      return json(route, 200, bare(x));
+    }
+    if (rest === 'notices' && method === 'POST') {
+      if (!admin) return no(403, '공지는 관리자가 씁니다.');
+      const d = body(req);
+      const n = { id: `n${++B.seq}`, title: d.title, body: d.body, author: uid, pinned: !!d.pinned, created: now(), updated: now() };
+      B.notices.push(n);
+      return json(route, 201, n);
+    }
+    if ((b = /^notices\/([^/]+)$/.exec(rest))) {
+      if (!admin) return no(403, '공지는 관리자가 씁니다.');
+      const n = B.notices.find((y) => y.id === b[1]);
+      if (!n) return no(404, '그런 공지가 없습니다.');
+      if (method === 'DELETE') { B.notices.splice(B.notices.indexOf(n), 1); return json(route, 200, { deleted: n.id }); }
+      const d = body(req);
+      for (const k of ['title', 'body', 'pinned']) if (d[k] !== undefined) n[k] = d[k];
+      n.updated = now();
+      return json(route, 200, n);
+    }
+    return no(404, 'no such api');
+  }
   if (p === '/apps/eq-sandbox/widget.js') return file(route, EQ, 'widget.js');
   if (p.startsWith('/apps/site/')) return file(route, DIST, p.slice('/apps/site/'.length));
   if (p.startsWith('/apps/wordgen/') && process.env.WORDGEN_ROOT) return file(route, process.env.WORDGEN_ROOT, p.slice('/apps/wordgen/'.length) || 'index.html');
@@ -370,4 +453,6 @@ module.exports = {
   setFile: (rel, text) => { files.set(rel, { text, mtime: Date.now() / 1000 }); },
   devices: () => devices.slice(),
   slowLinks: (ms) => { slowLinks = ms; },
+  board: () => board,
+  boardAdmin: (on) => { board.admin = on; },
 };
