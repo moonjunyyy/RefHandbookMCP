@@ -64,7 +64,8 @@ async function home(host: HTMLElement, vid: string): Promise<void> {
 export default async function widget(host: HTMLElement, ctx: WidgetContext): Promise<void> {
   replace(host, h('p', { class: 'muted small' }, '…'));
   const listed = await vaults.get('/vaults');
-  const v = (listed.vaults as { id: string; name: string; status: string }[]).find(x => x.status === 'ok');
+  const usable = (listed.vaults as { id: string; name: string; status: string }[]).filter(x => x.status === 'ok');
+  const v = usable.find(x => x.id === ctx.params?.vault) ?? usable[0];  // the place's vault when it is usable, else the first
   if (!v) { replace(host, h('p', { class: 'muted small' }, h('a', { href: '/vault' }, t('볼트 추가')))); return; }
   if (ctx.widget.id === 'home') { await home(host, v.id); return; }
   if (ctx.widget.id === 'tags') { await tags(host, ctx, v.id); return; }

@@ -2,9 +2,10 @@
 // (docs/frame.md §4.2). One module for all; the frame says which (ctx.widget.id) and how big the cell is (ctx.size).
 //   today    — the day at a glance (its events, the to-dos due, the overdue ones), the events as a timeline (all-day
 //              first; past muted, the one now, the next), the to-dos due checked off in place; a taller cell adds tomorrow.
-//   upcoming — the next seven days as a strip (how full each is, in its calendars' colours), then their events by day.
+//   upcoming — the days ahead (the place's setting: 3, 7 or 14) as a strip (how full each is, in its calendars' colours), then their events by day.
 //   month    — the month, each day shaded by how full it is; a day picked shows its events under it; ‹ › move.
 //   tasks    — the to-do list (written and checked in place) by when it is due, with how much is done.
+// A place's settings (ctx.params): which calendar (today, upcoming, month), how many days (upcoming).
 // Built by web/ into dist/widgets/calendar.js and declared in the site file as an absolute module path.
 
 import { api, ago, dayKey, dayStrip, fit, h, items, monthGrid, replace, stats } from '/auth/static/site.js';
@@ -26,12 +27,15 @@ const addDays = (d: Date, n: number) => { const x = new Date(d); x.setDate(x.get
 const midnight = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
 const clock = (d: Date) => d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
 const dayHref = (key: string) => `/calendar?d=${key}`;
+const WEEK = 7;  // a strip's days; the span of 'upcoming' when a place says none
 
-/** The events of [from, to), with their calendars' colours. */
-async function occurrences(from: Date, to: Date): Promise<{ list: Occurrence[]; colour: (o: Occurrence) => string }> {
+/** The events of [from, to), with their calendars' colours; `only`: those of one calendar, when it is one the
+ * person has (a calendar that is gone means all of them). */
+async function occurrences(from: Date, to: Date, only = ''): Promise<{ list: Occurrence[]; colour: (o: Occurrence) => string }> {
   const [cals, evs] = await Promise.all([cal.get('/calendars'), cal.get(`/events?from=${utc(from)}&to=${utc(to)}`)]);
   const colours = new Map((cals.calendars as Calendar[]).map(c => [c.id, c.color]));
-  return { list: evs.events as Occurrence[], colour: o => colours.get(o.cal) ?? '' };
+  const all = evs.events as Occurrence[];
+  return { list: colours.has(only) ? all.filter(o => o.cal === only) : all, colour: o => colours.get(o.cal) ?? '' };
 }
 
 /** The days an event covers, as day keys (an all-day event ends the day after its last). */
@@ -67,7 +71,7 @@ async function today(host: HTMLElement, ctx: WidgetContext): Promise<void> {
   const now = new Date();
   const start = midnight(now);
   const days = ctx.size.rows > 1 ? 2 : 1;
-  const [{ list, colour }, r] = await Promise.all([occurrences(start, addDays(start, days)), cal.get('/tasks')]);
+  const [{ list, colour }, r] = await Promise.all([occurrences(start, addDays(start, days), ctx.params?.calendar), cal.get('/tasks')]);
   const key = dayKey(now);
   const todays = onDay(list, key);
   const next = todays.find(o => !o.allday && fromServer(o.start) > now);
@@ -102,9 +106,10 @@ async function today(host: HTMLElement, ctx: WidgetContext): Promise<void> {
 async function upcoming(host: HTMLElement, ctx: WidgetContext): Promise<void> {
   const now = new Date();
   const start = midnight(now);
-  const { list, colour } = await occurrences(start, addDays(start, 7));
-  const week = [...Array(7)].map((_, i) => addDays(start, i));
-  const byDay = week.map(d => ({ date: d, key: dayKey(d), list: onDay(list, dayKey(d)) }));
+  const n = Number(ctx.params?.days) || WEEK;
+  const { list, colour } = await occurrences(start, addDays(start, n), ctx.params?.calendar);
+  const span = [...Array(n)].map((_, i) => addDays(start, i));
+  const byDay = span.map(d => ({ date: d, key: dayKey(d), list: onDay(list, dayKey(d)) }));
   const room = fit(ctx);
   let left = room;
   const groups: ItemGroup[] = [];
@@ -115,9 +120,10 @@ async function upcoming(host: HTMLElement, ctx: WidgetContext): Promise<void> {
     left -= d.list.length;
   }
   const total = byDay.reduce((n, d) => n + d.list.length, 0);
-  replace(host,
-    dayStrip(byDay.map(d => ({ date: d.date, n: d.list.length, marks: d.list.map(colour), href: dayHref(d.key) })), now),
-    items(groups, t('앞으로 7일 동안 일정이 없습니다.'), total > room ? { href: '/calendar', n: total - room } : undefined));
+  const strips: HTMLElement[] = [];  // a strip is a week long: a longer span is a strip per week
+  for (let i = 0; i < byDay.length; i += WEEK) strips.push(dayStrip(byDay.slice(i, i + WEEK).map(d => ({ date: d.date, n: d.list.length, marks: d.list.map(colour), href: dayHref(d.key) })), now));
+  replace(host, strips,
+    items(groups, t('앞으로 {n}일 동안 일정이 없습니다.', { n }), total > room ? { href: '/calendar', n: total - room } : undefined));
 }
 
 async function month(host: HTMLElement, ctx: WidgetContext): Promise<void> {
@@ -145,7 +151,7 @@ async function month(host: HTMLElement, ctx: WidgetContext): Promise<void> {
   async function load(): Promise<void> {
     const first = new Date(year, mon, 1);
     const from = addDays(first, -((first.getDay() + 6) % 7));
-    const r = await occurrences(from, addDays(from, 42));
+    const r = await occurrences(from, addDays(from, 42), ctx.params?.calendar);
     list = r.list; colour = r.colour;
     counts.clear();
     for (const o of list) for (const k of daysOf(o)) counts.set(k, (counts.get(k) ?? 0) + 1);

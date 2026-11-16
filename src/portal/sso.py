@@ -273,7 +273,8 @@ def create_app(settings: Settings | None = None, kerberos=None, signing_key=None
                     "optional": a.optional, "default": a.default,
                     "links": [{"label": ln.label_in(lang), "href": ln.href} for ln in a.links],
                     "widgets": [{"id": w.id, "title": w.text("title", lang), "description": w.text("description", lang),
-                                 "href": w.href, "size": w.size}
+                                 "href": w.href, "size": w.size,
+                                 **({"params": [p.json(lang) for p in w.params]} if w.params else {})}
                                 for w in a.widgets]}
         return JSONResponse({"uid": uid, "title": s.site_title, "signin": SIGNIN, "portal": facts().portal_root,
                              "lang": lang, "theme": theme, "frame": site_mod.FRAME,

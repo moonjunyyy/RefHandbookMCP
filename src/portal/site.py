@@ -157,6 +157,42 @@ def _addresses(app_id: str, code) -> tuple[Address, ...]:  # noqa: ANN001 — a 
 
 
 @dataclass(frozen=True)
+class Source:
+    """Where a setting's choices are read: a path of the site, the list in its answer, an item's value and label."""
+    path: str
+    list: str
+    value: str
+    label: str
+
+
+@dataclass(frozen=True)
+class Param:
+    """A setting of a widget, kept by a person with each place they give it ([[app.widget.param]],
+    docs/frame.md §4): one of `choices` (value, label), or one of the person's own objects read from
+    `source` (the file's `from`) with `all`, the word for no filter."""
+    id: str
+    label: str
+    default: str = ""
+    choices: tuple[tuple[str, str], ...] = ()
+    source: Source | None = None
+    all: str = ""
+    tr: dict[str, dict] = field(default_factory=dict, compare=False, hash=False)
+
+    def json(self, lang: str) -> dict:
+        """As /me carries it, in a language."""
+        words = self.tr.get(lang) or {}
+        out: dict = {"id": self.id, "label": words.get("label") or self.label, "default": self.default}
+        if self.source:
+            s = self.source
+            out["from"] = {"path": s.path, "list": s.list, "value": s.value, "label": s.label}
+            out["all"] = words.get("all") or self.all
+        else:
+            named = words.get("choices") or {}
+            out["choices"] = [{"value": v, "label": named.get(v) or label} for v, label in self.choices]
+        return out
+
+
+@dataclass(frozen=True)
 class Widget:
     """A piece an app contributes to the main page (docs/frame.md §4): its ES module draws into a cell
     of the grid for whoever has the app on. `module` is a path under the app's own files (a static
@@ -167,6 +203,7 @@ class Widget:
     size: str = "1x1"
     description: str = ""  # one line: what the piece shows or does, for the person choosing it (docs/frame.md §4)
     href: str = ""  # filled by load(): the module's absolute path
+    params: tuple[Param, ...] = ()  # its settings, kept with each place a person gives it ([[app.widget.param]])
     tr: dict[str, dict[str, str]] = field(default_factory=dict, compare=False, hash=False)
 
     def text(self, name: str, lang: str) -> str:
@@ -284,8 +321,56 @@ def _route(app_id: str, d: dict) -> Route:
     return r
 
 
+def _param(app_id: str, widget_id: str, d: dict) -> Param:
+    where = f"app {app_id}: widget {widget_id}"
+    if not isinstance(d, dict):
+        raise SiteError(f"{where}: a parameter is a table")
+    bad = set(d) - {"id", "label", "default", "choices", "from", "all", "tr"}
+    if bad:
+        raise SiteError(f"{where}: unknown parameter fields {sorted(bad)}")
+    pid, label, default = d.get("id", ""), d.get("label", ""), d.get("default", "")
+    if not isinstance(pid, str) or not NAME.match(pid) or not isinstance(label, str) or not label:
+        raise SiteError(f"{where}: a parameter needs an id (lowercase letters, digits and -) and a label")
+    where = f"{where}: parameter {pid}"
+    choices, source = d.get("choices"), d.get("from")
+    if (choices is None) == (source is None):
+        raise SiteError(f"{where}: one of choices and from")
+    if not isinstance(default, str):
+        raise SiteError(f"{where}: default is text")
+    tr = d.get("tr") or {}
+    for lang, words in tr.items():
+        if not isinstance(words, dict) or set(words) - {"label", "all", "choices"} or not isinstance(words.get("choices", {}), dict):
+            raise SiteError(f"{where}: tr.{lang} names label, all or choices")
+    if choices is not None:
+        if (not isinstance(choices, list) or not choices
+                or any(not isinstance(c, dict) or set(c) != {"value", "label"} or not all(isinstance(v, str) for v in c.values()) for c in choices)):
+            raise SiteError(f"{where}: choices are tables of value and label")
+        pairs = tuple((c["value"], c["label"]) for c in choices)
+        values = {v for v, _ in pairs}
+        if len(values) < len(pairs):
+            raise SiteError(f"{where}: a choice's value is given twice")
+        if default not in values:
+            raise SiteError(f"{where}: default is one of its choices")
+        if "all" in d:
+            raise SiteError(f"{where}: all goes with from")
+        return Param(id=pid, label=label, default=default, choices=pairs, tr=tr)
+    if not isinstance(source, dict) or set(source) != {"path", "list", "value", "label"} or not all(isinstance(v, str) and v for v in source.values()):
+        raise SiteError(f"{where}: from names path, list, value and label")
+    path = source["path"]
+    if not path.startswith("/") or path.startswith("//") or ".." in path or any(c in path for c in " \n\\{};?#"):
+        raise SiteError(f"{where}: from.path is a path of the site")
+    if default:
+        raise SiteError(f"{where}: a setting read from the site starts with no filter (no default)")
+    word = d.get("all", "")
+    if not isinstance(word, str) or not word:
+        raise SiteError(f"{where}: all is the word for no filter")
+    return Param(id=pid, label=label, source=Source(**source), all=word, tr=tr)
+
+
 def _widget(app_id: str, d: dict) -> Widget:
-    known = set(Widget.__dataclass_fields__) - {"href"}
+    d = dict(d)
+    declared = d.pop("param", [])
+    known = set(Widget.__dataclass_fields__) - {"href", "params"}
     bad = set(d) - known
     if bad:
         raise SiteError(f"app {app_id}: unknown widget fields {sorted(bad)}")
@@ -304,7 +389,12 @@ def _widget(app_id: str, d: dict) -> Widget:
         raise SiteError(f"app {app_id}: widget {w.id}: module is a path")
     if len(w.description) > 80:
         raise SiteError(f"app {app_id}: widget {w.id}: description is one line (80 characters)")
-    return w
+    if not isinstance(declared, list):
+        raise SiteError(f"app {app_id}: widget {w.id}: param is a list of tables")
+    params = tuple(_param(app_id, w.id, p) for p in declared)
+    if len({p.id for p in params}) < len(params):
+        raise SiteError(f"app {app_id}: widget {w.id}: a parameter id is declared twice")
+    return Widget(**d, params=params)
 
 
 def _filled(value, f):  # noqa: ANN001, ANN202 — every string of the file through the facts' placeholders

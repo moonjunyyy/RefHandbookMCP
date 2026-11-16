@@ -89,6 +89,15 @@ const MEASURE = (scope) => {
   await page.waitForSelector('.widget[data-widget=tasks] ul.tasks li');
   await page.hover('.widget[data-widget=tasks] ul.tasks li');
   await measure('home');
+  // a place's settings: the dialog a widget's declared parameters make
+  await page.hover('.widget[data-widget=today]');
+  await page.click('.widget[data-widget=today] .widget-tools button.more');
+  await page.waitForSelector('.menu[role=menu]');
+  await page.click('.menu[role=menu] .menu-item:has(strong:text-is("설정"))');
+  await page.waitForSelector('dialog[open] select[name=calendar]');
+  await measure('widget-settings', 'dialog');
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(100);
   await menuAt('.widget[data-widget=tasks] ul.tasks li');
   await measure('task-menu', '.menu[role=menu]');
   await page.keyboard.press('Escape');

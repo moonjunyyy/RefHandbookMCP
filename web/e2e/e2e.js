@@ -209,7 +209,7 @@ async function run() {
   await page.focus('.widgets .widget:nth-child(2)');
   await page.keyboard.press('Shift+F10');
   await page.waitForSelector('.menu[role=menu]');
-  step('칸의 메뉴가 키보드로 열리고 크기 넷·앞으로·뒤로·빼기다', JSON.stringify(await menuItems(page)) === '["1×1","2×1","1×2","2×2","앞으로","뒤로","빼기"]' && (await page.evaluate(() => document.activeElement.classList.contains('menu-item'))), JSON.stringify(await menuItems(page)));
+  step('칸의 메뉴가 키보드로 열리고 설정·크기 넷·앞으로·뒤로·빼기다', JSON.stringify(await menuItems(page)) === '["설정","1×1","2×1","1×2","2×2","앞으로","뒤로","빼기"]' && (await page.evaluate(() => document.activeElement.classList.contains('menu-item'))), JSON.stringify(await menuItems(page)));
   await page.keyboard.press('Escape');
   await sleep(100);
   step('Esc 로 닫히고 초점이 칸으로 돌아온다', !(await page.$('.menu[role=menu]')) && (await page.evaluate(() => document.activeElement.classList.contains('widget'))));
@@ -841,6 +841,76 @@ async function run() {
     JSON.stringify([await texts(page, '.widget[data-widget=tags] .bar-label'), await page.$eval('.widget[data-widget=tags] .bars a', (a) => a.getAttribute('href'))]));
   step('할 일: 마감별 묶음과 끝낸 정도', (await texts(page, '.widget[data-widget=tasks] .items-group')).length >= 1 && !!(await page.$('.widget[data-widget=tasks] .meter')));
   await shot(page, 'g-home');
+
+  // (w9) a place's own settings (C56–C58): what a widget declares, kept with the place; the same widget twice
+  const w9Prefs = mock.get('site', 'prefs');
+  const [w9c1, w9c2] = mock.calendars();
+  const w9d = new Date();  // today, all day: the first rows of the list
+  const w9k = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const w9a = w9k(w9d); w9d.setDate(w9d.getDate() + 1); const w9b = w9k(w9d);
+  const w9cell = '.widgets .widget[data-app=calendar][data-widget=upcoming]';
+  const w9cells = () => page.$$eval(w9cell, (els) => els.map((e) => ({ days: e.querySelectorAll('.day-strip .day').length, text: e.textContent, head: e.querySelector('.widget-head').textContent })));
+  const w9home = () => mock.get('site', 'prefs').home.filter((p) => p.widget === 'upcoming');
+  const w9menu = async (n, label) => { await page.hover(`${w9cell} >> nth=${n}`); await page.click(`${w9cell} >> nth=${n} >> .widget-tools button.more`); await page.waitForSelector('.menu[role=menu]'); await pickItem(page, label); };
+  mock.put('site', 'prefs', { ...w9Prefs, apps: ['calendar', 'vault'], home: [{ app: 'calendar', widget: 'upcoming', size: '2x2' }], homeCustomized: true });
+  await open(page, `${BASE}/`, `${w9cell} .day-strip`);
+  await page.evaluate(async (list) => { const { api } = await import('/auth/static/site.js'); for (const e of list) await api('/calendar/api/v1').post('/events', e); },
+    [{ cal: w9c1.id, summary: '설정 하나', allday: true, start: w9a, end: w9b, location: '', description: '', rrule: '' },
+     { cal: w9c2.id, summary: '설정 둘', allday: true, start: w9a, end: w9b, location: '', description: '', rrule: '' }]);
+  await open(page, `${BASE}/`, `${w9cell} .day-strip`);
+  await page.waitForFunction((sel) => document.querySelector(sel)?.textContent.includes('설정 둘'), w9cell);
+  let w9 = await w9cells();
+  step('설정을 둔 적 없는 칸은 전과 같다: 7일, 모든 캘린더, 머리는 위젯의 이름 (C58)', w9.length === 1 && w9[0].days === 7 && w9[0].text.includes('설정 하나') && w9[0].text.includes('설정 둘')
+    && w9[0].head.endsWith('다가오는 일'), JSON.stringify(w9));
+  await w9menu(0, '설정');
+  await page.waitForSelector('dialog[open] select[name=days]');
+  const w9form = await page.$eval('dialog[open]', (d) => ({ title: d.querySelector('input[name=title]').placeholder, size: !!d.querySelector('select[name=size]'),
+    days: [...d.querySelectorAll('select[name=days] option')].map((o) => o.value), day: d.querySelector('select[name=days]').value,
+    cals: [...d.querySelectorAll('select[name=calendar] option')].map((o) => o.textContent) }));
+  step('⋯ 의 설정: 제목·크기와 위젯이 선언한 설정마다 고를 것 — 내 캘린더는 열 때 읽는다 (C56)', w9form.title === '다가오는 일' && w9form.size && w9form.days.join() === '3,7,14' && w9form.day === '7'
+    && w9form.cals.join() === ['모든 캘린더', ...mock.calendars().map((c) => c.name)].join(), JSON.stringify(w9form));
+  await page.selectOption('dialog[open] select[name=days]', '3');
+  await page.selectOption('dialog[open] select[name=calendar]', w9c2.id);
+  await page.click('dialog[open] button:text-is("저장")');
+  await page.waitForFunction((sel) => document.querySelectorAll(sel).length === 3, `${w9cell} .day-strip .day`);
+  await page.waitForFunction(([sel, name]) => document.querySelector(sel)?.textContent.includes(name), [`${w9cell} .widget-head`, w9c2.name]);
+  w9 = await w9cells();
+  step('저장하면 그 칸에 남고 그대로 다시 그린다: 3일, 그 캘린더의 일정만, 머리에 고른 설정의 말 (C56)', w9[0].days === 3 && w9[0].text.includes('설정 둘') && !w9[0].text.includes('설정 하나')
+    && w9[0].head.includes('3일') && w9[0].head.includes(w9c2.name) && JSON.stringify(w9home()[0].params) === JSON.stringify({ days: '3', calendar: w9c2.id }), JSON.stringify([w9, w9home()]));
+  await page.keyboard.press('w');
+  await page.waitForSelector('dialog[open] .pick-row[data-app=calendar][data-widget=upcoming]');
+  await page.click('dialog[open] .pick-row[data-app=calendar][data-widget=upcoming] button:text-is("하나 더")');
+  await page.waitForSelector('dialog[open] .pick-row[data-app=calendar][data-widget=upcoming] .tag:text-is("×2")');
+  const w9plain = !(await page.$('dialog[open] .pick-row[data-app=calendar][data-widget=tasks] button:text-is("하나 더")'));
+  await page.keyboard.press('Escape');
+  await page.waitForFunction((sel) => document.querySelectorAll(sel).length === 2 && [...document.querySelectorAll(sel)].every((e) => e.querySelector('.day-strip')), w9cell);
+  await w9menu(1, '설정');
+  await page.waitForSelector('dialog[open] input[name=title]');
+  await page.fill('dialog[open] input[name=title]', '이번 주 전체');
+  await page.click('dialog[open] button:text-is("저장")');
+  await page.waitForFunction(([sel, name]) => [...document.querySelectorAll(sel)].some((e) => e.textContent.includes(name)), [`${w9cell} .widget-head`, '이번 주 전체']);
+  w9 = await w9cells();
+  step('하나 더: 같은 위젯이 두 칸에 서고 칸마다 제 설정이다; 설정이 없는 위젯에는 하나 더가 없다 (C57)', w9.length === 2 && w9[0].days === 3 && !w9[0].text.includes('설정 하나')
+    && w9[1].days === 7 && w9[1].text.includes('설정 하나') && w9[1].head.endsWith('이번 주 전체') && w9home()[1].title === '이번 주 전체' && !w9home()[1].params && w9plain, JSON.stringify([w9, w9home()]));
+  await w9menu(0, '빼기');
+  await page.waitForFunction((sel) => document.querySelectorAll(sel).length === 1, w9cell);
+  w9 = await w9cells();
+  const w9left = w9.length === 1 && w9[0].days === 7 && w9[0].head.endsWith('이번 주 전체');
+  await page.keyboard.press('w');
+  await page.waitForSelector('dialog[open] .pick-row[data-app=calendar][data-widget=upcoming]');
+  await page.click('dialog[open] .pick-row[data-app=calendar][data-widget=upcoming] input');
+  await sleep(300);
+  await page.keyboard.press('Escape');
+  await sleep(200);
+  step('한 칸을 빼면 다른 칸은 남고, 스위치를 끄면 그 위젯의 칸이 모두 빠진다 (C57)', w9left && (await page.$$(w9cell)).length === 0 && w9home().length === 0, JSON.stringify([w9, w9home()]));
+  mock.put('site', 'prefs', { ...w9Prefs, apps: ['calendar', 'vault'], home: [{ app: 'calendar', widget: 'upcoming', size: '2x2', params: { days: '99', calendar: 'gone' } }], homeCustomized: true });
+  await open(page, `${BASE}/`, `${w9cell} .day-strip`);
+  await page.waitForFunction((sel) => document.querySelector(sel)?.textContent.includes('설정 둘'), w9cell);
+  w9 = await w9cells();
+  step('선언에 없는 값은 기본값으로, 없어진 캘린더는 전부로 그린다 (C58)', w9[0].days === 7 && w9[0].text.includes('설정 하나') && w9[0].text.includes('설정 둘') && w9[0].head.endsWith('다가오는 일'), JSON.stringify(w9));
+  await page.evaluate(async (ids) => { const { api } = await import('/auth/static/site.js'); for (const id of ids) await api('/calendar/api/v1').del(`/events/${id}`); },
+    mock.events().filter((e) => e.summary.startsWith('설정 ')).map((e) => e.id));
+  mock.put('site', 'prefs', w9Prefs);
 
   // (h) the theme: chosen in the settings, applied at once, kept as the cookie and in the account, survives a reload
   await open(page, `${BASE}/settings`, '.value');

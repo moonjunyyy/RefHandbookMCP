@@ -110,7 +110,7 @@ export const SITE: Record<string, string> = {
   '+{n}': '+{n}',
   '+ 일정': '+ Event',
   '일정 없음': 'No events',
-  '앞으로 7일 동안 일정이 없습니다.': 'Nothing in the next seven days.',
+  '앞으로 {n}일 동안 일정이 없습니다.': 'No events in the next {n} days.',
   '오늘은 일정이 없습니다.': 'Nothing today.',
   // the notes (pages/vault.ts, widgets/vault.ts)
   '노트': 'Notes',
@@ -301,6 +301,7 @@ export const SITE: Record<string, string> = {
   '다음': 'Next',
   '지금': 'now',
   '크기': 'Size',
+  '하나 더': 'One more',
   // the to-do list (widgets/calendar.ts, pages/calendar.ts; docs/apps-vault-calendar.md §7.3)
   '내일': 'Tomorrow',
   '{n}일 지남': '{n} days late',
