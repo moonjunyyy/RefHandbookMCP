@@ -6,12 +6,14 @@ index, cross-references) is a row here, so it can change at runtime:
     entries ──< items      ordered memory / action / deferred lines
             ──< triggers   alerting cues the entry is looked up by
             ──< tags       dynamic "tabs"
+            ──< entry_revisions   each replaced revision, kept as the base of merges
     relations(src, type, dst)   typed edges; types live in relation_types
     edges                       view: relations + every step-level GO TO
 """
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import sqlite3
@@ -19,6 +21,7 @@ from collections import deque
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import datetime, timezone
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
 
@@ -88,6 +91,13 @@ CREATE VIEW IF NOT EXISTS edges AS
     SELECT src, type, dst, note FROM relations
     UNION
     SELECT entry_id, 'continues_to', goto, '' FROM items WHERE goto IS NOT NULL;
+CREATE TABLE IF NOT EXISTS entry_revisions (
+    entry_id TEXT NOT NULL REFERENCES entries(id) ON DELETE CASCADE,
+    revision INTEGER NOT NULL,
+    saved_at TEXT NOT NULL,
+    data     TEXT NOT NULL,          -- the revision's content (MERGE_FIELDS), JSON
+    PRIMARY KEY (entry_id, revision)
+);
 CREATE VIRTUAL TABLE IF NOT EXISTS search USING fts5(
     entry_id UNINDEXED, title, triggers, condition, body,
     tokenize = 'porter unicode61'
@@ -144,6 +154,111 @@ def decomposition(entry: dict[str, Any]) -> list[str]:
     return out
 
 
+# ── revisions and merging: a save says which revision it was written against ──
+#
+# A card is rewritten whole, so a save made from an older reading would undo what was saved since without
+# anyone seeing it. As with a push in version control, a save names its base: the revision its writer read.
+# On the current revision it goes in as it is. On an older one it is merged three ways (what was read,
+# kept in entry_revisions; what is sent; what is saved now), and where both sides changed the same place it
+# is refused with that place marked: the writer settles the marks and saves again on the current revision.
+
+MERGE_FIELDS = ("title", "kind", "condition", "objective", "body", "triggers", "tags", "items")
+SET_FIELDS = ("triggers", "tags")  # merged as sets: an addition or a removal on either side stands
+ITEM_KEYS = ("phase", "kind", "text", "response", "when", "goto", "ends")
+_MARK = re.compile(r"^(<<<<<<< |\|\|\|\|\|\|\| |>>>>>>> )", re.M)
+
+
+def merge3(base: list[Any], mine: list[Any], theirs: list[Any]) -> list[tuple[Any, ...]]:
+    """Three-way merge of sequences (a body's lines, a card's items): the chunks of the result in order,
+    each ("ok", units) or ("conflict", mine, base, theirs). The stretches of `base` that both sides kept
+    are the anchors. Between two anchors, a stretch only one side changed is taken from that side, one
+    both changed alike is taken once, and one they changed differently is a conflict."""
+    a = SequenceMatcher(None, base, mine, autojunk=False).get_matching_blocks()
+    b = SequenceMatcher(None, base, theirs, autojunk=False).get_matching_blocks()
+    anchors, i, j = [], 0, 0
+    while i < len(a) and j < len(b):
+        (ab, am, an), (bb, bm, bn) = a[i], b[j]
+        lo, hi = max(ab, bb), min(ab + an, bb + bn)
+        if lo < hi:
+            anchors.append((lo, hi, am + lo - ab, bm + lo - bb))
+        if ab + an < bb + bn:
+            i += 1
+        else:
+            j += 1
+    anchors.append((len(base), len(base), len(mine), len(theirs)))
+    out: list[tuple[Any, ...]] = []
+
+    def ok(units: list[Any]) -> None:
+        if units and out and out[-1][0] == "ok":
+            out[-1] = ("ok", out[-1][1] + units)
+        elif units:
+            out.append(("ok", units))
+
+    zb = zm = zt = 0
+    for lo, hi, m0, t0 in anchors:
+        old, new, now = base[zb:lo], mine[zm:m0], theirs[zt:t0]
+        if new == now or now == old:
+            ok(new)
+        elif new == old:
+            ok(now)
+        else:
+            out.append(("conflict", new, old, now))
+        ok(base[lo:hi])
+        zb, zm, zt = hi, m0 + hi - lo, t0 + hi - lo
+    return out
+
+
+def _content(entry: dict[str, Any]) -> dict[str, Any]:
+    """What a revision holds: the fields a save can change."""
+    return {**{f: entry[f] for f in MERGE_FIELDS if f != "items"},
+            "items": [{k: i[k] for k in ITEM_KEYS} for i in entry["items"]]}
+
+
+def _units(field: str, value: Any) -> list[Any]:
+    """A field as the units it is merged by: a body's lines, a card's items, otherwise the one value."""
+    if field == "body":
+        return value.split("\n")
+    if field == "items":
+        return [tuple(i[k] for k in ITEM_KEYS) for i in value]
+    return [value]
+
+
+def _lines(field: str, units: list[Any]) -> list[str]:
+    """Units as lines a writer reads and sends back: an item is one JSON object, as save_entry takes it."""
+    if field == "items":
+        return [json.dumps({k: v for k, v in zip(ITEM_KEYS, u) if v not in (None, False)}, ensure_ascii=False)
+                for u in units]
+    return [str(u) for u in units]
+
+
+def _unmarked(body: str | None, items: list[dict[str, Any]] | None) -> None:
+    if any(_MARK.search(t) for t in [body or ""] + [i["text"] for i in items or []]):
+        raise HandbookError("REFUSED: the text still carries merge marks (<<<<<<< · ||||||| · >>>>>>>): settle each "
+                            "marked place, take the marks out, then save. Nothing was written.")
+
+
+def _conflict_report(id: str, base: int, head: int, kept: bool, marked: dict[str, list[str]],
+                     both: dict[str, list[str]], yours: list[str]) -> str:
+    """What a refused save gets back: every field it sent, as it stands on the current revision."""
+    marks = (f"<<<<<<< yours · ||||||| rev {base} (what you read) · ======= · >>>>>>> rev {head} (what is saved now)"
+             if kept else f"<<<<<<< yours · ======= · >>>>>>> rev {head} (what is saved now); rev {base} was saved "
+             "before revisions were kept, so there is nothing to merge from and every field of yours that differs "
+             "is marked whole")
+    out = [f"CONFLICT [{id}]: this save was written against rev {base}; the card is at rev {head}, and "
+           f"{', '.join(marked)} changed on both sides. Nothing was written.",
+           f"Marks: {marks}.",
+           f"Resolve: settle each marked place (one side, or the two written together), take the marks out, then "
+           f"save_entry(id={id!r}, base={head}, …) with every field below as it should read."
+           + (" items are given one JSON object per line: send them as the list." if "items" in {*marked, *both} else "")]
+    for f, lines in marked.items():
+        out += ["", f"== {f}: CONFLICT ==", *lines]
+    for f, lines in both.items():
+        out += ["", f"== {f}: merged without overlap (yours and rev {head}'s changes): send this ==", *lines]
+    if yours:
+        out += ["", f"== {', '.join(yours)}: changed by you alone: send again as you sent it =="]
+    return "\n".join(out)
+
+
 # bm25 weights, one per search column: a hit on an alerting cue outranks a hit in the steps.
 SEARCH_WEIGHTS = "0.0, 5.0, 8.0, 3.0, 1.0"
 
@@ -180,6 +295,10 @@ SCOPES = {
 
 class HandbookError(ValueError):
     """A request the caller can fix: unknown id, bad item, reserved name."""
+
+
+class CardConflict(HandbookError):
+    """A save written against an older revision changes a place that was changed since. Nothing was written."""
 
 
 def default_db_path() -> Path:
@@ -295,11 +414,18 @@ class Handbook:
         tags: list[str] | None = None,
         items: list[dict[str, Any]] | None = None,
         atomic: bool = False,
+        base: int | None = None,
     ) -> dict[str, Any]:
         """Create an entry, or update one. On update, arguments left as None keep
         their stored value; a list argument replaces the stored list whole. With
         `atomic`, an entry that holds more than one topic is refused (nothing is
-        written), with the parts it holds."""
+        written), with the parts it holds.
+
+        `base` is the revision the update was written against. On the current revision it is
+        saved as it is; on an older one it is merged with what was saved since (_rebase), the
+        returned entry saying so under "merge", or refused as a CardConflict where the two
+        overlap. Without `base` the update replaces whatever is stored: the store's own writers
+        (the research cards, a card record, an import) own what they write."""
         if id is None:
             if not title:
                 raise HandbookError("a new entry needs a title")
@@ -310,6 +436,20 @@ class Handbook:
 
         with self._tx():
             row = self.db.execute("SELECT * FROM entries WHERE id = ?", (id,)).fetchone()
+            note = ""
+            if base is not None:
+                if row is None:
+                    raise HandbookError(f"[{id}] does not exist, so there is no rev {base} of it (deleted since you "
+                                        "read it?): omit base to create it. Nothing was written.")
+                if base != row["revision"]:
+                    merged, note = self._rebase(id, row["revision"], base, {
+                        "title": title, "kind": kind, "condition": condition, "objective": objective, "body": body,
+                        "triggers": triggers, "tags": tags, "items": clean_items})
+                    title, kind, condition, objective, body, triggers, tags, clean_items = (
+                        merged[f] for f in MERGE_FIELDS)
+                _unmarked(body, clean_items)
+            if row is not None:
+                self._keep(id)
             if row is None:
                 if not title:
                     raise HandbookError(f"no entry {id!r} to update; pass a title to create it")
@@ -357,7 +497,10 @@ class Handbook:
                     "(GO TO, part_of, precedes), and keep this id as the first part or as their index (card rs-split). "
                     "Nothing was written.")
         self.changed()
-        return self.get_entry(id)
+        entry = self.get_entry(id)
+        if note:
+            entry["merge"] = note
+        return entry
 
     def _reindex(self, entry_id: str) -> None:
         entry = self.get_entry(entry_id)
@@ -369,6 +512,99 @@ class Handbook:
             "INSERT INTO search VALUES (?, ?, ?, ?, ?)",
             (entry_id, entry["title"], "\n".join(entry["triggers"]), entry["condition"], "\n".join(lines)),
         )
+
+    # ── revisions ────────────────────────────────────────────────────────
+
+    def _keep(self, entry_id: str) -> None:
+        """Keep the current revision before it is replaced (once): a later save written against it is
+        merged from this."""
+        e = self.get_entry(entry_id)
+        self.db.execute("INSERT OR IGNORE INTO entry_revisions (entry_id, revision, saved_at, data) VALUES (?, ?, ?, ?)",
+                        (entry_id, e["revision"], e["updated_at"], json.dumps(_content(e), ensure_ascii=False)))
+
+    def revisions(self, entry_id: str) -> list[int]:
+        """The kept revisions of a card, oldest first (the current one is the card itself)."""
+        return self._column("SELECT revision FROM entry_revisions WHERE entry_id = ? ORDER BY revision", entry_id)
+
+    def get_revision(self, entry_id: str, revision: int) -> dict[str, Any]:
+        """A card as it was at a revision, in the shape of get_entry."""
+        head = self.get_entry(entry_id)
+        if revision == head["revision"]:
+            return head
+        row = self.db.execute("SELECT saved_at, data FROM entry_revisions WHERE entry_id = ? AND revision = ?",
+                              (entry_id, revision)).fetchone()
+        if row is None:
+            kept = ", ".join(map(str, self.revisions(entry_id))) or "none"
+            raise HandbookError(f"rev {revision} of [{entry_id}] is not kept (the card is at rev {head['revision']}; "
+                                f"kept: {kept}). A revision is kept from the first save made after revisions were.")
+        data = json.loads(row["data"])
+        title = lambda i: (self.db.execute("SELECT title FROM entries WHERE id = ?", (i,)).fetchone() or [None])[0]  # noqa: E731
+        return {"id": entry_id, **data, "revision": revision, "updated_at": row["saved_at"],
+                "items": [{**i, "goto_title": title(i["goto"]) if i["goto"] else None} for i in data["items"]]}
+
+    def _rebase(self, id: str, head: int, base: int, sent: dict[str, Any]) -> tuple[dict[str, Any], str]:
+        """A save written against revision `base`, brought onto the current one. Returns the fields to write
+        (None: leave as saved) and a line saying what was merged; raises CardConflict, with every sent field
+        as it stands on the current revision and the overlaps marked, when both sides changed the same place."""
+        if not 1 <= base < head:
+            raise HandbookError(f"[{id}] is at rev {head}: there is no rev {base} to have read. open_entry shows the "
+                                "card and its rev; pass that as base. Nothing was written.")
+        now = _content(self.get_entry(id))
+        kept = self.db.execute("SELECT data FROM entry_revisions WHERE entry_id = ? AND revision = ?", (id, base)).fetchone()
+        old = json.loads(kept["data"]) if kept else None
+        out = dict(sent)
+        yours: list[str] = []            # fields only this save changed
+        both: dict[str, list[str]] = {}  # fields merged from the two sides, as lines
+        marked: dict[str, list[str]] = {}  # fields where the two sides overlap, as lines with marks
+        for f in MERGE_FIELDS:
+            mine = sent[f]
+            if mine is None:
+                continue
+            if f in SET_FIELDS:
+                mine = sorted({v.strip() for v in mine if v.strip()})
+                show = lambda v: json.dumps(v, ensure_ascii=False)  # noqa: E731
+                if mine == now[f]:
+                    continue
+                if old is None:
+                    marked[f] = ["<<<<<<< yours", show(mine), "=======", show(now[f]), f">>>>>>> rev {head}"]
+                    continue
+                union = sorted((set(now[f]) - (set(old[f]) - set(mine))) | (set(mine) - set(old[f])))
+                if union == now[f]:
+                    out[f] = None
+                elif union == mine:
+                    yours.append(f)
+                else:
+                    out[f], both[f] = union, [show(union)]
+                continue
+            m, t = _units(f, mine), _units(f, now[f])
+            if m == t:
+                continue
+            chunks = merge3(_units(f, old[f]), m, t) if old else [("conflict", m, None, t)]
+            if any(c[0] == "conflict" for c in chunks):
+                lines: list[str] = []
+                for c in chunks:
+                    if c[0] == "ok":
+                        lines += _lines(f, c[1])
+                        continue
+                    lines += ["<<<<<<< yours", *_lines(f, c[1])]
+                    if c[2] is not None:
+                        lines += [f"||||||| rev {base}", *_lines(f, c[2])]
+                    lines += ["=======", *_lines(f, c[3]), f">>>>>>> rev {head}"]
+                marked[f] = lines
+                continue
+            units = [u for c in chunks for u in c[1]]
+            if units == t:
+                out[f] = None
+            elif units == m:
+                yours.append(f)
+            else:
+                both[f] = _lines(f, units)
+                out[f] = "\n".join(units) if f == "body" else [dict(zip(ITEM_KEYS, u)) for u in units]
+        if marked:
+            raise CardConflict(_conflict_report(id, base, head, old is not None, marked, both, yours))
+        said = [f"{f} (yours and rev {head}'s changes)" for f in both] + [f"{f} (yours)" for f in yours]
+        return out, (f"MERGED [{id}]: written against rev {base}, saved onto rev {head}: "
+                     + ("; ".join(said) if said else f"nothing of yours differs from rev {head}") + ".")
 
     def get_entry(self, entry_id: str) -> dict[str, Any]:
         row = self.db.execute("SELECT * FROM entries WHERE id = ?", (entry_id,)).fetchone()
