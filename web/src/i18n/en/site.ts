@@ -81,6 +81,7 @@ export const SITE: Record<string, string> = {
   '지우기': 'Delete',
   '일정': 'Event',
   '새 일정': 'New event',
+  '자세히': 'More options',
   '저장': 'Save',
   '일정 지우기': 'Delete the event',
   '제목을 적으세요.': 'Give it a title.',

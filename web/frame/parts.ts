@@ -341,7 +341,7 @@ export function keys(list: Key[]): void {
   if (keysInstalled) return;
   keysInstalled = true;
   document.addEventListener('keydown', ev => {
-    if (ev.defaultPrevented || ev.isComposing || document.querySelector('dialog[open]') || openMenu) return;
+    if (ev.defaultPrevented || ev.isComposing || document.querySelector('dialog[open]') || openMenu || openPeek) return;
     const combo = `${ev.altKey ? 'Alt+' : ''}${ev.ctrlKey || ev.metaKey ? 'Ctrl+' : ''}${ev.key}`;
     if (ev.key === '?' && !typing(ev.target)) { ev.preventDefault(); void keysDialog(); return; }
     const hit = pageKeys.find(k => k.key === combo && (!k.when || k.when()));
@@ -374,6 +374,18 @@ export function closeMenu(): void {
   openMenu = null;
 }
 
+/** Where a popup goes: under the pointer, or under the element it belongs to; never off the screen. */
+function placeAt(el: HTMLElement, at: MenuAt): void {
+  const r = at instanceof HTMLElement ? at.getBoundingClientRect() : null;
+  const pt = at instanceof HTMLElement ? { x: 0, y: 0 } : at;
+  let x = r ? r.left : pt.x, y = r ? r.bottom + 4 : pt.y;
+  const w = el.offsetWidth, hgt = el.offsetHeight;
+  if (x + w > innerWidth - 8) x = Math.max(8, (r ? r.right : pt.x) - w);
+  if (y + hgt > innerHeight - 8) y = Math.max(8, (r ? r.top - 4 : pt.y) - hgt);
+  el.style.left = `${x}px`;
+  el.style.top = `${y}px`;
+}
+
 /** The actions of a thing, where it is: a list under the pointer (a right-click), or under its ⋯ button.
  * One line per item — a bold keyword and a dim detail; ↑↓ move, Enter runs, Esc and a click outside close;
  * the focus goes back to where it came from. A menu with one item is still a menu: the place is the point. */
@@ -400,15 +412,7 @@ export function menu(at: MenuAt, sections: MenuSection[], opts: { label?: string
   });
   document.body.appendChild(el);
   openMenu = el;
-  // where: under the pointer, or under the element it belongs to; never off the screen
-  const r = at instanceof HTMLElement ? at.getBoundingClientRect() : null;
-  const pt = at instanceof HTMLElement ? { x: 0, y: 0 } : at;
-  let x = r ? r.left : pt.x, y = r ? r.bottom + 4 : pt.y;
-  const w = el.offsetWidth, hgt = el.offsetHeight;
-  if (x + w > innerWidth - 8) x = Math.max(8, (r ? r.right : pt.x) - w);
-  if (y + hgt > innerHeight - 8) y = Math.max(8, (r ? r.top - 4 : pt.y) - hgt);
-  el.style.left = `${x}px`;
-  el.style.top = `${y}px`;
+  placeAt(el, at);
   const outside = (ev: Event) => { if (!el.contains(ev.target as Node)) { done(); off(); } };
   const off = () => { document.removeEventListener('pointerdown', outside, true); window.removeEventListener('resize', done); window.removeEventListener('scroll', done, true); };
   setTimeout(() => { if (openMenu === el) { document.addEventListener('pointerdown', outside, true); window.addEventListener('resize', done); window.addEventListener('scroll', done, true); } });
@@ -443,6 +447,62 @@ export function menuButton(build: () => MenuSection[], label: string = t('더 �
   const b = h('button', { type: 'button', class: 'more', 'aria-label': label, title: label, 'aria-haspopup': 'menu',
                           onclick: (ev: MouseEvent) => { ev.stopPropagation(); menu(b, build(), { label }); } }, '⋯');
   return b;
+}
+
+// ── the peek: a thing's card, at its place ────────────────────────────────
+
+let openPeek: { el: HTMLElement; close: () => void } | null = null;
+
+export function closePeek(): void {
+  openPeek?.close();
+}
+
+/** A small card where a thing is: the thing at a glance, or the one line that makes a new one — between its
+ * line in a list and its dialog or page. Not modal, one at a time: Esc closes it and gives the focus back; a
+ * press, a wheel or a touch-move outside it closes it, and so does the focus going elsewhere; a menu opened
+ * from inside belongs to it. The page's keys rest while it is open. Placed as a menu is; on a narrow screen
+ * parts.css lays it across the bottom edge. */
+export function peek(at: MenuAt, body: Child, opts: { label: string; onClose?: () => void }): { el: HTMLElement; close: () => void } {
+  closePeek();
+  closeMenu();
+  const back = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  const el = h('div', { class: 'peek', role: 'dialog', 'aria-label': opts.label, tabindex: '-1' }, body);
+  const mine = (n: EventTarget | null) => n instanceof Node && (el.contains(n) || (n instanceof Element && !!n.closest('.menu')));
+  let open = true;
+  const close = (refocus = false) => {
+    if (!open) return;
+    open = false;
+    document.removeEventListener('pointerdown', away, true);
+    document.removeEventListener('wheel', away, true);
+    document.removeEventListener('touchmove', away, true);
+    document.removeEventListener('keydown', key, true);
+    window.removeEventListener('resize', again);
+    el.remove();
+    if (openPeek === handle) openPeek = null;
+    opts.onClose?.();
+    if (refocus && back?.isConnected) back.focus();
+  };
+  const away = (ev: Event) => { if (!mine(ev.target)) close(); };
+  const key = (ev: KeyboardEvent) => {
+    if (ev.key !== 'Escape' || openMenu || document.querySelector('dialog[open]')) return;
+    ev.preventDefault(); ev.stopPropagation(); close(true);
+  };
+  const again = () => { if (at instanceof HTMLElement && !at.isConnected) close(); else placeAt(el, at); };
+  const handle = { el, close: () => close() };
+  el.addEventListener('focusout', ev => { const to = ev.relatedTarget; if (to instanceof Element && !mine(to) && !to.closest('dialog')) close(); });
+  document.body.appendChild(el);
+  placeAt(el, at);
+  openPeek = handle;
+  setTimeout(() => {
+    if (!open) return;
+    document.addEventListener('pointerdown', away, true);
+    document.addEventListener('wheel', away, { capture: true, passive: true });
+    document.addEventListener('touchmove', away, { capture: true, passive: true });
+    window.addEventListener('resize', again);
+  });
+  document.addEventListener('keydown', key, true);
+  (el.querySelector<HTMLElement>('input:not([hidden]), select:not([hidden]), textarea, button') ?? el).focus();
+  return handle;
 }
 
 // ── moving about ──────────────────────────────────────────────────────────

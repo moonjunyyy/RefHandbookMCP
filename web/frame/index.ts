@@ -14,7 +14,7 @@ export type { Address, Card, Widget, Frame, Prefs, Placement, Theme, Size, Look,
 export { LANGS, setLang, resolveLang, lang, locale, t, n_ } from './i18n';
 export { main, api, site, agents, account, ApiError, message, chrome, header, title, pageHead, section, empty, help, tag,
          flash, flashNext, showPending, act, button, toggle, select, choice, form, dialog, go, link, primaryLink, when, num, meta,
-         menu, onMenu, menuButton, closeMenu, keys, keysDialog } from './parts';
+         menu, onMenu, menuButton, closeMenu, peek, closePeek, keys, keysDialog } from './parts';
 export type { Json, MenuItem, MenuSection, MenuAt, Key } from './parts';
 export { launcher, LAUNCHER, widgetsOf, mount, widgetList, openWord, spanStyle, fit, dayKey, ago, items, groupHead, stats, meter, dayStrip, monthGrid, bars, activity } from './widgets';
 export type { WidgetContext, WidgetModule, Item, ItemGroup, Stat, Day, Month, Bar } from './widgets';

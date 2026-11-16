@@ -278,8 +278,13 @@ async function run() {
   step('캘린더 칩을 끄면 그 일정이 숨는다(이 브라우저에 기억)', (await page.$$('.cal-day.selected .cal-ev')).length === 1 && (await page.evaluate(() => localStorage.getItem('cal.hidden'))) === '["g-1"]');
   await page.click('.cal-sources .chip:has-text("lab")');
   await page.click('.day-list .cal-ev:has-text("치과")');
+  await page.waitForSelector('.peek');
+  const pkFirst = await page.$eval('.peek', (e) => e.textContent);
+  const pkNoDialog = !(await page.$('dialog[open]'));
+  await page.click('.peek button:text-is("편집")');
   await page.waitForSelector('dialog[open]');
-  step('일정을 누르면 같은 대화상자에 그 값이 있다', (await page.inputValue('dialog input[name=summary]')) === '치과');
+  step('일정을 누르면 그 카드가 뜨고(대화상자가 아니다), 편집이 같은 대화상자를 그 값으로 연다 (C51)', pkNoDialog && pkFirst.includes('치과') && !(await page.$('.peek'))
+    && (await page.inputValue('dialog input[name=summary]')) === '치과', pkFirst);
   await page.click('dialog p.actions button:text-is("지우기")');
   await page.waitForSelector('dialog[open] h2:text-is("일정 지우기")');
   await page.click('dialog[open] button[type=submit].danger');
@@ -412,11 +417,15 @@ async function run() {
   step('종일 일정은 종일 줄의 그 날에 있다', wkHasIt || !shownWeek.includes(nextKey) && !(await page.$('.wk-allcol .cal-ev')) && (await page.$$('.wk-col')).length === 7, `${wkHasIt} ${nextKey} ${shownWeek.join()}`);
   // a slot pressed: 10:00 of today (the column is 24 hours tall; the body is scrolled to the morning)
   await page.click(`.wk-col[data-day="${todayKey}"]`, { position: { x: 10, y: 10 * 44 + 5 } });
-  await page.waitForSelector('dialog[open]');
-  step('빈 칸을 누르면 그 시각의 새 일정이다', (await page.inputValue('dialog input[type=datetime-local] >> nth=0')) === `${todayKey}T10:00`
-    && (await page.inputValue('dialog input[type=datetime-local] >> nth=1')) === `${todayKey}T11:00`, await page.inputValue('dialog input[type=datetime-local] >> nth=0'));
-  await page.fill('dialog input[name=summary]', '세미나');
-  await page.click('dialog button:text-is("저장")');
+  await page.waitForSelector('.peek input[name=summary]');
+  const qGhostTop = await page.$eval(`.wk-col[data-day="${todayKey}"] .wk-ghost`, (e) => Math.round(parseFloat(e.style.top)));
+  const qCount = mock.events().length;
+  await page.keyboard.press('Enter');  // no title: nothing is written
+  await sleep(150);
+  step('빈 칸을 누르면 그 자리에 작은 카드다: 제목에 초점, 그 시각의 자리 표시, 대화상자는 아니다; 제목 없이는 쓰지 않는다 (C49)', qGhostTop === 440 && !(await page.$('dialog[open]'))
+    && (await page.evaluate(() => document.activeElement?.getAttribute('name'))) === 'summary' && mock.events().length === qCount && !!(await page.$('.peek')), `${qGhostTop}`);
+  await page.keyboard.type('세미나');
+  await page.keyboard.press('Enter');
   await page.waitForSelector(`.wk-col[data-day="${todayKey}"] .wk-ev`);
   const ev1 = mock.events()[1];
   step('주 보기의 일정은 그 시각 높이의 블록이다', (await page.$eval(`.wk-col[data-day="${todayKey}"] .wk-ev`, (e) => Math.round(parseFloat(e.style.top)))) === 440
@@ -436,8 +445,13 @@ async function run() {
     && (await page.$eval(`.wk-col[data-day="${todayKey}"] .wk-ev`, (e) => Math.round(parseFloat(e.style.top)))) === 14 * 44, JSON.stringify(ev2));
   // a repeating event is not dragged: its series is changed in the dialog
   await page.click(`.wk-col[data-day="${todayKey}"]`, { position: { x: 10, y: 16 * 44 + 5 } });
+  await page.waitForSelector('.peek input[name=summary]');
+  await page.fill('.peek input[name=summary]', '주간 회의');
+  await page.click('.peek button:text-is("자세히")');
   await page.waitForSelector('dialog[open]');
-  await page.fill('dialog input[name=summary]', '주간 회의');
+  step('자세히는 적은 제목과 그 칸의 시각을 대화상자로 가져간다 (C50)', (await page.inputValue('dialog input[name=summary]')) === '주간 회의'
+    && (await page.inputValue('dialog input[type=datetime-local] >> nth=0')) === `${todayKey}T16:00` && (await page.inputValue('dialog input[type=datetime-local] >> nth=1')) === `${todayKey}T17:00`
+    && !(await page.$('.peek')) && !(await page.$('.wk-ghost')));
   await page.selectOption('dialog select[name=rrule]', 'FREQ=WEEKLY');
   await page.click('dialog button:text-is("저장")');
   await page.waitForSelector('.wk-ev.repeats');
@@ -512,11 +526,64 @@ async function run() {
     && page.url().includes(`v=day&d=${todayKey}`) && (await page.$eval('.wk-col', (e) => e.dataset.day)) === todayKey, page.url());
   await page.$eval('.wk-body', (e) => { e.scrollTop = 0; });
   await page.click('.wk-col', { position: { x: 40, y: 44 * 5 + 4 } });
-  await page.waitForSelector('dialog[open]');
-  const slot = await page.inputValue('dialog input[type=datetime-local] >> nth=0');
+  await page.waitForSelector('.peek input[name=summary]');
+  const slot = await page.$eval('.wk-col .wk-ghost', (e) => Math.round(parseFloat(e.style.top)));
+  const qSlotDay = await page.$eval('.wk-col', (e) => e.dataset.day);
+  const qCount2 = mock.events().length;
   await page.keyboard.press('Escape');
   await sleep(150);
-  step('일 보기의 빈 칸은 그 시각의 새 일정이다 (C45)', slot === `${todayKey}T05:00`, slot);
+  step('일 보기의 빈 칸은 그 시각의 새 일정 카드이고, Esc 는 아무것도 쓰지 않고 닫는다 (C45, C49)', slot === 5 * 44 && qSlotDay === todayKey && !(await page.$('.peek')) && !(await page.$('.wk-ghost'))
+    && mock.events().length === qCount2, `${slot}`);
+  // (e3) the quick card and the event's card (C49–C52), in the day view
+  for (const [hour, name] of [[5, '피크 하나'], [3, '피크 둘']]) {
+    await page.$eval('.wk-body', (e) => { e.scrollTop = 0; });
+    await page.click('.wk-col', { position: { x: 40, y: 44 * hour + 4 } });
+    await page.waitForSelector('.peek input[name=summary]');
+    await page.keyboard.type(name);
+    await page.keyboard.press('Enter');
+    await page.waitForSelector(`.wk-col .wk-ev:has-text("${name}")`);
+  }
+  const pkMade = mock.events().filter((e) => e.summary.startsWith('피크 '));
+  step('빠른 만들기: 제목과 Enter 가 그 시각의 한 시간짜리 일정을 쓴다 (C49)', pkMade.length === 2 && pkMade.every((e) => !e.allday && new Date(e.end) - new Date(e.start) === 3600000)
+    && (await page.$eval('.wk-col .wk-ev:has-text("피크 하나")', (e) => Math.round(parseFloat(e.style.top)))) === 5 * 44
+    && (await page.$eval('.wk-col .wk-ev:has-text("피크 둘")', (e) => Math.round(parseFloat(e.style.top)))) === 3 * 44 && !(await page.$('.peek')), JSON.stringify(pkMade));
+  await page.click('.wk-col .wk-ev:has-text("피크 하나")');
+  await page.waitForSelector('.peek h2:text-is("피크 하나")');
+  const pkWhen = await page.$eval('.peek .peek-when', (e) => e.textContent);
+  const pkCal = await page.$eval('.peek .peek-cal', (e) => e.textContent.trim());
+  await page.click('.wk-col .wk-ev:has-text("피크 둘")');
+  await page.waitForSelector('.peek h2:text-is("피크 둘")');
+  step('일정을 누르면 그 카드가 제목·시각·캘린더를 보이고, 다른 일정을 누르면 그 일정의 카드 하나로 바뀐다 (C51)', pkWhen.includes('5:00') && pkWhen.includes('6:00') && pkCal.length > 0
+    && (await page.$$('.peek')).length === 1 && !(await page.$('dialog[open]')), `${pkWhen} / ${pkCal}`);
+  await page.keyboard.press('Escape');
+  await sleep(100);
+  const pkBack = await page.evaluate(() => document.activeElement?.textContent ?? '');
+  const pkClosed = !(await page.$('.peek'));
+  await page.click('.wk-col .wk-ev:has-text("피크 둘")');
+  await page.waitForSelector('.peek');
+  await page.click('.peek button.more');
+  await page.waitForSelector('.menu[role=menu]');
+  const pkMenu = await texts(page, '.menu[role=menu] .menu-item strong');
+  await page.keyboard.press('Escape');
+  await sleep(100);
+  step('Esc 는 카드를 닫고 초점을 그 일정에 돌려준다; ⋯ 는 그 일정의 메뉴이고 메뉴를 닫아도 카드는 남는다 (C51)', pkClosed && pkBack.includes('피크 둘') && pkMenu.includes('복제') && pkMenu.includes('지우기')
+    && !(await page.$('.menu[role=menu]')) && !!(await page.$('.peek')), `${pkBack} / ${pkMenu.join()}`);
+  const pkWide = page.viewportSize();
+  await page.setViewportSize({ width: 390, height: 780 });
+  await sleep(200);
+  const pkSheet = await page.$eval('.peek', (e) => { const r = e.getBoundingClientRect(); return [Math.round(r.left), Math.round(r.right), Math.round(r.bottom), innerWidth, innerHeight]; }).catch(() => null);
+  await page.setViewportSize(pkWide);
+  await sleep(200);
+  const pkExported = await page.evaluate(async () => { const m = await import('/auth/static/site.js'); return typeof m.peek === 'function' && typeof m.closePeek === 'function'; });
+  step('좁은 화면에서 카드는 아래 가장자리의 시트다; 프레임이 peek 과 closePeek 을 내보낸다 (C52)', !!pkSheet && pkSheet[0] === 0 && pkSheet[1] === pkSheet[3] && pkSheet[2] === pkSheet[4] && pkExported, JSON.stringify(pkSheet));
+  for (const name of ['피크 둘', '피크 하나']) {
+    if (!(await page.$(`.peek h2:text-is("${name}")`))) { await page.click(`.wk-col .wk-ev:has-text("${name}")`); await page.waitForSelector(`.peek h2:text-is("${name}")`); }
+    await page.click('.peek button:text-is("지우기")');
+    await page.waitForSelector('dialog[open] h2:text-is("일정 지우기")');
+    await page.click('dialog[open] button[type=submit].danger');
+    await page.waitForFunction((n) => ![...document.querySelectorAll('.wk-col .wk-ev')].some((e) => e.textContent.includes(n)), name);
+  }
+  step('카드의 지우기는 한 번 묻고 지운다 (C51)', !mock.events().some((e) => e.summary.startsWith('피크 ')) && !(await page.$('.peek')) && !(await page.$('dialog[open]')));
   await page.click('.cal-nav h1 button');
   await page.waitForFunction(() => document.querySelectorAll('.wk-col').length === 7);
   const upWeek = page.url().includes('v=week');

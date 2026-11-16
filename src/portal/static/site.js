@@ -746,7 +746,7 @@ function keys(list) {
   if (keysInstalled) return;
   keysInstalled = true;
   document.addEventListener("keydown", (ev) => {
-    if (ev.defaultPrevented || ev.isComposing || document.querySelector("dialog[open]") || openMenu) return;
+    if (ev.defaultPrevented || ev.isComposing || document.querySelector("dialog[open]") || openMenu || openPeek) return;
     const combo = `${ev.altKey ? "Alt+" : ""}${ev.ctrlKey || ev.metaKey ? "Ctrl+" : ""}${ev.key}`;
     if (ev.key === "?" && !typing(ev.target)) {
       ev.preventDefault();
@@ -770,6 +770,16 @@ let openMenu = null;
 function closeMenu() {
   openMenu?.remove();
   openMenu = null;
+}
+function placeAt(el, at) {
+  const r = at instanceof HTMLElement ? at.getBoundingClientRect() : null;
+  const pt = at instanceof HTMLElement ? { x: 0, y: 0 } : at;
+  let x = r ? r.left : pt.x, y = r ? r.bottom + 4 : pt.y;
+  const w = el.offsetWidth, hgt = el.offsetHeight;
+  if (x + w > innerWidth - 8) x = Math.max(8, (r ? r.right : pt.x) - w);
+  if (y + hgt > innerHeight - 8) y = Math.max(8, (r ? r.top - 4 : pt.y) - hgt);
+  el.style.left = `${x}px`;
+  el.style.top = `${y}px`;
 }
 function menu(at, sections, opts = {}) {
   closeMenu();
@@ -825,14 +835,7 @@ function menu(at, sections, opts = {}) {
   });
   document.body.appendChild(el);
   openMenu = el;
-  const r = at instanceof HTMLElement ? at.getBoundingClientRect() : null;
-  const pt = at instanceof HTMLElement ? { x: 0, y: 0 } : at;
-  let x = r ? r.left : pt.x, y = r ? r.bottom + 4 : pt.y;
-  const w = el.offsetWidth, hgt = el.offsetHeight;
-  if (x + w > innerWidth - 8) x = Math.max(8, (r ? r.right : pt.x) - w);
-  if (y + hgt > innerHeight - 8) y = Math.max(8, (r ? r.top - 4 : pt.y) - hgt);
-  el.style.left = `${x}px`;
-  el.style.top = `${y}px`;
+  placeAt(el, at);
   const outside = (ev) => {
     if (!el.contains(ev.target)) {
       done();
@@ -886,6 +889,62 @@ function menuButton(build, label = t("더 보기")) {
     }
   }, "⋯");
   return b;
+}
+let openPeek = null;
+function closePeek() {
+  openPeek?.close();
+}
+function peek(at, body, opts) {
+  closePeek();
+  closeMenu();
+  const back = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  const el = h("div", { class: "peek", role: "dialog", "aria-label": opts.label, tabindex: "-1" }, body);
+  const mine = (n) => n instanceof Node && (el.contains(n) || n instanceof Element && !!n.closest(".menu"));
+  let open = true;
+  const close = (refocus = false) => {
+    if (!open) return;
+    open = false;
+    document.removeEventListener("pointerdown", away, true);
+    document.removeEventListener("wheel", away, true);
+    document.removeEventListener("touchmove", away, true);
+    document.removeEventListener("keydown", key, true);
+    window.removeEventListener("resize", again);
+    el.remove();
+    if (openPeek === handle) openPeek = null;
+    opts.onClose?.();
+    if (refocus && back?.isConnected) back.focus();
+  };
+  const away = (ev) => {
+    if (!mine(ev.target)) close();
+  };
+  const key = (ev) => {
+    if (ev.key !== "Escape" || openMenu || document.querySelector("dialog[open]")) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    close(true);
+  };
+  const again = () => {
+    if (at instanceof HTMLElement && !at.isConnected) close();
+    else placeAt(el, at);
+  };
+  const handle = { el, close: () => close() };
+  el.addEventListener("focusout", (ev) => {
+    const to = ev.relatedTarget;
+    if (to instanceof Element && !mine(to) && !to.closest("dialog")) close();
+  });
+  document.body.appendChild(el);
+  placeAt(el, at);
+  openPeek = handle;
+  setTimeout(() => {
+    if (!open) return;
+    document.addEventListener("pointerdown", away, true);
+    document.addEventListener("wheel", away, { capture: true, passive: true });
+    document.addEventListener("touchmove", away, { capture: true, passive: true });
+    window.addEventListener("resize", again);
+  });
+  document.addEventListener("keydown", key, true);
+  (el.querySelector("input:not([hidden]), select:not([hidden]), textarea, button") ?? el).focus();
+  return handle;
 }
 function go(path) {
   history.pushState(null, "", path);
@@ -1236,6 +1295,7 @@ export {
   choice,
   chrome,
   closeMenu,
+  closePeek,
   dayKey,
   dayStrip,
   dialog,
@@ -1279,6 +1339,7 @@ export {
   openWord,
   ownCard,
   pageHead,
+  peek,
   prefs,
   previewFonts,
   primaryLink,

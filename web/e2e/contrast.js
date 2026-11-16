@@ -146,6 +146,10 @@ const MEASURE = (scope) => {
   await page.waitForSelector('.wk-body');
   await page.waitForTimeout(100);
   await measure('week');
+  await page.click('.wk-col:not(:has(.wk-ev)) >> nth=0', { position: { x: 20, y: 44 * 9 + 6 } });
+  await page.waitForSelector('.peek input[name=summary]');
+  await measure('quick', '.peek');
+  await page.keyboard.press('Escape');
   await page.keyboard.press('d');
   await page.waitForFunction(() => document.querySelectorAll('.wk-col').length === 1);
   await measure('day');
@@ -158,6 +162,9 @@ const MEASURE = (scope) => {
   await page.click('.cal-nav .chip:text-is("월")');
   await page.waitForSelector('.day-list .cal-ev');
   await page.click('.day-list .cal-ev');
+  await page.waitForSelector('.peek');
+  await measure('peek', '.peek');
+  await page.click('.peek button:text-is("편집")');
   await page.waitForSelector('dialog[open]');
   await measure('event', 'dialog');
   await page.keyboard.press('Escape');

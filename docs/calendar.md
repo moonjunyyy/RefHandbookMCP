@@ -14,7 +14,9 @@ time, under the bound of one query), the week and the day (seven columns from Mo
 all-day row and 24 hours, overlapping events side by side, a line at the present time), and the list
 (the days ahead that have events, 30 at a time). The title goes up one level and a day goes down to its
 day (the picked day's title in the month, a day's head in the week); `g` goes to a date; on the hours a sideways swipe or wheel moves one range. An empty
-slot pressed is a new event at that time, and an
+slot pressed opens a small card there (the frame's `peek`): a title and Enter write an hour's event at
+that time, and 자세히 takes the title and the slot to the dialog. An event pressed shows its card — what,
+when, which calendar, its place and notes — with 편집 (the dialog), 지우기 and its menu. An
 event is moved by dragging it onto another day or hour (`PATCH /events/<id>` with the new `start` and
 `end`, the length kept) — a repeating one is not dragged, its series is changed in the dialog. Every
 object has its menu where it is (right-click, ⋯, Shift+F10): an event — open, duplicate, move or copy

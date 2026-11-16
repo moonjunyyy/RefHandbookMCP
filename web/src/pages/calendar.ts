@@ -5,8 +5,10 @@
 // scrolling the month, a swipe or a sideways wheel on the hours, ‹ › and ← →; the title goes up one level
 // and a day goes down to its day (the picked day's title in the month, a day's head in the week); g goes to a date. The head is one row: the title and its arrows, today,
 // the view, a chip per calendar (off: hidden on this browser), and the subscription address. In the month,
-// a day pressed opens below the grid: its events, and "+ 일정". On the hours, a slot pressed is a new event
-// at that time. An event is written in a dialog, changed or removed from the same one, and moved by
+// a day pressed opens below the grid: its events, and "+ 일정". On the hours, a slot pressed is a small card
+// there: a title and Enter make an hour's event at that time, and 자세히 takes it to the dialog. An event
+// pressed shows its card (what, when, whose; 편집, 지우기, its menu). An event is written, changed or
+// removed in the dialog, and moved by
 // dragging it onto another day (or, on the hours, another time); a repeating event is not dragged — its
 // series is changed in the dialog. Times are kept in UTC by the service (docs/calendar.md) and shown in
 // the browser's own.
@@ -16,7 +18,7 @@
 // show all, the phone subscription, connecting a device over CalDAV with a device password — §8.3). The day
 // panel also lists the to-dos due that day (§7.3).
 
-import { api, button, choice, dialog, empty, flash, form, frame, go, groupHead, h, keys, link, main, menu, menuButton, message, monthGrid, onMenu, pageHead, primaryLink, replace, title, when } from '/auth/static/site.js';
+import { act, api, button, choice, dialog, empty, flash, form, frame, go, groupHead, h, keys, link, main, menu, menuButton, message, monthGrid, onMenu, pageHead, peek, primaryLink, replace, title, when } from '/auth/static/site.js';
 import type { Json, MenuSection } from '/auth/static/site.js';
 import { n_, t } from '../lib/i18n';
 import { copyText } from '../lib/clipboard';
@@ -85,8 +87,8 @@ function keepHidden(s: Set<string>): void {
 // ── the event dialog ──────────────────────────────────────────────────────
 
 /** Write an event (a new one on `day`, at `minutes` of it when given — all-day when `wholeDay` — or `ev` to
- * change): true when kept. */
-async function editEvent(calendars: Json[], day: string, ev?: Json, minutes?: number, wholeDay = false): Promise<boolean> {
+ * change): true when kept. A new one starts with `seed` (the title and the calendar a quick card had). */
+async function editEvent(calendars: Json[], day: string, ev?: Json, minutes?: number, wholeDay = false, seed: { summary?: string; cal?: string } = {}): Promise<boolean> {
   const start0 = ev ? fromServer(ev.start) : (() => {
     const d = fromServer(day);
     if (minutes !== undefined) d.setHours(Math.floor(minutes / 60), minutes % 60, 0, 0);
@@ -95,12 +97,12 @@ async function editEvent(calendars: Json[], day: string, ev?: Json, minutes?: nu
   })();
   const end0 = ev ? fromServer(ev.end) : new Date(start0.getTime() + 3600_000);
   const allday = h('input', { type: 'checkbox', checked: ev ? !!ev.allday : wholeDay });
-  const summary = h('input', { type: 'text', name: 'summary', required: true, maxlength: 200, value: ev?.summary ?? '', autofocus: true });
+  const summary = h('input', { type: 'text', name: 'summary', required: true, maxlength: 200, value: ev?.summary ?? seed.summary ?? '', autofocus: true });
   const startAt = h('input', { type: 'datetime-local', value: localInput(start0), required: true });
   const endAt = h('input', { type: 'datetime-local', value: localInput(end0), required: true });
   const startDay = h('input', { type: 'date', value: dayKey(start0), required: true });
   const endDay = h('input', { type: 'date', value: ev?.allday ? dayKey(new Date(end0.getTime() - 1)) : dayKey(end0), required: true });
-  const which = h('select', { name: 'cal' }, calendars.map(c => h('option', { value: c.id, selected: c.id === (ev?.cal ?? calendars[0]?.id) }, c.name)));
+  const which = h('select', { name: 'cal' }, calendars.map(c => h('option', { value: c.id, selected: c.id === (ev?.cal ?? seed.cal ?? calendars[0]?.id) }, c.name)));
   const repeat = h('select', { name: 'rrule' }, REPEATS.map(([v, label]) =>
     h('option', { value: v, selected: v === (ev?.rrule ?? '').split(';').filter((x: string) => x.startsWith('FREQ='))[0] }, t(label))));
   const where = h('input', { type: 'text', name: 'location', maxlength: 200, value: ev?.location ?? '' });
@@ -339,6 +341,9 @@ export async function calendar(): Promise<void> {
 
   const open = async (o: Json) => { if (await editEvent(calendars, selected || today, o).catch(e => { flash('error', message(e)); return false; })) await refresh(); };
   const after = (p: Promise<unknown>) => p.then(refresh);
+  const dayLabel = (d: Date) => d.toLocaleDateString(undefined, { month: 'long', day: 'numeric', weekday: 'short' });
+  let ghost: { k: string; minutes: number } | null = null;   // the slot a quick card is open for, shown in its column
+  const ghostBlock = (minutes: number) => h('div', { class: 'wk-ghost', 'aria-hidden': 'true', style: `top: ${(minutes / 60) * HOUR}px; height: ${HOUR - 2}px; width: calc(100% - 3px)` });
 
   /** An event's actions, at the event (R10). */
   const eventMenu = (o: Json): MenuSection[] => [
@@ -357,7 +362,7 @@ export async function calendar(): Promise<void> {
     const c = byCal()[o.cal];
     const start = fromServer(o.start);
     const el = h('button', { type: 'button', class: `cal-ev${o.recurring ? ' repeats' : ''}`, style: c?.color ? `--ev: ${c.color}` : null, title: o.summary,
-                             draggable: o.recurring ? null : 'true', 'data-event': o.id, onclick: () => open(o) },
+                             draggable: o.recurring ? null : 'true', 'data-event': o.id, onclick: () => peekEvent(o, el) },
       !o.allday && h('span', { class: 'cal-time' }, hm(start)), full ? o.summary : h('span', { class: 'cal-title' }, o.summary),
       full && c && h('span', { class: 'muted small' }, ' · ', c.name));
     onMenu(el, () => eventMenu(o), { label: o.summary });
@@ -366,6 +371,66 @@ export async function calendar(): Promise<void> {
       el.addEventListener('dragend', () => { dragging = null; el.classList.remove('dragging'); });
     }
     return el;
+  }
+
+  /** A new event made where the press was: a title and Enter — an hour at that time, in the first calendar or
+   * the one picked; 자세히 takes the title and the slot to the dialog. The slot shows in its column while the
+   * card is open. */
+  function quick(k: string, minutes: number, at: { x: number; y: number }, col: HTMLElement): void {
+    const start = fromServer(k);
+    start.setHours(Math.floor(minutes / 60), minutes % 60, 0, 0);
+    const end = new Date(start.getTime() + 3600_000);
+    const summary = h('input', { type: 'text', name: 'summary', required: true, maxlength: 200, placeholder: t('제목'), 'aria-label': t('제목') });
+    const which = h('select', { name: 'cal', 'aria-label': t('캘린더'), hidden: calendars.length < 2 || null }, calendars.map(c => h('option', { value: c.id }, c.name)));
+    const body = h('form', { class: 'quick', onsubmit: (ev: Event) => {
+      ev.preventDefault();
+      const text = summary.value.trim();
+      if (!text) return;
+      card.close();
+      void act(null, async () => {
+        await cal.post('/events', { cal: which.value, summary: text, allday: false, location: '', description: '', rrule: '', start: toUtc(start), end: toUtc(end) });
+        await refresh();
+      });
+    } },
+      summary,
+      h('p', { class: 'peek-when' }, `${dayLabel(start)} ${hm(start)} – ${hm(end)}`),
+      which,
+      h('p', { class: 'actions' }, h('button', { type: 'submit' }, t('저장')),
+        button(t('자세히'), async () => {
+          const seed = { summary: summary.value.trim(), cal: which.value };
+          card.close();
+          if (await editEvent(calendars, k, undefined, minutes, false, seed)) await refresh();
+        }, 'secondary')));
+    ghost = { k, minutes };
+    col.appendChild(ghostBlock(minutes));
+    const card = peek(at, body, { label: t('새 일정'), onClose: () => { ghost = null; week.querySelector('.wk-ghost')?.remove(); } });
+  }
+
+  /** An event at a glance, where it is — its line, this card, its dialog: what, when, whose; then its acts. */
+  function peekEvent(o: Json, at: HTMLElement): void {
+    const c = byCal()[o.cal];
+    const start = fromServer(o.start), end = fromServer(o.end);
+    const last = o.allday ? new Date(end.getTime() - 1) : end;   // an all-day end is exclusive
+    const oneDay = dayKey(start) === dayKey(last);
+    const span = o.allday ? (oneDay ? dayLabel(start) : `${dayLabel(start)} – ${dayLabel(last)}`)
+      : oneDay ? `${dayLabel(start)} ${hm(start)} – ${hm(end)}` : `${dayLabel(start)} ${hm(start)} – ${dayLabel(end)} ${hm(end)}`;
+    const freq = (o.rrule ?? '').split(';').find((x: string) => x.startsWith('FREQ='));
+    const repeats = o.recurring || freq ? REPEATS.find(([v]) => v && v === freq)?.[1] ?? n_('반복') : null;
+    const closing = (sections: MenuSection[]): MenuSection[] => sections.map(s => ({ ...s, items: s.items.map(it => ({ ...it, run: () => { card.close(); return it.run(); } })) }));
+    const card = peek(at, [
+      h('h2', null, o.summary),
+      h('p', { class: 'peek-when' }, span, o.allday && h('span', { class: 'muted' }, ' · ', t('종일')), repeats && h('span', { class: 'muted' }, ' · ', t(repeats))),
+      c && h('p', null, h('span', { class: 'peek-cal', style: c.color ? `--ev: ${c.color}` : null }, c.name)),
+      o.location && h('p', { class: 'peek-where' }, o.location),
+      o.description && h('p', { class: 'peek-notes' }, o.description),
+      h('p', { class: 'actions' },
+        button(t('편집'), () => { card.close(); return open(o); }),
+        button(t('지우기'), async () => {
+          card.close();
+          if (await dialog(t('일정 지우기'), h('p', null, o.summary), { ok: t('지우기'), danger: true })) { await cal.del(`/events/${o.id}`); await refresh(); }
+        }, 'danger'),
+        menuButton(() => closing(eventMenu(o)))),
+    ], { label: o.summary });
   }
 
   /** A day's actions: a new event on it, the week it is in. */
@@ -597,10 +662,11 @@ export async function calendar(): Promise<void> {
         col.appendChild(el);
       }
       if (k === today) { const now = new Date(); col.appendChild(h('div', { class: 'wk-now', style: `top: ${(minutesOf(now) / 60) * HOUR}px` })); }
+      if (ghost?.k === k) col.appendChild(ghostBlock(ghost.minutes));
       const minutesAt = (ev: MouseEvent) => { const r = col.getBoundingClientRect(); const m = ((ev.clientY - r.top) / HOUR) * 60; return Math.max(0, Math.min(24 * 60 - SNAP, Math.floor(m / SNAP) * SNAP)); };
-      col.addEventListener('click', async ev => {
+      col.addEventListener('click', ev => {
         if ((ev.target as HTMLElement).closest('.cal-ev')) return;
-        if (await editEvent(calendars, k, undefined, minutesAt(ev)).catch(e => { flash('error', message(e)); return false; })) await refresh();
+        quick(k, minutesAt(ev), { x: ev.clientX, y: ev.clientY }, col);
       });
       col.addEventListener('contextmenu', ev => {
         if ((ev.target as HTMLElement).closest('.cal-ev')) return;

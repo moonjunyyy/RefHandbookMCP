@@ -343,6 +343,19 @@ details.help > p { position: absolute; z-index: 20; margin: var(--s1) 0 0; paddi
 .menu .menu-item strong { font-weight: 600; white-space: nowrap; }
 .menu .menu-item .detail { color: var(--muted); font-size: .85em; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .menu .menu-item kbd { margin-left: auto; font: .75em var(--mono); color: var(--muted); }
+/* a peek: a thing's card at its place, between its line in a list and its dialog — a sheet on a narrow screen */
+.peek { position: fixed; z-index: 60; width: min(340px, 92vw); max-height: min(70vh, 480px); overflow: auto; padding: var(--s3); background: var(--card); color: var(--text);
+        border: 1px solid var(--line); border-radius: var(--panel-radius); box-shadow: var(--shadow-pop); }
+.peek h2 { margin: 0; font-size: 1rem; overflow-wrap: anywhere; }
+.peek p { margin: var(--s1) 0 0; overflow-wrap: anywhere; }
+.peek form { margin: 0; }
+.peek form input[type=text], .peek form select { width: 100%; margin: 0; }
+.peek form select { margin-top: var(--s2); }
+.peek .peek-cal { border-left: 3px solid var(--ev, var(--accent)); padding-left: var(--s1); }
+.peek .peek-notes { max-height: 9em; overflow: auto; white-space: pre-wrap; color: var(--muted); }
+.peek .actions { align-items: center; }
+.peek .actions .more { margin-left: auto; }
+@media (max-width: 640px) { .peek { left: 0 !important; right: 0; top: auto !important; bottom: 0; width: auto; max-height: 70vh; } }
 button.more { background: none; border: 0; color: var(--muted); padding: 2px var(--s2); font: 600 1.05rem/1 var(--sans); border-radius: var(--control-radius); }
 button.more:hover { background: var(--soft); color: var(--text); }
 /* a dialog: a question with its answer, or a form; Enter and Esc close it */
@@ -522,6 +535,7 @@ ul.plain li:first-child { border-top: 0; padding-top: 0; }
 .wk-col .wk-ev { position: absolute; overflow: hidden; z-index: 1; width: auto; align-items: flex-start; flex-direction: column; gap: 0; cursor: grab; }
 .wk-col .wk-ev.repeats { cursor: pointer; }
 .wk-col .wk-ev .cal-title { white-space: normal; }
+.wk-col .wk-ghost { position: absolute; left: 0; z-index: 1; box-sizing: border-box; border: 1px dashed var(--accent); border-radius: 3px; background: var(--soft); pointer-events: none; }
 .wk-now { position: absolute; left: 0; right: 0; border-top: 2px solid var(--bad); z-index: 2; pointer-events: none; }
 @media (max-width: 640px) {
   .wk-row, .wk-body { grid-template-columns: 40px repeat(7, minmax(0, 1fr)); }
