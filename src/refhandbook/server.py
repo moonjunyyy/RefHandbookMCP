@@ -91,6 +91,7 @@ CHANGES: dict[str, set[str]] = {
     "files": {"write", "remove"}, "job": {"cancel"}, "agent_run": {"request", "cancel"},
     "sandbox_script": {"add", "update", "retire", "test"}, "sandbox_files": {"write", "remove"},
     "sandbox_job": {"cancel"}, "sandbox_policy": set(),
+    "memo": {"write", "drop"},
 }
 
 
@@ -347,6 +348,11 @@ for _fn in research_api.WRITE_TOOLS:
     tool(LEDGER_WRITE)(_fn)
 for _fn in research_api.DELETE_TOOLS:
     tool(DELETE)(_fn)
+# the model's quick memo (memo_api): notes of its own, kept the way a cache is
+from . import memo_api  # noqa: E402
+
+for _fn in memo_api.WRITE_TOOLS:
+    tool(LEDGER_WRITE)(_fn)
 # entry nodes and their refs (docs/entry-graph.md): reading any node, and the write path
 for _fn in entry_api.READ_TOOLS:
     tool(READ)(_fn)

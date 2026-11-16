@@ -110,6 +110,7 @@ search                                (FTS5: title, triggers, condition, body)
 | `relate`, `unrelate` | Typed edges between cards |
 | `define_relation_type`, `relation_types` | The relation vocabulary |
 | `audit` | CAP 676 assessment checks over the whole handbook |
+| `memo` | The model's quick notes, kept the way a cache is: a key, overwritten without asking, expiring, and stale once a node it was read from has changed. Never a basis: what the user said is a ledger row, a procedure a card |
 | `research_*` | The research ledger: sessions, rows, plan objects, configurations and verdicts, documents (16 tools; card `rs-ref-ledger`) |
 | `cap` | Capability records of every kind (script, policy, layer, alias, rule, card): versioned, owned, reviewed on a TTL, deprecated and retired; a widening grant waits for the user (docs/kernel.md "Capabilities") |
 | `run`, `job`, `files` | Run a script in the user's sandbox as a background job, read jobs, and keep files in the workspace. No network of its own: a policy's egress profiles (pypi, npm, crates, github, …) reach out through the egress supervisor, HTTPS only, to those hosts only; the server's layers bring Python, Node and Rust (`refhandbook layers build`) |
