@@ -90,7 +90,8 @@ export interface Day {
 /** A run of days (a week ahead): each its weekday, its date and its count as dots in the colours of what falls on it. */
 export declare function dayStrip(days: Day[], today?: Date): HTMLElement;
 /** A month: its days on a grid of weeks (Monday first, as the calendar draws them), each at the level of its
- * count, today ringed, the picked one marked; ‹ › move the month, a day is picked in place. */
+ * count, today ringed, the picked one marked; ‹ › move the month, a day is picked in place, and the month's name is
+ * a button when `open` is given (a year of months: the name opens the month). */
 export interface Month {
     year: number;
     month: number;
@@ -99,6 +100,7 @@ export interface Month {
     picked?: string;
     pick?: (key: string) => void;
     move?: (by: number) => void;
+    open?: () => void;
 }
 export declare function monthGrid(m: Month): HTMLElement;
 /** Counts by label, as bars against the largest (a vault's tags). */

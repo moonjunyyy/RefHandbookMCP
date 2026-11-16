@@ -7,9 +7,14 @@ The service is `<name>-calendar` (its own user, its own state; `facts.ROLES` giv
 behind the site sign-in, and the pages app draws it (`/calendar`, `web/src/pages/calendar.ts`) and
 its widgets (`web/widgets/calendar.ts`: today — with the to-dos due by today under the events —, the
 next seven days, and the to-do list itself: a line written with Enter, checked off in place, its due
-day and the rest on its menu). The page has a month and a
-week (`?v=week&d=…`; seven columns from Monday over an all-day row and 24 hours, overlapping events
-side by side, a line at the present time); an empty slot pressed is a new event at that time, and an
+day and the rest on its menu). The page shows time at its levels (`?v=year|week|day|list&d=…`; the
+month has no `v`): the year (twelve months, each day at the level of its events), the month (a column
+of weeks that scrolls on — the title and `?m=` follow the month in view; the weeks are read 52 at a
+time, under the bound of one query), the week and the day (seven columns from Monday, or one, over an
+all-day row and 24 hours, overlapping events side by side, a line at the present time), and the list
+(the days ahead that have events, 30 at a time). The title goes up one level and a day goes down to its
+day (the picked day's title in the month, a day's head in the week); `g` goes to a date; on the hours a sideways swipe or wheel moves one range. An empty
+slot pressed is a new event at that time, and an
 event is moved by dragging it onto another day or hour (`PATCH /events/<id>` with the new `start` and
 `end`, the length kept) — a repeating one is not dragged, its series is changed in the dialog. Every
 object has its menu where it is (right-click, ⋯, Shift+F10): an event — open, duplicate, move or copy

@@ -170,9 +170,10 @@ export function dayStrip(days: Day[], today: Date = new Date()): HTMLElement {
 }
 
 /** A month: its days on a grid of weeks (Monday first, as the calendar draws them), each at the level of its
- * count, today ringed, the picked one marked; ‹ › move the month, a day is picked in place. */
+ * count, today ringed, the picked one marked; ‹ › move the month, a day is picked in place, and the month's name is
+ * a button when `open` is given (a year of months: the name opens the month). */
 export interface Month { year: number; month: number; counts: Map<string, number>; today?: Date; picked?: string;
-                         pick?: (key: string) => void; move?: (by: number) => void }
+                         pick?: (key: string) => void; move?: (by: number) => void; open?: () => void }
 export function monthGrid(m: Month): HTMLElement {
   const first = new Date(m.year, m.month, 1);
   const start = new Date(first); start.setDate(1 - ((first.getDay() + 6) % 7));
@@ -184,7 +185,8 @@ export function monthGrid(m: Month): HTMLElement {
   const nav = (by: number, text: string, label: string) => m.move && h('button', { type: 'button', class: 'month-nav', 'aria-label': label, onclick: () => m.move?.(by) }, text);
   return h('div', { class: 'month' },
     h('div', { class: 'month-head' }, nav(-1, '‹', t('이전 달')),
-      h('span', { class: 'month-title' }, first.toLocaleDateString(locale(), { year: 'numeric', month: 'long' })), nav(1, '›', t('다음 달'))),
+      h(m.open ? 'button' : 'span', m.open ? { type: 'button', class: 'month-title', onclick: () => m.open?.() } : { class: 'month-title' },
+        first.toLocaleDateString(locale(), { year: 'numeric', month: 'long' })), nav(1, '›', t('다음 달'))),
     h('div', { class: 'month-grid', role: 'grid' },
       names.map(n => h('span', { class: 'month-wd', 'aria-hidden': 'true' }, n)),
       days.slice(0, weeks * 7).map(d => {

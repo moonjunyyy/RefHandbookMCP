@@ -146,6 +146,15 @@ const MEASURE = (scope) => {
   await page.waitForSelector('.wk-body');
   await page.waitForTimeout(100);
   await measure('week');
+  await page.keyboard.press('d');
+  await page.waitForFunction(() => document.querySelectorAll('.wk-col').length === 1);
+  await measure('day');
+  await page.keyboard.press('a');
+  await page.waitForSelector('.cal-list .cal-list-day');
+  await measure('list');
+  await page.keyboard.press('y');
+  await page.waitForSelector('.cal-year .month');
+  await measure('year');
   await page.click('.cal-nav .chip:text-is("월")');
   await page.waitForSelector('.day-list .cal-ev');
   await page.click('.day-list .cal-ev');

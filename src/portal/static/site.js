@@ -1065,7 +1065,11 @@ function monthGrid(m) {
       "div",
       { class: "month-head" },
       nav(-1, "‹", t("이전 달")),
-      h("span", { class: "month-title" }, first.toLocaleDateString(locale(), { year: "numeric", month: "long" })),
+      h(
+        m.open ? "button" : "span",
+        m.open ? { type: "button", class: "month-title", onclick: () => m.open?.() } : { class: "month-title" },
+        first.toLocaleDateString(locale(), { year: "numeric", month: "long" })
+      ),
       nav(1, "›", t("다음 달"))
     ),
     h(

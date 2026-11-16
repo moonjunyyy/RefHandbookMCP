@@ -475,8 +475,13 @@ ul.plain li:first-child { border-top: 0; padding-top: 0; }
 .cal-sources .chip { --ev: var(--accent); }
 .dot { display: inline-block; width: .65em; height: .65em; border-radius: 50%; background: var(--ev, var(--accent)); margin-right: 2px; }
 .chip[aria-pressed="false"] .dot { opacity: .35; }
-.cal-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line);
+.cal-grid { display: flex; flex-direction: column; background: var(--line); border: 1px solid var(--line);
             border-radius: var(--grid-radius); overflow: hidden; }
+/* the month: weeks in a column that scrolls on, under the weekday names (calendar.ts drawGrid) */
+.cal-weeks { position: relative; display: flex; flex-direction: column; max-height: min(70vh, 720px); overflow-y: auto; overscroll-behavior: contain; }
+.cal-wds, .cal-week { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); flex: none; }
+.cal-weeks, .cal-wds, .cal-week { gap: 1px; }  /* the lines between the days are the grid's ground showing through */
+.cal-wds { position: sticky; top: 0; z-index: 1; background: var(--line); border-bottom: 1px solid var(--line); }
 .cal-wd { overflow: hidden; text-overflow: ellipsis; background: var(--card);  /* the card, not soft: muted on soft is 4.29:1 */ padding: 6px; font-size: .78rem; color: var(--muted); text-align: center; }
 .cal-day { background: var(--card); min-height: 92px; padding: var(--s1) var(--s1) var(--s1); cursor: pointer; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .cal-day:hover { background: var(--soft); }
@@ -485,6 +490,7 @@ ul.plain li:first-child { border-top: 0; padding-top: 0; }
 .cal-day.selected { outline: 2px solid var(--accent); outline-offset: -2px; }
 .cal-day:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .cal-num { align-self: flex-end; font-size: .8rem; width: 1.8em; height: 1.8em; line-height: 1.8em; text-align: center; border-radius: 50%; }
+.cal-num.first { width: auto; padding: 0 var(--s1); border-radius: var(--control-radius); }  /* a month's first day says its month */
 .cal-ev { --ev: var(--accent); display: flex; gap: var(--s1); align-items: baseline; width: 100%; text-align: left; padding: 1px var(--s1) 1px var(--s1); margin: 0;
           border: 0; border-left: 3px solid var(--ev); border-radius: 3px; background: var(--card);
           color: var(--text); font: inherit; font-size: .78rem; line-height: 1.35; cursor: pointer; min-width: 0; }
@@ -499,15 +505,17 @@ ul.plain li:first-child { border-top: 0; padding-top: 0; }
 .cal-grid:empty, .cal-day-panel:empty, .wk:empty { display: none; }
 /* the week: a head row, an all-day row, then the hours in a scroll — the first column the hours, seven days beside */
 .wk { border: 1px solid var(--line); border-radius: var(--grid-radius); overflow: hidden; background: var(--card); }
-.wk-row { display: grid; grid-template-columns: 56px repeat(7, minmax(0, 1fr)); }
+.wk-row { display: grid; grid-template-columns: 56px repeat(var(--wk-days, 7), minmax(0, 1fr)); }
 .wk-head { background: var(--card); border-bottom: 1px solid var(--line); }
 .wk-corner { padding: var(--s1) var(--s1); text-align: right; }
 .wk-day { padding: var(--s1) var(--s1); text-align: center; font-size: .8rem; color: var(--muted); display: flex; align-items: center; justify-content: center; gap: var(--s1); }
 .wk-day .wk-num { font-size: .95rem; color: var(--text); width: 1.8em; height: 1.8em; line-height: 1.8em; text-align: center; border-radius: 50%; }
 .wk-day.today .wk-num { background: var(--accent-fill, var(--accent)); color: var(--accent-fill-text, var(--accent-text)); }
+.wk-day button.wk-num { border: 0; background: none; box-shadow: none; padding: 0; font: inherit; font-size: .95rem; cursor: pointer; }
+.wk-day button.wk-num:hover { box-shadow: inset 0 0 0 1px var(--accent); }
 .wk-allday { border-bottom: 1px solid var(--line); min-height: 28px; }
 .wk-allcol { padding: 3px 2px; display: flex; flex-direction: column; gap: 2px; min-width: 0; border-left: 1px solid var(--line); }
-.wk-body { display: grid; grid-template-columns: 56px repeat(7, minmax(0, 1fr)); max-height: min(70vh, 720px); overflow-y: auto; }
+.wk-body { display: grid; grid-template-columns: 56px repeat(var(--wk-days, 7), minmax(0, 1fr)); max-height: min(70vh, 720px); overflow-y: auto; }
 .wk-hours .wk-hour { font-size: .72rem; color: var(--muted); text-align: right; padding-right: var(--s1); transform: translateY(-.6em); font-variant-numeric: tabular-nums; }
 .wk-col { position: relative; border-left: 1px solid var(--line); cursor: pointer; }
 .wk-col .wk-line { border-top: 1px solid var(--line); box-sizing: border-box; }
@@ -531,6 +539,11 @@ ul.plain li:first-child { border-top: 0; padding-top: 0; }
 .cal-day-panel .day-tasks .tasks-widget form.tasks-add input { max-width: 420px; }
 .cal-sources-row { display: flex; align-items: center; gap: var(--s1); }
 .cal-day-panel .section-head .actions { display: inline-flex; align-items: center; gap: var(--s1); }
+.cal-nav h1 button.link, .cal-day-panel h2 button.link { font: inherit; padding: 0; color: inherit; }
+.cal-list { display: grid; gap: var(--s4); }
+.cal-list:empty, .cal-year:empty { display: none; }
+.cal-list-day .day-list { margin-top: var(--s1); }
+.cal-year { display: grid; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); gap: var(--s5) var(--s4); }
 @media (max-width: 640px) {
   .cal-day { min-height: 64px; }
   .cal-ev .cal-time { display: none; }

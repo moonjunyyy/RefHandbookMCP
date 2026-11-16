@@ -1,18 +1,22 @@
-// The calendar (/calendar): the person's own calendar and one for each of their projects, on one month
-// grid or one week (docs/apps-vault-calendar.md §3.3). The head is one row: the month (or week) and its
-// arrows, today, the view (month · week), a chip per calendar (off: hidden on this browser), and the
-// subscription address. In the month, a day pressed opens below the grid: its events, and "+ 일정". In
-// the week, the hours are a grid: a slot pressed is a new event at that time. An event is written in a
-// dialog, changed or removed from the same one, and moved by dragging it onto another day (or, in the
-// week, another time); a repeating event is not dragged — its series is changed in the dialog. Times are
-// kept in UTC by the service (docs/calendar.md) and shown in the browser's own.
+// The calendar (/calendar): the person's own calendar and one for each of their projects, on one axis of
+// time with its levels (docs/calendar.md): the year (twelve months, each day at the level of its events),
+// the month (a column of weeks that scrolls on: the title and the address follow the month in view), the
+// week and the day (hours on a grid), and the list (the days ahead that have events). Moving along time is
+// scrolling the month, a swipe or a sideways wheel on the hours, ‹ › and ← →; the title goes up one level
+// and a day goes down to its day (the picked day's title in the month, a day's head in the week); g goes to a date. The head is one row: the title and its arrows, today,
+// the view, a chip per calendar (off: hidden on this browser), and the subscription address. In the month,
+// a day pressed opens below the grid: its events, and "+ 일정". On the hours, a slot pressed is a new event
+// at that time. An event is written in a dialog, changed or removed from the same one, and moved by
+// dragging it onto another day (or, on the hours, another time); a repeating event is not dragged — its
+// series is changed in the dialog. Times are kept in UTC by the service (docs/calendar.md) and shown in
+// the browser's own.
 // Every object has its menu where it is (docs/apps-vault-calendar.md §7.4, R10): an event (open, copy,
 // move or copy to another calendar, delete), a day (new event, the week), a calendar's chip (rename and
 // recolour, hide, only this one, its own subscription address, delete), and the chips' ⋯ (new calendar,
 // show all, the phone subscription, connecting a device over CalDAV with a device password — §8.3). The day
 // panel also lists the to-dos due that day (§7.3).
 
-import { api, button, choice, dialog, empty, flash, form, frame, go, h, keys, link, main, menu, menuButton, message, onMenu, pageHead, primaryLink, replace, title, when } from '/auth/static/site.js';
+import { api, button, choice, dialog, empty, flash, form, frame, go, groupHead, h, keys, link, main, menu, menuButton, message, monthGrid, onMenu, pageHead, primaryLink, replace, title, when } from '/auth/static/site.js';
 import type { Json, MenuSection } from '/auth/static/site.js';
 import { n_, t } from '../lib/i18n';
 import { copyText } from '../lib/clipboard';
@@ -25,6 +29,14 @@ const REPEATS: [string, string][] = [['', n_('반복 없음')], ['FREQ=DAILY', n
 const HOUR = 44;      // px per hour in the week grid
 const SNAP = 30;      // minutes a dropped or pressed time snaps to
 const DAY_MS = 86400_000;
+const WEEKS_BEFORE = 16;   // the month's scroller holds this many weeks before the shown month's first week…
+const WEEKS_AFTER = 36;    // …and this many from it on: 52 weeks, one events query (the service answers up to 400 days)
+const MONTH_ROWS = 6;      // the weeks a month can take
+const EDGE_ROWS = 4;       // this near an end of the weeks it holds, the scroller is drawn again around the month in view
+const LIST_DAYS = 30;      // the list reads this many days at a time…
+const LIST_MAX = 360;      // …up to this many (one events query)
+const SWIPE = 60;          // px a sideways swipe travels before it moves the range
+const WHEEL_PAUSE = 600;   // ms after a sideways wheel moved the range before another may: one range a gesture
 
 // ── time, in the browser's zone ───────────────────────────────────────────
 
@@ -219,7 +231,9 @@ async function duplicate(o: Json, into?: string): Promise<void> {
 
 // ── the page ──────────────────────────────────────────────────────────────
 
-type View = 'month' | 'week';
+type View = 'year' | 'month' | 'week' | 'day' | 'list';
+const VIEWS: View[] = ['year', 'month', 'week', 'day', 'list'];  // the levels of time, widest first, and the list
+const UP: Partial<Record<View, View>> = { day: 'week', week: 'month', month: 'year', list: 'month' };  // the title goes up one level
 
 export async function calendar(): Promise<void> {
   title(t('캘린더'));
@@ -230,10 +244,13 @@ export async function calendar(): Promise<void> {
   }
   const params = new URLSearchParams(location.search);
   const today = dayKey(new Date());
-  let view: View = params.get('v') === 'week' ? 'week' : 'month';
+  let view: View = (VIEWS as string[]).includes(params.get('v') ?? '') ? params.get('v') as View : 'month';
   let selected = params.get('d') || '';
   let shown = (params.get('m') || (selected || today).slice(0, 7)).split('-').map(Number);  // [year, month]
   let anchor = fromServer(selected || today);  // the week shown holds this day
+  let first = new Date();                // Monday of the first week the month's scroller holds (windowFor, below)
+  let pendingTop: string | null = null;  // the week (its Monday) to bring under the weekday names at the next draw
+  let listDays = LIST_DAYS;
   const off = hidden();
   let calendars: Json[] = [];
   let projects: string[] = [];
@@ -241,6 +258,25 @@ export async function calendar(): Promise<void> {
   const head = h('div', { class: 'cal-head' });
   const grid = h('div', { class: 'cal-grid', role: 'grid' });
   const week = h('div', { class: 'wk' });
+  const wds = h('div', { class: 'cal-wds', role: 'row' });
+  const weeksBox = h('div', { class: 'cal-weeks', role: 'rowgroup' });
+  const list = h('div', { class: 'cal-list' });
+  const year = h('div', { class: 'cal-year' });
+  const titleBox = h('h1');
+  // on the hours, a sideways swipe or wheel moves the range: once a gesture
+  let touchX = 0, touchY = 0, wheeled = 0;
+  week.addEventListener('touchstart', ev => { touchX = ev.touches[0].clientX; touchY = ev.touches[0].clientY; }, { passive: true });
+  week.addEventListener('touchend', ev => {
+    const dx = ev.changedTouches[0].clientX - touchX, dy = ev.changedTouches[0].clientY - touchY;
+    if (Math.abs(dx) > SWIPE && Math.abs(dx) > 2 * Math.abs(dy)) void move(dx < 0 ? 1 : -1);
+  }, { passive: true });
+  week.addEventListener('wheel', ev => {
+    if (Math.abs(ev.deltaX) <= Math.abs(ev.deltaY) || Math.abs(ev.deltaX) < SWIPE / 2) return;
+    ev.preventDefault();
+    if (Date.now() - wheeled < WHEEL_PAUSE) return;
+    wheeled = Date.now();
+    void move(ev.deltaX > 0 ? 1 : -1);
+  }, { passive: false });
   const status = h('div', { role: 'status', class: 'muted small' });
   let rangeVersion = 0, displayedRange = '';
   const panel = h('div', { class: 'cal-day-panel' });
@@ -248,7 +284,7 @@ export async function calendar(): Promise<void> {
 
   function remember(): void {
     const q = new URLSearchParams();
-    if (view === 'week') { q.set('v', 'week'); q.set('d', dayKey(anchor)); }
+    if (view !== 'month') { q.set('v', view); q.set('d', dayKey(anchor)); }
     else {
       const m = `${shown[0]}-${pad(shown[1])}`;
       if (m !== today.slice(0, 7)) q.set('m', m);
@@ -260,13 +296,21 @@ export async function calendar(): Promise<void> {
   /** Monday of the week that holds `d`. */
   const monday = (d: Date) => { const x = new Date(d.getFullYear(), d.getMonth(), d.getDate()); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return x; };
 
-  /** The grid's span: whole weeks (Monday first) around the month, or the one week. */
+  const dayStart = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const monthKey = () => `${shown[0]}-${pad(shown[1])}`;
+  /** Monday of the week a month begins in: the month's first row. */
+  const monthRow = (y: number, m: number) => monday(new Date(y, m - 1, 1));
+  /** The first week the scroller holds when (y, m) is the month shown. */
+  const windowFor = (y: number, m: number) => addDays(monthRow(y, m), -WEEKS_BEFORE * 7);
+  first = windowFor(shown[0], shown[1]);
+
+  /** What is read: the weeks the month's scroller holds, the week, the day, the list's days, the year. */
   function span(): [Date, Date] {
     if (view === 'week') { const a = monday(anchor); return [a, addDays(a, 7)]; }
-    const first = new Date(shown[0], shown[1] - 1, 1);
-    const start = new Date(first); start.setDate(1 - ((first.getDay() + 6) % 7));
-    const end = new Date(start); end.setDate(start.getDate() + 42);
-    return [start, end];
+    if (view === 'day') { const a = dayStart(anchor); return [a, addDays(a, 1)]; }
+    if (view === 'list') { const a = dayStart(anchor); return [a, addDays(a, listDays)]; }
+    if (view === 'year') return [new Date(anchor.getFullYear(), 0, 1), new Date(anchor.getFullYear() + 1, 0, 1)];
+    return [first, addDays(first, (WEEKS_BEFORE + WEEKS_AFTER) * 7)];
   }
 
   function perDay(): Record<string, Json[]> {
@@ -328,14 +372,13 @@ export async function calendar(): Promise<void> {
   const dayMenu = (k: string, minutes?: number): MenuSection[] => [{ title: fromServer(k).toLocaleDateString(undefined, { month: 'long', day: 'numeric', weekday: 'short' }), items: [
     { label: t('새 일정'), run: async () => { if (await editEvent(calendars, k, undefined, minutes).catch(e => { flash('error', message(e)); return false; })) await refresh(); } },
     { label: t('종일 일정'), run: async () => { if (await editEvent(calendars, k, undefined, undefined, true).catch(e => { flash('error', message(e)); return false; })) await refresh(); } },
-    view === 'month' ? { label: t('이 주 보기'), run: () => { view = 'week'; anchor = fromServer(k); selected = k; remember(); drawHead(); void refresh(); } }
-      : { label: t('이 달 보기'), run: () => { view = 'month'; selected = k; shown = k.split('-').slice(0, 2).map(Number); remember(); drawHead(); void refresh(); } } ] }];
+    view === 'month' ? { label: t('이 주 보기'), run: () => show('week', k) } : { label: t('이 달 보기'), run: () => show('month', k) } ] }];
 
   /** A calendar's actions, at its chip: what it shows, its settings, its own address, and its end. */
   const calMenu = (c: Json): MenuSection[] => [
     { title: c.name, items: [
-      { label: off.has(c.id) ? t('보이기') : t('숨기기'), detail: t('이 브라우저에서'), run: () => { if (off.has(c.id)) off.delete(c.id); else off.add(c.id); keepHidden(off); drawHead(); drawGrid(); drawPanel(); drawWeek(); } },
-      { label: t('이것만 보기'), run: () => { for (const x of calendars) if (x.id !== c.id) off.add(x.id); off.delete(c.id); keepHidden(off); drawHead(); drawGrid(); drawPanel(); drawWeek(); } } ] },
+      { label: off.has(c.id) ? t('보이기') : t('숨기기'), detail: t('이 브라우저에서'), run: () => { if (off.has(c.id)) off.delete(c.id); else off.add(c.id); keepHidden(off); drawHead(); draw(); } },
+      { label: t('이것만 보기'), run: () => { for (const x of calendars) if (x.id !== c.id) off.add(x.id); off.delete(c.id); keepHidden(off); drawHead(); draw(); } } ] },
     { items: [
       { label: t('이름·색 바꾸기…'), detail: c.kind === 'group' ? t('프로젝트 {g} 의 — 구성원이 함께 봅니다', { g: c.owner }) : undefined,
         run: async () => { if (await editCalendar(projects, c)) { calendars = (await cal.get('/calendars')).calendars; drawHead(); await refresh(); } } },
@@ -348,52 +391,149 @@ export async function calendar(): Promise<void> {
 
   const calsMenu = (): MenuSection[] => [{ items: [
     { label: t('새 캘린더…'), run: async () => { if (await editCalendar(projects)) { calendars = (await cal.get('/calendars')).calendars; drawHead(); await refresh(); } } },
-    { label: t('모두 보이기'), disabled: off.size === 0, run: () => { off.clear(); keepHidden(off); drawHead(); drawGrid(); drawPanel(); drawWeek(); } },
+    { label: t('모두 보이기'), disabled: off.size === 0, run: () => { off.clear(); keepHidden(off); drawHead(); draw(); } },
     { label: t('폰에 구독'), detail: t('보이는 것 모두'), run: () => subscription() },
     { label: t('기기 연결…'), detail: 'CalDAV', run: () => devices() } ] }];
 
+  function titleOf(): string {
+    if (view === 'year') return String(anchor.getFullYear());
+    if (view === 'week') { const a = monday(anchor); return `${a.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} – ${addDays(a, 6).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`; }
+    if (view === 'day') return anchor.toLocaleDateString(undefined, { month: 'long', day: 'numeric', weekday: 'short' });
+    if (view === 'list') return t('{d} 부터', { d: anchor.toLocaleDateString(undefined, { month: 'long', day: 'numeric' }) });
+    return new Date(shown[0], shown[1] - 1, 1).toLocaleDateString(undefined, { year: 'numeric', month: 'long' });
+  }
+
+  /** The title: where one is in time, and the way up one level (the year is the top). */
+  function drawTitle(): void {
+    const up = UP[view];
+    if (!up) { replace(titleBox, titleOf()); return; }
+    const b = button(titleOf(), () => show(up), 'link');
+    b.title = t('한 단계 위로');
+    replace(titleBox, b);
+  }
+
+  /** Another level of time, or another day at this one: a day named is the day the view is about. */
+  function show(v: View, day?: string): void {
+    if (day) { anchor = fromServer(day); selected = day; }
+    else if (view === 'month') anchor = fromServer(selected.slice(0, 7) === monthKey() ? selected : monthKey() === today.slice(0, 7) ? today : `${monthKey()}-01`);
+    if (v === 'month') toMonth(anchor.getFullYear(), anchor.getMonth() + 1, false);
+    view = v;
+    remember(); drawHead(); draw();
+    void refresh();
+  }
+
+  /** The month (y, m) under the weekday names: scrolled to when the scroller holds it well inside, drawn around it otherwise. */
+  function toMonth(y: number, m: number, now = true): void {
+    shown = [y, m];
+    const key = dayKey(monthRow(y, m));
+    const all = rows();
+    const i = all.findIndex(r => r.dataset.week === key);
+    if (now && i >= EDGE_ROWS && i < all.length - EDGE_ROWS - MONTH_ROWS) {
+      remember(); drawTitle(); dim();
+      weeksBox.scrollTop = all[i].offsetTop - wds.offsetHeight;
+      return;
+    }
+    first = windowFor(y, m);
+    pendingTop = key;
+    if (now) { remember(); drawTitle(); drawGrid(); void refresh(); }
+  }
+
   function drawHead(): void {
-    const name = view === 'week'
-      ? `${monday(anchor).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} – ${addDays(monday(anchor), 6).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`
-      : new Date(shown[0], shown[1] - 1, 1).toLocaleDateString(undefined, { year: 'numeric', month: 'long' });
+    drawTitle();
     replace(head,
       h('div', { class: 'cal-nav' },
-        button('‹', () => move(-1), 'link'), h('h1', null, name), button('›', () => move(1), 'link'),
-        link(view === 'week' ? `/calendar?v=week&d=${today}` : `/calendar?d=${today}`, t('오늘')),
-        choice([['month', t('월')], ['week', t('주')]], view, v => { view = v as View; if (view === 'week') anchor = fromServer(selected || today); remember(); drawHead(); void refresh(); }, { 'aria-label': t('보기') })),
+        button('‹', () => move(-1), 'link'), titleBox, button('›', () => move(1), 'link'),
+        link(view !== 'month' ? `/calendar?v=${view}&d=${today}` : `/calendar?d=${today}`, t('오늘')),
+        choice([['year', t('연')], ['month', t('월')], ['week', t('주')], ['day', t('일')], ['list', t('목록')]], view, v => show(v as View), { 'aria-label': t('보기') })),
       h('div', { class: 'cal-sources-row' },
         h('div', { class: 'chips cal-sources', role: 'group', 'aria-label': t('캘린더') }, calendars.map(c =>
           onMenu(h('button', { type: 'button', class: 'chip', 'aria-pressed': off.has(c.id) ? 'false' : 'true', style: c.color ? `--ev: ${c.color}` : null,
                         'data-cal': c.id, title: c.kind === 'group' ? t('프로젝트 {g}', { g: c.owner }) : undefined,
-                        onclick: () => { if (off.has(c.id)) off.delete(c.id); else off.add(c.id); keepHidden(off); drawGrid(); drawPanel(); drawWeek(); } },
+                        onclick: () => { if (off.has(c.id)) off.delete(c.id); else off.add(c.id); keepHidden(off); draw(); } },
             h('span', { class: 'dot', 'aria-hidden': 'true' }), c.name), () => calMenu(c), { label: c.name }))),
         menuButton(calsMenu, t('캘린더 더 보기'))));
   }
 
+  const rows = () => [...weeksBox.querySelectorAll<HTMLElement>('.cal-week')];
+  /** The week under the weekday names: the first whose middle is below them. */
+  function topRow(): HTMLElement | undefined {
+    const y = weeksBox.scrollTop + wds.offsetHeight;
+    return rows().find(r => r.offsetTop + r.offsetHeight / 2 > y);
+  }
+  /** The days of the month shown are plain and in the tab order, the rest dim. */
+  function dim(): void {
+    const m = monthKey();
+    for (const c of weeksBox.querySelectorAll<HTMLElement>('.cal-day')) {
+      const other = c.dataset.day!.slice(0, 7) !== m;
+      c.classList.toggle('other', other);
+      c.tabIndex = other ? -1 : 0;
+    }
+  }
+  function pick(k: string): void {
+    selected = k;
+    weeksBox.querySelector('.cal-day.selected')?.classList.remove('selected');
+    weeksBox.querySelector(`.cal-day[data-day="${k}"]`)?.classList.add('selected');
+    remember(); drawPanel();
+  }
+
+  function dayCell(d: Date, days: Record<string, Json[]>, m: string): HTMLElement {
+    const k = dayKey(d);
+    const evs = days[k] ?? [];
+    const other = k.slice(0, 7) !== m;
+    const cell = h('div', { class: `cal-day${other ? ' other' : ''}${k === today ? ' today' : ''}${k === selected ? ' selected' : ''}`,
+                           role: 'gridcell', tabindex: other ? -1 : 0, 'aria-label': d.toLocaleDateString(), 'data-day': k,
+                           onclick: () => pick(k),
+                           ondblclick: (ev: MouseEvent) => { if (!(ev.target as HTMLElement).closest('.cal-ev')) menu(cell, dayMenu(k)); },
+                           onkeydown: (ev: KeyboardEvent) => { if (ev.target === cell && (ev.key === 'Enter' || ev.key === ' ')) { ev.preventDefault(); pick(k); } } },
+      h('span', { class: `cal-num${d.getDate() === 1 ? ' first' : ''}` }, d.getDate() === 1 ? d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : String(d.getDate())),
+      evs.slice(0, 3).map(o => chip(o)),
+      evs.length > 3 && h('span', { class: 'cal-more muted small' }, t('+{n}', { n: evs.length - 3 })));
+    onMenu(cell, () => dayMenu(k));
+    dropTarget(cell, () => { const o = dragging!; void drop(o, dayDelta(o, k)); });
+    return cell;
+  }
+
+  /** The month: a column of weeks around the month shown, under the weekday names. A redraw keeps the week under the
+   * names where it is; a month newly asked for comes to the top, its picked day in sight. */
   function drawGrid(): void {
     if (view !== 'month') { replace(grid); return; }
-    const [start] = span();
+    const placed = !grid.contains(weeksBox) || !!pendingTop;
+    const top = placed ? undefined : topRow();
+    const offset = top ? top.offsetTop - weeksBox.scrollTop : 0;
     const days = perDay();
-    const names = [...Array(7)].map((_, i) => addDays(start, i).toLocaleDateString(undefined, { weekday: 'short' }));
-    const cells: HTMLElement[] = names.map(n => h('div', { class: 'cal-wd', role: 'columnheader' }, n));
-    for (let i = 0; i < 42; i++) {
-      const d = addDays(start, i);
-      const k = dayKey(d);
-      const list = days[k] ?? [];
-      const cell = h('div', { class: `cal-day${d.getMonth() !== shown[1] - 1 ? ' other' : ''}${k === today ? ' today' : ''}${k === selected ? ' selected' : ''}`,
-                             role: 'gridcell', tabindex: 0, 'aria-label': d.toLocaleDateString(), 'data-day': k,
-                             onclick: () => { selected = k; remember(); drawGrid(); drawPanel(); },
-                             ondblclick: (ev: MouseEvent) => { if (!(ev.target as HTMLElement).closest('.cal-ev')) menu(cell, dayMenu(k)); },
-                             onkeydown: (ev: KeyboardEvent) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); selected = k; remember(); drawGrid(); drawPanel(); } } },
-        h('span', { class: 'cal-num' }, String(d.getDate())),
-        list.slice(0, 3).map(o => chip(o)),
-        list.length > 3 && h('span', { class: 'cal-more muted small' }, t('+{n}', { n: list.length - 3 })));
-      onMenu(cell, () => dayMenu(k));
-      dropTarget(cell, () => { const o = dragging!; void drop(o, dayDelta(o, k)); });
-      cells.push(cell);
-    }
-    replace(grid, cells);
+    const m = monthKey();
+    replace(wds, [...Array(7)].map((_, i) => h('div', { class: 'cal-wd', role: 'columnheader' }, addDays(first, i).toLocaleDateString(undefined, { weekday: 'short' }))));
+    replace(weeksBox, [wds, ...[...Array(WEEKS_BEFORE + WEEKS_AFTER)].map((_, w) => {
+      const start = addDays(first, w * 7);
+      return h('div', { class: 'cal-week', role: 'row', 'data-week': dayKey(start) }, [...Array(7)].map((__, i) => dayCell(addDays(start, i), days, m)));
+    })]);
+    if (!grid.contains(weeksBox)) replace(grid, weeksBox);
+    const row = weeksBox.querySelector<HTMLElement>(`.cal-week[data-week="${top ? top.dataset.week : pendingTop ?? dayKey(monthRow(shown[0], shown[1]))}"]`);
+    if (row) weeksBox.scrollTop = top ? row.offsetTop - offset : row.offsetTop - wds.offsetHeight;
+    const picked = placed && selected ? weeksBox.querySelector<HTMLElement>(`.cal-day[data-day="${selected}"]`)?.parentElement : null;
+    if (picked && picked.offsetTop + picked.offsetHeight > weeksBox.scrollTop + weeksBox.clientHeight) weeksBox.scrollTop = picked.offsetTop + picked.offsetHeight - weeksBox.clientHeight;
+    pendingTop = null;
   }
+
+  /** The scroll moved: the title, the dimming and the address follow the month in view (a month's first row is the week its
+   * 1st is in); near an end of the weeks held, they are drawn again around that month and its events read. */
+  function scrolled(): void {
+    if (view !== 'month') return;
+    const top = topRow();
+    if (!top) return;
+    const last = addDays(fromServer(top.dataset.week!), 6);
+    if (last.getFullYear() !== shown[0] || last.getMonth() + 1 !== shown[1]) {
+      shown = [last.getFullYear(), last.getMonth() + 1];
+      remember(); drawTitle(); dim();
+    }
+    if (rows().indexOf(top) < EDGE_ROWS || weeksBox.scrollTop + weeksBox.clientHeight > weeksBox.scrollHeight - EDGE_ROWS * top.offsetHeight) {
+      first = windowFor(shown[0], shown[1]);
+      drawGrid();
+      void refresh();
+    }
+  }
+  let ticking = false;
+  weeksBox.addEventListener('scroll', () => { if (ticking) return; ticking = true; requestAnimationFrame(() => { ticking = false; scrolled(); }); });
 
   function drawPanel(): void {
     if (view !== 'month' || !selected) { replace(panel); return; }
@@ -402,7 +542,7 @@ export async function calendar(): Promise<void> {
     const day = selected;
     replace(panel,
       h('div', { class: 'section-head' },
-        h('h2', null, fromServer(selected).toLocaleDateString(undefined, { month: 'long', day: 'numeric', weekday: 'long' })),
+        h('h2', null, Object.assign(button(fromServer(selected).toLocaleDateString(undefined, { month: 'long', day: 'numeric', weekday: 'long' }), () => show('day', day), 'link'), { title: t('이 날 보기') })),
         h('span', { class: 'actions' }, button(t('+ 일정'), async () => {
           if (await editEvent(calendars, selected).catch(e => { flash('error', message(e)); return false; })) await refresh();
         }, 'secondary'), menuButton(() => dayMenu(day)))),
@@ -413,13 +553,15 @@ export async function calendar(): Promise<void> {
 
   /** The week: an all-day row, then the hours; a timed event is a block at its minutes, side by side when they overlap. */
   function drawWeek(): void {
-    if (view !== 'week') { replace(week); return; }
+    if (view !== 'week' && view !== 'day') { replace(week); return; }
     const [start] = span();
     const days = perDay();
-    const keys = [...Array(7)].map((_, i) => dayKey(addDays(start, i)));
+    const n = view === 'day' ? 1 : 7;
+    week.style.setProperty('--wk-days', String(n));
+    const keys = [...Array(n)].map((_, i) => dayKey(addDays(start, i)));
     const headRow = h('div', { class: 'wk-row wk-head' }, h('div', { class: 'wk-corner' }),
       keys.map((k, i) => { const d = addDays(start, i); return onMenu(h('div', { class: `wk-day${k === today ? ' today' : ''}`, 'data-day': k },
-        h('span', { class: 'wk-wd' }, d.toLocaleDateString(undefined, { weekday: 'short' })), ' ', h('span', { class: 'wk-num' }, String(d.getDate()))), () => dayMenu(k)); }));
+        h('span', { class: 'wk-wd' }, d.toLocaleDateString(undefined, { weekday: 'short' })), ' ', view === 'week' ? h('button', { type: 'button', class: 'wk-num', title: t('이 날 보기'), onclick: () => show('day', k) }, String(d.getDate())) : h('span', { class: 'wk-num' }, String(d.getDate()))), () => dayMenu(k)); }));
     const allRow = h('div', { class: 'wk-row wk-allday' }, h('div', { class: 'wk-corner small muted' }, t('종일')),
       keys.map(k => { const col = h('div', { class: 'wk-allcol', 'data-day': k }, (days[k] ?? []).filter(o => o.allday).map(o => chip(o)));
         dropTarget(col, () => { const o = dragging!; void drop(o, dayDelta(o, k)); });
@@ -472,15 +614,47 @@ export async function calendar(): Promise<void> {
     body.scrollTop = 7 * HOUR;  // the morning first
   }
 
+  const byTime = (a: Json, b: Json) => Number(!!b.allday) - Number(!!a.allday) || a.start.localeCompare(b.start);
+
+  /** The list: the days from the anchor on that have events, each under its date; 더 보기 reads further. */
+  function drawList(): void {
+    if (view !== 'list') { replace(list); return; }
+    const [start] = span();
+    const days = perDay();
+    const groups = [...Array(listDays)].map((_, i) => addDays(start, i)).filter(d => days[dayKey(d)]?.length).map(d => {
+      const k = dayKey(d);
+      return h('section', { class: `cal-list-day${k === today ? ' today' : ''}`, 'data-day': k },
+        groupHead(button(d.toLocaleDateString(undefined, { month: 'long', day: 'numeric', weekday: 'short' }), () => show('day', k), 'link'), k === today ? t('오늘') : undefined),
+        h('div', { class: 'day-list' }, days[k].slice().sort(byTime).map(o => h('div', { class: 'day-row' }, chip(o, true), menuButton(() => eventMenu(o))))));
+    });
+    const more = listDays < LIST_MAX ? [h('p', { class: 'actions' }, button(t('더 보기'), () => { listDays = Math.min(LIST_MAX, listDays + LIST_DAYS); void refresh(); }, 'secondary'))] : [];
+    replace(list, [...(groups.length ? groups : [empty(t('일정 없음'))]), ...more]);
+  }
+
+  /** The year: its twelve months, each day at the level of its events; a month's name opens the month, a day its day. */
+  function drawYear(): void {
+    if (view !== 'year') { replace(year); return; }
+    const y = anchor.getFullYear();
+    const counts = new Map(Object.entries(perDay()).map(([k, v]) => [k, v.length] as [string, number]));
+    replace(year, [...Array(12)].map((_, m) => monthGrid({ year: y, month: m, counts, pick: k => show('day', k),
+      open: () => { anchor = new Date(y, m, 1); selected = ''; show('month'); } })));
+  }
+
+  /** A date named: the view at hand goes there (g). */
+  async function goToDate(): Promise<void> {
+    const date = h('input', { type: 'date', name: 'date', required: true, value: view === 'month' ? selected || today : dayKey(anchor) });
+    if (!await dialog(t('날짜로 가기'), h('div', { class: 'fields' }, h('label', null, t('날짜'), date)), { ok: t('가기') }) || !date.value) return;
+    show(view, date.value);
+  }
+
+  const draw = () => { drawGrid(); drawPanel(); drawWeek(); drawList(); drawYear(); };
+
   async function refresh(): Promise<void> {
     const version = ++rangeVersion;
     const [a, b] = span();
     const range = '/events?from=' + toUtc(a) + '&to=' + toUtc(b);
     const same = displayedRange === range;
-    if (!same) {
-      events = [];
-      drawGrid(); drawPanel(); drawWeek();
-    }
+    if (!same) draw();  // what is at hand stays while the new range is read: a day's events are that day's in any range
     replace(status, t('일정을 불러오는 중…'));
     try {
       const r = await cal.get(range);
@@ -489,7 +663,7 @@ export async function calendar(): Promise<void> {
       events = r.events;
       displayedRange = range;
       replace(status);
-      drawGrid(); drawPanel(); drawWeek();
+      draw();
       const body = week.querySelector('.wk-body');
       if (body && same && scroll !== undefined) body.scrollTop = scroll;
     } catch (e) {
@@ -498,9 +672,11 @@ export async function calendar(): Promise<void> {
     }
   }
 
+  /** Along time by one of what the view shows: a month scrolled to, a week, a day, the list's length, a year. */
   async function move(by: number): Promise<void> {
-    if (view === 'week') anchor = addDays(anchor, 7 * by);
-    else { const d = new Date(shown[0], shown[1] - 1 + by, 1); shown = [d.getFullYear(), d.getMonth() + 1]; }
+    if (view === 'month') { const d = new Date(shown[0], shown[1] - 1 + by, 1); toMonth(d.getFullYear(), d.getMonth() + 1); return; }
+    if (view === 'year') anchor = new Date(anchor.getFullYear() + by, anchor.getMonth(), 1);
+    else anchor = addDays(anchor, by * (view === 'week' ? 7 : view === 'day' ? 1 : listDays));
     remember();
     drawHead();
     await refresh();
@@ -510,14 +686,18 @@ export async function calendar(): Promise<void> {
   calendars = listed.calendars;
   projects = listed.projects ?? [];
   keys([
-    { key: 't', label: t('오늘'), run: () => go(view === 'week' ? `/calendar?v=week&d=${today}` : `/calendar?d=${today}`) },
+    { key: 't', label: t('오늘'), run: () => go(view !== 'month' ? `/calendar?v=${view}&d=${today}` : `/calendar?d=${today}`) },
     { key: 'ArrowLeft', label: t('이전'), run: () => move(-1) },
     { key: 'ArrowRight', label: t('다음'), run: () => move(1) },
-    { key: 'm', label: t('월'), run: () => { if (view !== 'month') { view = 'month'; remember(); drawHead(); void refresh(); } } },
-    { key: 'w', label: t('주'), run: () => { if (view !== 'week') { view = 'week'; anchor = fromServer(selected || today); remember(); drawHead(); void refresh(); } } },
+    { key: 'y', label: t('연'), run: () => { if (view !== 'year') show('year'); } },
+    { key: 'm', label: t('월'), run: () => { if (view !== 'month') show('month'); } },
+    { key: 'w', label: t('주'), run: () => { if (view !== 'week') show('week'); } },
+    { key: 'd', label: t('일'), run: () => { if (view !== 'day') show('day'); } },
+    { key: 'a', label: t('목록'), run: () => { if (view !== 'list') show('list'); } },
+    { key: 'g', label: t('날짜로 가기'), run: goToDate },
     { key: 'n', label: t('새 일정'), run: async () => { if (await editEvent(calendars, selected || today).catch(e => { flash('error', message(e)); return false; })) await refresh(); } },
   ]);
-  replace(main(), head, status, grid, week, panel);
+  replace(main(), head, status, grid, week, list, year, panel);
   drawHead();
   await refresh();
 }

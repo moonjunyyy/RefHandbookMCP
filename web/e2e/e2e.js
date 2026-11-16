@@ -42,6 +42,7 @@ const cards = (page) => page.$$eval('.catalog .store-card', (r) => r.map((e) => 
 const tiles = (page) => page.$$eval('.catalog .my-app', (r) => r.map((e) => e.dataset.app));
 const menuItems = (page) => texts(page, '.menu[role=menu] .menu-item strong');
 const menuOf = async (page, sel) => { await page.click(sel, { button: 'right' }); await page.waitForSelector('.menu[role=menu]'); };
+const weeksOk = (page) => page.$$eval('.cal-weeks .cal-week', (rows) => rows.length > 6 && rows.every((r) => r.querySelectorAll('.cal-day').length === 7));  // the month: a column of weeks of seven days
 const pickItem = async (page, label) => { await page.click(`.menu[role=menu] .menu-item:has(strong:text-is("${label}"))`); await sleep(300); };
 
 async function open(page, url, waitFor) {
@@ -244,10 +245,10 @@ async function run() {
   await page.waitForSelector('.cal-grid .cal-day');
   await page.keyboard.press('?');
   await page.waitForSelector('dialog[open] ul.keys');
-  step('? 가 이 페이지의 키 목록을 보인다(선언 6 + 목록 1)', (await page.$$('dialog ul.keys li')).length === 7 && (await texts(page, 'dialog ul.keys li span')).includes('오늘'), JSON.stringify(await texts(page, 'dialog ul.keys li')));
+  step('? 가 이 페이지의 키 목록을 보인다(선언 10 + 목록 1)', (await page.$$('dialog ul.keys li')).length === 11 && (await texts(page, 'dialog ul.keys li span')).includes('오늘'), JSON.stringify(await texts(page, 'dialog ul.keys li')));
   await page.keyboard.press('Escape');
   await sleep(150);
-  step('캘린더의 첫 요소는 달력이고 머리 한 줄이다', (await page.$$('.cal-grid .cal-day')).length === 42 && (await page.$$('.cal-sources .chip')).length === 2 && !(await page.$('main p.muted')));
+  step('캘린더의 첫 요소는 달력이고 머리 한 줄이다', (await weeksOk(page)) && (await page.$$('.cal-sources .chip')).length === 2 && !(await page.$('main p.muted')));
   await page.click('.cal-day.today');
   await page.waitForSelector('.cal-day-panel h2');
   const todayKey = await page.$eval('.cal-day.today', (e) => e.dataset.day);
@@ -448,7 +449,139 @@ async function run() {
   await shot(page, 'e-calendar-week');
   await page.click('.cal-nav .chip:text-is("월")');
   await page.waitForSelector('.cal-grid .cal-day');
-  step('월로 돌아오면 달력이고 주소에서 v가 빠진다', (await page.$$('.cal-grid .cal-day')).length === 42 && !page.url().includes('v=week'));
+  step('월로 돌아오면 달력이고 주소에서 v가 빠진다', (await weeksOk(page)) && !page.url().includes('v='));
+
+  // (e2) the time axis (C41–C46): the month scrolls on, the views are levels, the title goes up, a day goes down, g goes to a date
+  const evBefore = mock.events().length;
+  const calTitle = () => page.$eval('.cal-nav h1', (e) => e.textContent.trim());
+  const monthName = (add) => { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() + add); return d.toLocaleDateString('ko-KR', { year: 'numeric', month: 'long' }); };
+  const scrollTo = async (dir, until) => {
+    for (let i = 0; i < 400 && (await calTitle()) !== until; i++) {
+      await page.$eval('.cal-weeks', (el, by) => { el.scrollTop += by * el.clientHeight / 2; }, dir);
+      await sleep(30);
+    }
+    return calTitle();
+  };
+  await page.keyboard.press('t');
+  await page.waitForSelector('.cal-day.today.selected');
+  step('달은 주의 열이고 이 달의 첫 주가 요일 아래에 있다 (C42)', (await calTitle()) === monthName(0) && (await page.$eval('.cal-weeks', (el) => {
+    const y = el.scrollTop + el.querySelector('.cal-wds').offsetHeight;
+    const top = [...el.querySelectorAll('.cal-week')].find((r) => r.offsetTop + r.offsetHeight / 2 > y);
+    return [...top.querySelectorAll('.cal-day:not(.other)')].some((c) => c.dataset.day.endsWith('-01'));
+  })), await calTitle());
+  step('버튼 없이 굴려서 열두 달 넘게 앞으로 간다: 제목과 주소와 흐림이 따라온다 (C42)', (await scrollTo(1, monthName(14))) === monthName(14) && /[?&]m=\d{4}-\d{2}/.test(page.url())
+    && (await page.$$eval('.cal-day:not(.other)', (cells) => new Set(cells.map((c) => c.dataset.day.slice(0, 7))).size)) === 1, `${await calTitle()} ${page.url()}`);
+  const farDay = await page.$eval('.cal-day:not(.other)', (c) => c.dataset.day.slice(0, 8) + '15');
+  await page.click(`.cal-day[data-day="${farDay}"]`);
+  await page.waitForSelector('.cal-day-panel h2');
+  await page.click('.cal-day-panel button:text-is("+ 일정")');
+  await page.waitForSelector('dialog[open]');
+  await page.fill('dialog input[name=summary]', '먼 일정');
+  await page.check('dialog label.check input');
+  await page.click('dialog button:text-is("저장")');
+  await page.waitForSelector(`.cal-day[data-day="${farDay}"] .cal-ev`);
+  step('굴려서 나온 주에 쓴 일정이 그 날에 보인다 (C42)', (await texts(page, `.cal-day[data-day="${farDay}"] .cal-ev .cal-title`)).includes('먼 일정'));
+  await menuOf(page, `.cal-day[data-day="${farDay}"] .cal-ev`);
+  await pickItem(page, '지우기');
+  await page.waitForSelector('dialog[open] h2:text-is("일정 지우기")');
+  await page.click('dialog[open] button[type=submit].danger');
+  await sleep(300);
+  step('굴려서 열두 달 넘게 뒤로 간다 (C42)', (await scrollTo(-1, monthName(-14))) === monthName(-14), await calTitle());
+  await page.keyboard.press('t');
+  await page.waitForSelector('.cal-day.today.selected');
+  await page.click('.cal-nav button:text-is("›")');
+  await sleep(150);
+  const afterNext = await calTitle();
+  await page.keyboard.press('ArrowLeft');
+  await sleep(150);
+  step('› 와 ← 는 옆 달의 첫 주를 올린다 (C42)', afterNext === monthName(1) && (await calTitle()) === monthName(0), `${afterNext} ${await calTitle()}`);
+  // the title goes up, a day goes down (C43)
+  await page.click('.cal-nav h1 button');
+  await page.waitForSelector('.cal-year .month');
+  step('제목은 한 단계 위다: 달 → 연, 열두 달이고 연의 제목은 버튼이 아니다 (C43)', (await page.$$('.cal-year .month')).length === 12 && !(await page.$('.cal-nav h1 button'))
+    && (await calTitle()) === String(new Date().getFullYear()) && page.url().includes('v=year'));
+  step('연에서 일정 있는 날은 농도가 있다 (C45)', (await page.$$('.cal-year button.month-day[data-level="1"], .cal-year button.month-day[data-level="2"], .cal-year button.month-day[data-level="3"]')).length >= 1);
+  await page.click(`.cal-year .month >> nth=${new Date().getMonth()} >> button.month-title`);
+  await page.waitForSelector('.cal-weeks .cal-week');
+  step('연에서 달의 이름을 누르면 그 달이다 (C43)', (await calTitle()) === monthName(0) && !page.url().includes('v='), `${await calTitle()} ${page.url()}`);
+  await page.click('.cal-day.today .cal-num');
+  await page.waitForSelector('.cal-day-panel h2 button');
+  await page.click('.cal-day-panel h2 button');
+  await page.waitForSelector('.wk-body');
+  step('달에서 고른 날의 제목을 누르면 그 날의 일 보기다: 한 열, 24시간, 종일 줄 (C43, C45)', (await page.$$('.wk-col')).length === 1 && (await page.$$('.wk-hours .wk-hour')).length === 24 && (await page.$$('.wk-allcol')).length === 1
+    && page.url().includes(`v=day&d=${todayKey}`) && (await page.$eval('.wk-col', (e) => e.dataset.day)) === todayKey, page.url());
+  await page.$eval('.wk-body', (e) => { e.scrollTop = 0; });
+  await page.click('.wk-col', { position: { x: 40, y: 44 * 5 + 4 } });
+  await page.waitForSelector('dialog[open]');
+  const slot = await page.inputValue('dialog input[type=datetime-local] >> nth=0');
+  await page.keyboard.press('Escape');
+  await sleep(150);
+  step('일 보기의 빈 칸은 그 시각의 새 일정이다 (C45)', slot === `${todayKey}T05:00`, slot);
+  await page.click('.cal-nav h1 button');
+  await page.waitForFunction(() => document.querySelectorAll('.wk-col').length === 7);
+  const upWeek = page.url().includes('v=week');
+  await page.click(`.wk-day[data-day="${todayKey}"] button.wk-num`);
+  await page.waitForFunction(() => document.querySelectorAll('.wk-col').length === 1);
+  step('일의 제목은 주로 올라가고, 주의 날 머리는 그 날로 내려간다 (C43)', upWeek && page.url().includes(`v=day&d=${todayKey}`), page.url());
+  // the keys and the other views (C41, C45)
+  const reads = [];
+  const onRead = (r) => { if (r.url().includes('/calendar/api/v1/events?')) reads.push(r.url()); };
+  page.on('request', onRead);
+  const spanDays = (u) => { const q = new URL(u).searchParams; return Math.round((new Date(q.get('to')) - new Date(q.get('from'))) / 86400000); };
+  await page.keyboard.press('a');
+  await page.waitForSelector('.cal-list .cal-list-day');
+  step('a 는 목록이다: 일정 있는 날만, 날마다 묶여, 일정마다 메뉴 (C41, C45)', page.url().includes('v=list')
+    && (await page.$$eval('.cal-list .cal-list-day', (days) => days.length >= 1 && days.every((d) => d.querySelectorAll('.day-row .cal-ev').length >= 1 && d.querySelectorAll('.day-row button.more').length === d.querySelectorAll('.day-row').length)))
+    && !!(await page.$('.cal-list button:text-is("더 보기")')), page.url());
+  const firstSpan = reads.length ? spanDays(reads[reads.length - 1]) : 0;
+  await page.click('.cal-list button:text-is("더 보기")');
+  await sleep(300);
+  step('더 보기는 목록이 읽는 날을 늘린다 (C45)', firstSpan > 0 && spanDays(reads[reads.length - 1]) > firstSpan, `${firstSpan} → ${reads.length ? spanDays(reads[reads.length - 1]) : '-'}`);
+  page.off('request', onRead);
+  await page.keyboard.press('y');
+  await page.waitForSelector('.cal-year .month');
+  await page.click('.cal-year button.month-day[data-today]');
+  await page.waitForFunction(() => document.querySelectorAll('.wk-col').length === 1);
+  step('y 는 연이고, 연에서 날을 누르면 그 날의 일 보기다 (C41, C43)', page.url().includes(`v=day&d=${todayKey}`), page.url());
+  await open(page, `${BASE}/calendar?v=day&d=${todayKey}`, '.wk-body');
+  step('주소로 다시 열어도 그 보기와 그 날이다 (C41)', (await page.$$('.wk-col')).length === 1 && (await texts(page, '.cal-nav .chip[aria-pressed="true"]')).join() === '일'
+    && JSON.stringify(await texts(page, '.cal-nav .chip')) === '["연","월","주","일","목록"]');
+  // g goes to a date (C44)
+  await page.keyboard.press('m');
+  await page.waitForSelector('.cal-weeks .cal-week');
+  await page.keyboard.press('g');
+  await page.waitForSelector('dialog[open] input[type=date]');
+  const gd = new Date(); gd.setDate(1); gd.setMonth(gd.getMonth() + 5);
+  const goKey = `${gd.getFullYear()}-${String(gd.getMonth() + 1).padStart(2, '0')}-20`;
+  await page.fill('dialog input[type=date]', goKey);
+  await page.keyboard.press('Enter');
+  await page.waitForSelector(`.cal-day.selected[data-day="${goKey}"]`);
+  step('g 는 날짜로 간다: 그 달이 보이고 그 날이 골라져 아래 열린다 (C44)', (await calTitle()) === monthName(5) && page.url().includes(`d=${goKey}`) && !!(await page.$('.cal-day-panel h2'))
+    && (await page.$eval(`.cal-day[data-day="${goKey}"]`, (c) => { const b = c.closest('.cal-weeks').getBoundingClientRect(), r = c.getBoundingClientRect(); return r.top >= b.top && r.bottom <= b.bottom + 1; })), `${await calTitle()} ${page.url()}`);
+  // on the hours, a sideways wheel or swipe moves one range a gesture (C46)
+  await page.keyboard.press('w');
+  await page.waitForSelector('.wk-body');
+  const wk0 = await calTitle();
+  await page.hover('.wk-body');
+  await page.mouse.wheel(200, 0);
+  await sleep(250);
+  const wk1 = await calTitle();
+  await page.mouse.wheel(200, 0);
+  await sleep(150);
+  step('주에서 옆으로 굴리면 한 번에 한 주 간다 (C46)', wk1 !== wk0 && (await calTitle()) === wk1 && page.url().includes('v=week'), `${wk0} | ${wk1} | ${await calTitle()}`);
+  await sleep(700);
+  await page.$eval('.wk', (el) => {
+    const at = (x) => new Touch({ identifier: 1, target: el, clientX: x, clientY: 300 });
+    el.dispatchEvent(new TouchEvent('touchstart', { touches: [at(600)], changedTouches: [at(600)], bubbles: true }));
+    el.dispatchEvent(new TouchEvent('touchend', { touches: [], changedTouches: [at(300)], bubbles: true }));
+  });
+  await sleep(250);
+  step('주에서 왼쪽으로 쓸면 다음 주다 (C46)', (await calTitle()) !== wk1, await calTitle());
+  await page.keyboard.press('t');
+  await page.waitForSelector(`.wk-col[data-day="${todayKey}"]`);
+  await page.keyboard.press('m');
+  await page.waitForSelector('.cal-weeks .cal-week');
+  step('시간 축의 단계들이 일정을 남기지 않았다', mock.events().length === evBefore, `${evBefore} → ${mock.events().length}`);
 
   // (f) the notes: Home rendered (wikilinks, mathematics), the tree, backlinks, search, an edit in place, a stale save refused
   const fetched = [];
@@ -950,13 +1083,13 @@ async function run() {
   await copyPage.close();
 
   const journey = await ctx.newPage();
-  await open(journey, BASE + '/calendar', '.cal-nav');
+  await open(journey, BASE + '/calendar?v=week', '.cal-nav');
   let fetches = 0, releaseOld;
   const old = new Promise(resolve => { releaseOld = resolve; });
   await journey.route('**/calendar/api/v1/events?*', async route => {
     const n = ++fetches;
     const start = new Date(new URL(route.request().url()).searchParams.get('from'));
-    start.setUTCDate(start.getUTCDate() + 12);
+    start.setUTCDate(start.getUTCDate() + 3);
     const end = new Date(start.getTime() + 3600000);
     if (n === 1) await old;
     await route.fulfill({ json: { events: [{ id: 'race-' + n, cal: 'u-1', start: start.toISOString(), end: end.toISOString(),
@@ -965,10 +1098,10 @@ async function run() {
   const next = journey.locator('.cal-nav button').filter({ hasText: '›' });
   await next.click();
   await next.click();
-  await journey.waitForSelector('.cal-grid :text-is("Fetch 2")');
+  await journey.waitForSelector('.wk :text-is("Fetch 2")');
   releaseOld();
   await journey.waitForLoadState('networkidle');
-  step('캘린더의 느린 이전 응답이 최신 화면을 덮지 않는다', (await journey.locator('.cal-grid :text-is("Fetch 2")').count()) > 0);
+  step('캘린더의 느린 이전 응답이 최신 화면을 덮지 않는다', (await journey.locator('.wk :text-is("Fetch 2")').count()) > 0);
   await journey.close();
 
   // (j) a new browser: the account's theme and apps arrive with load(), without the cookie
