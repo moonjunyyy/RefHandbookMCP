@@ -149,6 +149,23 @@ def bookmark(
     return f"{'bookmark' if on else 'unbookmark'} {entry} -> {node}"
 
 
+def card_entries(g: Graph, card: str) -> list[tuple[str, list[str]]]:
+    """The entries that route to a card, each with the ledgers it stands for: (title, [ledger ids]).
+    Read from the entries' refs, so a card says where the work it describes is entered without a link
+    of its own; a card no entry routes to has none."""
+    out = []
+    for (src,) in g.db.execute("SELECT src FROM k_edges WHERE dst = ? AND type = 'ref' ORDER BY clock",
+                               (f"card:{card}",)).fetchall():
+        n = g.get_node(src)
+        if n is None or n["type"] != "entry":
+            continue
+        ledgers = [d for (d,) in g.db.execute("SELECT dst FROM k_edges WHERE src = ? AND type = 'ref' ORDER BY clock",
+                                              (src,)).fetchall()
+                   if (m := g.get_node(d)) is not None and m["type"] == "ledger"]
+        out.append((title(g, src), ledgers))
+    return out
+
+
 # ── reading (stage 2, second slice): the same two calls for every node — a card's, a ledger row's, an entry's ──
 
 HEAD = 60  # how much of a node's content its title shows

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import functools
+import logging
 import threading
+import time
 from collections.abc import Callable
 from typing import Annotated, Any, Literal
 
@@ -15,19 +17,36 @@ from pydantic import Field
 from . import agents_api, cap_api, entry_api, render, research_api
 from .store import Handbook, HandbookError
 
-INSTRUCTIONS = """\
+# What a conversation is given at its start. It says where the procedure is and what carries it from
+# one message to the next; the procedure itself is the cards, and they win where the two differ.
+_INSTRUCTIONS = """\
 A quick reference handbook: short cards that say what to do when a known situation comes up.
 When something goes wrong or a recurring task starts, call `lookup` with the symptom (an error
-message, an alert, a few words). Check a candidate's CONDITION really matches, then `open_entry`
-and follow it in order: memory items first, then the numbered steps, taking GO TO links when a
-step's IF holds. Stop at END. Keep deferred items in mind until their moment arrives.
-Cards are linked: RELATED lists what to open next (escalates_to, requires, see_also, ...).
-When you solve a problem no card covers, record it with `save_entry` and link it with `relate`.
-Research work runs as a ledgered session loop over the research cards (rs-*): every user message
-opens a session with `research_begin` (its first line is the SESSION token every later call names),
-works the plan objects with `research_next` / `research_push` / `research_done`, and closes with
-`research_end` before the reply. Sessions run side by side (another conversation, an agent with
-role="agent"); a CONFLICT names objects to re-read, nothing else is shared.
+message, an alert, a few words, or what just happened in the conversation). Check a candidate's
+CONDITION really matches, then `open_entry` and follow it in order: memory items first, then the
+numbered steps, taking GO TO links when a step's IF holds. Stop at END. Keep deferred items in mind
+until their moment arrives.
+Cards are linked: RELATED lists what to open next (escalates_to, requires, see_also, ...), and a
+card's ENTRY line names the ledger its work is entered through.
+When you solve a problem no card covers, record it with `save_entry` and link it with `relate`. A
+card is a procedure, a set or an index, never the record of a conversation: what the user said or
+corrected is a ledger row, and what a procedure missed is a change to that card.
+Work that has a ledger (`research_ledgers` lists them: research questions and projects) runs as a
+session loop over the research cards (rs-*). Program counter: two places carry the loop from one
+message to the next, and nothing else does: the RECEIPT line that ends your previous reply, and the
+plan objects (K) awaiting the user in the ledger. If either exists, your first action is
+`research_begin` (card rs-n1), whatever the message says: one-word, meta, process and complaint
+messages included. Once per conversation, before it, `open_entry("rs-start")`. The first line of
+`research_begin` is the SESSION token every later call names; the session works the plan objects
+with `research_next` / `research_push` / `research_done` and closes with `research_end` before the
+reply, whose last line is the RECEIPT. A reply without a RECEIPT is a skipped cycle and says so.
+A tool result that ends with a `LOOP` line shows the loop as the store has it: the open sessions,
+and how many changing calls were made since a chat session was last used. Calls made with no
+session in use are missed messages: card rs-x7.
+Abnormal signals come before any other card (its memory item first, then the card):
+{abnormal}
+Sessions run side by side (another conversation, an agent with role="agent"); a CONFLICT names
+objects to re-read, nothing else is shared.
 Computation runs in the user's sandbox with `cap` (scripts, policies, layers, egress, rules, cards:
 versioned records you keep current), `run`, `job` and `files`: open_entry("rs-ref-sandbox") says how,
 including how packages and the network are reached. The cards are current.
@@ -35,6 +54,7 @@ A task too big for one conversation can go to a team of agents on the user's own
 agent_run(action="request", goal=…) asks for it; the user approves it on the approval page.
 A tool result that begins DEPRECATED names its replacement: switch now. Never ask the user to
 approve a run."""
+INSTRUCTIONS = _INSTRUCTIONS.format(abnormal=research_api.rs.abnormal_index())
 
 
 READ = ToolAnnotations(read_only_hint=True, open_world_hint=False)
@@ -62,6 +82,52 @@ def _serialized(fn: Callable[..., Any]) -> Callable[..., Any]:
 
     return run
 
+log = logging.getLogger("refhandbook.server")
+
+# The calls of a mixed tool that change something (its other calls only read, and what they return is
+# passed on as it is). A tool that is not read-only and not listed here changes something on every call.
+CHANGES: dict[str, set[str]] = {
+    "cap": {"add", "update", "deprecate", "remove", "restore", "rename"},
+    "files": {"write", "remove"}, "job": {"cancel"}, "agent_run": {"request", "cancel"},
+    "sandbox_script": {"add", "update", "retire", "test"}, "sandbox_files": {"write", "remove"},
+    "sandbox_job": {"cancel"}, "sandbox_policy": set(),
+}
+
+
+def _loop_line() -> str:
+    """render.loop_state for this store; never the reason a tool fails."""
+    from .kernel import runtime, sessions
+
+    try:
+        hb = handbook()
+        g = runtime.attach(hb).g
+        last = sessions.last_chat_use(g)
+        # the changing calls since a chat session was last used: counted on the store, started again
+        # whenever a research call has moved that moment
+        seen, calls = getattr(hb, "_loop_calls", (None, 0))
+        hb._loop_calls = (last, calls + 1 if seen == last else 1)
+        return render.loop_state(sessions.all_open(g), time.time(), hb._loop_calls[1], last)
+    except Exception:  # noqa: BLE001 — the line is a display; the tool's own result stands without it
+        log.exception("could not read the open sessions")
+        return ""
+
+
+def _outside_the_loop(fn: Callable[..., Any]) -> Callable[..., Any]:
+    """A tool that changes something outside a ledger (a card, a relation, a capability, a file, a job)
+    ends its result with the loop's state: the device shows whether a session is open at the place the
+    work happens. The research tools are the loop itself and carry their session; reads show nothing."""
+    actions = CHANGES.get(fn.__name__)
+
+    @functools.wraps(fn)
+    def run(*args: Any, **kwargs: Any) -> Any:
+        out = fn(*args, **kwargs)
+        if isinstance(out, str) and (actions is None or kwargs.get("action") in actions):
+            out = f"{out}\n\n{_loop_line()}".rstrip()
+        return out
+
+    return run
+
+
 TOOLS: list[tuple[Callable[..., Any], ToolAnnotations]] = []
 
 
@@ -82,6 +148,8 @@ def make(**settings: Any) -> MCPServer:
 
     server = MCPServer("refhandbook", instructions=INSTRUCTIONS, version=version(), **settings)
     for fn, annotations in TOOLS:
+        if annotations is not READ and fn.__name__ not in research_api.TOOLS:
+            fn = _outside_the_loop(fn)
         server.tool(annotations=annotations)(_serialized(fn))
     return server
 
@@ -110,13 +178,28 @@ def handbook() -> Handbook:
 def lookup(
     situation: Annotated[str, Field(description="The symptom as observed: error text, alert name, or a few words.")],
     limit: int = 5,
-    scope: Annotated[Literal["handbook", "research", "all"], Field(
-        description="handbook: the ordinary cards (default); research: only the research cards (rs-*); all: both.")] = "handbook",
+    scope: Annotated[Literal["situation", "handbook", "research", "all"], Field(
+        description="situation (default): the ordinary cards and the research cards a situation leads to (the "
+                    "session loop and the abnormal cards); handbook: the ordinary cards only; research: only the "
+                    "research cards (rs-*), stage and reference cards included; all: every card.")] = "situation",
 ) -> str:
-    """Find the entries that fit a situation. Returns each candidate's condition and
-    objective so the right one can be confirmed before it is opened. The research loop's cards
-    (rs-*) are found with scope="research"."""
-    return render.candidates(situation, handbook().lookup(situation, limit, scope))
+    """Find the entries that fit a situation: a fault, a request, or what just happened in the
+    conversation (the user corrected something, the same correction came again, a reference cannot
+    be resolved, a step was refused). Returns each candidate's condition and objective so the right
+    one can be confirmed before it is opened. The research cards entered by a routed plan object
+    (stage, domain and reference cards) are found with scope="research"."""
+    hb = handbook()
+    rows = hb.lookup(situation, limit, scope)
+    for r in rows:
+        r["routes"] = _routes(hb, r["id"])
+    return render.candidates(situation, rows)
+
+
+def _routes(hb: Handbook, card: str) -> list[tuple[str, list[str]]]:
+    """The entries that route to a card and their ledgers (entry_api.card_entries), from this store's graph."""
+    from .kernel import runtime
+
+    return entry_api.card_entries(runtime.attach(hb).g, card)
 
 
 @tool(READ)
@@ -127,7 +210,7 @@ def open_entry(id: str) -> str:
 
     hb = handbook()
     e = hb.get_entry(id)
-    card = render.card(e, hb.neighbors(id))
+    card = render.card(e, hb.neighbors(id), _routes(hb, e["id"]))
     parts = decomposition(e)
     if parts and not e["id"].startswith("rs-"):
         card = (f"SPLIT BEFORE USE: this card holds more than one topic ({' · '.join(parts)}). Split it first "
@@ -180,7 +263,9 @@ def save_entry(
     """Create an entry, or update one by id. On update, omitted arguments are kept and a
     list argument replaces the stored list. Returns the saved card. One card holds one topic: a
     procedure (one situation, one outcome, one sequence of at most 10 steps) or a set (one list or
-    table); an entry holding more is refused with its parts, to be written as separate cards."""
+    table); an entry holding more is refused with its parts, to be written as separate cards.
+    A card is not the record of a conversation: what the user said, decided or corrected is a
+    ledger row (research_add), and what a procedure missed is a change to that procedure's card."""
     hb = handbook()
     entry = hb.save_entry(
         id=id, title=title, kind=kind, condition=condition, objective=objective,

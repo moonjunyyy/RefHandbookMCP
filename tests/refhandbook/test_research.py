@@ -461,7 +461,10 @@ def test_research_tools_over_mcp(monkeypatch):
         asyncio.run(call("research_done", ledger="t", session=s, kid="K1", exit="a"))
     # cards are reachable through the handbook tools too
     assert "[rs-ex]" in asyncio.run(call("lookup", situation="what if we drop this assumption", scope="research"))
-    assert "rs-" not in asyncio.run(call("lookup", situation="what if we drop this assumption"))  # default: handbook only
+    default = asyncio.run(call("lookup", situation="what if we drop this assumption"))
+    assert "[rs-ex]" not in default  # a stage card is reached by a routed K, not by a situation …
+    assert "[rs-x5]" in default  # … an abnormal card is: its signal is a hidden assumption
+    assert "rs-" not in asyncio.run(call("lookup", situation="what if we drop this assumption", scope="handbook"))
 
 
 def test_the_cli_runs_the_same_research_tools(tmp_path):

@@ -30,7 +30,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from .kernel import sessions
-from .store import Handbook, HandbookError, slugify
+from .store import SIGNAL_TAG, Handbook, HandbookError, slugify
 
 # ── vocabulary ───────────────────────────────────────────────────────────
 
@@ -1098,8 +1098,11 @@ class Research:
             busy = [r["id"] for r in ks if key(r["status"]) == "running" and r["id"] in mine]
             if busy:
                 raise ResearchError(f"REFUSED: this session already runs {busy[0]}; finish it with research_done first")
+            queued = [r for r in ks if key(r["status"]) == "queued"]
+            # the message's own objects before the queue earlier sessions left: what this session pushed, in order
+            own = [r for r in queued if r["turn_created"] == lg["turn"]]
             pick = [r for r in ks if (r["id"] == kid and key(r["status"]) in {"queued", "blocked"})] if kid else \
-                [r for r in ks if key(r["status"]) == "queued"][:1]
+                (own or queued)[:1]
             if not pick:
                 raise ResearchError("REFUSED: no queued K (or the given K is not queued/blocked)")
             r = pick[0]
@@ -1720,6 +1723,7 @@ def parse_page(text: str) -> dict[str, Any]:
     items: list[dict[str, Any]] = []
     pushes: set[str] = set()
     mode, cur, block, in_entry = "pre", None, [], False
+    signal = False  # the page has an `ENTRY — signal:` line: the card is entered from a situation
     seen_step = False
 
     def flush_block():
@@ -1742,6 +1746,7 @@ def parse_page(text: str) -> dict[str, Any]:
     for line in lines[i:]:
         if line.startswith("ENTRY"):
             condition.append(line.split("—", 1)[1].strip() if "—" in line else line.strip())
+            signal = signal or condition[-1].startswith("signal:")
             in_entry = True
             continue
         if in_entry:
@@ -1815,7 +1820,7 @@ def parse_page(text: str) -> dict[str, Any]:
         "objective": meta["OBJECTIVE"],
         "body": "\n\n".join(body),
         "triggers": [t.strip() for t in meta["TRIGGERS"].split(";") if t.strip()] + [f"research {pid}"],
-        "tags": [t.strip() for t in meta["TAGS"].split(",") if t.strip()],
+        "tags": [t.strip() for t in meta["TAGS"].split(",") if t.strip()] + ([SIGNAL_TAG] if signal else []),
         "items": [{k: v for k, v in it.items() if v not in (None, "")} for it in items],
     }
     rels = [{"src": entry["id"], "type": "pushes_to", "dst": page_card_id(t), "note": "an exit returns objects for it"}
@@ -1847,6 +1852,19 @@ def load_pages() -> tuple[str, dict[str, Any]]:
                                         "description": "An exit of the source card returns plan objects for the target."}]}
 
 
+def abnormal_index() -> str:
+    """The abnormal cards as lines `signal ◆ memory item → card id`, from the pages. The server's
+    instructions carry it, so the nine signals are known at the start of a conversation, before any
+    card is open (the plugin's research skill carried the same table)."""
+    _, data = load_pages()
+    lines = []
+    for e in sorted((e for e in data["entries"] if "abnormal" in e["tags"]), key=lambda e: e["id"]):
+        signal = e["condition"].split("signal:", 1)[-1].strip()
+        memory = next((it["text"] for it in e["items"] if it.get("phase") == "memory"), "")
+        lines.append(f"- {signal} ◆ {memory} → {e['id']}")
+    return "\n".join(lines)
+
+
 def ensure_cards(hb: Handbook) -> str:
     """Load the research cards when the pages changed. Cards with the rs- prefix are managed
     here: edited copies are replaced, and rs- cards no longer in the pages are removed."""
@@ -1865,8 +1883,8 @@ def _load_cards(hb: Handbook, digest: str, data: dict[str, Any]) -> str:
             hb.define_relation_type(rt["name"], rt["inverse"], rt["description"])
     bundled = {e["id"] for e in data["entries"]}
     for e in data["entries"]:
-        hb.save_entry(**{k: e[k] for k in ("id", "title", "kind", "condition", "objective", "body",
-                                            "triggers", "tags", "items")})
+        hb.save_entry(**{k: e[k] for k in ("id", "title", "kind", "condition", "objective", "body", "tags", "items")},
+                      triggers=e["triggers"] + _user_cues(hb, e))
     for stale in hb._column("SELECT id FROM entries WHERE id LIKE 'rs-%'"):
         if stale not in bundled:
             hb.delete_entry(stale)
@@ -1876,4 +1894,19 @@ def _load_cards(hb: Handbook, digest: str, data: dict[str, Any]) -> str:
         hb.relate(r["src"], r["type"], r["dst"], r["note"])
     with hb.db:
         hb.db.execute("INSERT OR REPLACE INTO rl_meta VALUES ('cards', ?)", (digest,))
+        hb.db.executemany("INSERT OR REPLACE INTO rl_meta VALUES (?, ?)",
+                          [(f"cues:{e['id']}", json.dumps(e["triggers"])) for e in data["entries"]])
     return f"loaded {len(bundled)} research cards"
+
+
+def _user_cues(hb: Handbook, e: dict[str, Any]) -> list[str]:
+    """The cues a user added to a managed card: what the stored card has beyond the cues the pages gave
+    it at the last load (recorded in rl_meta) and beyond what the page says now. They survive the
+    reload, as a rule the user changed survives a package upgrade; all else of the card is the page's."""
+    if not hb.exists(e["id"]):
+        return []
+    row = hb.db.execute("SELECT value FROM rl_meta WHERE key = ?", (f"cues:{e['id']}",)).fetchone()
+    if row is None:  # loaded by code that kept no record: the stored cues are taken as the page's own
+        return []
+    paged = set(json.loads(row[0])) | set(e["triggers"])
+    return [c for c in hb.get_entry(e["id"])["triggers"] if c not in paged]

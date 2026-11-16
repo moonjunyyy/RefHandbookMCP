@@ -52,13 +52,24 @@ def _step(number: int, item: dict[str, Any]) -> str:
     return f"{number:>3}. {line}".replace("\n", "\n     ")
 
 
-def card(entry: dict[str, Any], neighbors: list[dict[str, Any]]) -> str:
+def route(title: str, ledgers: list[str]) -> str:
+    """An entry that routes to a card, as one line: the topic, and the ledger its work is entered through."""
+    return f"{title} — ledger {', '.join(ledgers)}" if ledgers else f"{title} (no ledger)"
+
+
+def card(entry: dict[str, Any], neighbors: list[dict[str, Any]],
+         routes: list[tuple[str, list[str]]] | None = None) -> str:
     out = [f"# {entry['title']}", f"[{entry['id']}] {entry['kind']} · rev {entry['revision']} · {entry['updated_at']}"]
     if entry["tags"]:
         out[-1] += " · " + " ".join(f"#{t}" for t in entry["tags"])
     if note := device_note(entry["tags"]):
         out.append(note)
     out.append("")
+    for name, ledgers in routes or []:
+        # the card is one of an entry's routes: the work it describes is entered there, before the card is used
+        out.append(f"ENTRY      {route(name, ledgers)}." + "".join(
+            f' Work on this runs in a session of that ledger: research_begin(ledger="{led}") first (card rs-n1).'
+            for led in ledgers[:1]))
     if entry["condition"]:
         out.append(f"CONDITION  {entry['condition']}")
     if entry["triggers"]:
@@ -90,6 +101,36 @@ def card(entry: dict[str, Any], neighbors: list[dict[str, Any]]) -> str:
     return "\n".join(out)
 
 
+LOOP_SHOWN = 3  # how many open sessions the line names; the rest are counted
+
+
+def _ago(seconds: float) -> str:
+    for unit, size in (("d", 86400), ("h", 3600), ("min", 60)):
+        if seconds >= 2 * size:
+            return f"{int(seconds // size)} {unit}"
+    return f"{int(max(seconds, 0))} s"
+
+
+def loop_state(open_sessions: list[dict[str, Any]], now: float, calls: int | None = None,
+               last_used: float | None = None) -> str:
+    """The state of the session loop as the store has it, on one line: the open sessions (most recently
+    used first) or that there is none, and `calls`, the changing calls made since a chat session was
+    last used (at `last_used`). Inside the loop that count starts again with every research call;
+    outside it only grows, whatever sessions other conversations left open. A tool that changes
+    something outside a ledger ends its result with this line, so whether the work is inside a session
+    is shown where the work happens, not remembered."""
+    count = ""
+    if calls is not None:
+        since = f"{_ago(now - last_used)} ago" if last_used else "never"
+        count = f" · {calls} changing call{'' if calls == 1 else 's'} since a chat session was last used ({since})"
+    if not open_sessions:
+        return (f"LOOP  no session is open{count}. Work that has a ledger is answered inside a session of it: "
+                "research_begin(ledger=…) first (card rs-n1); calls made without one are missed messages (card rs-x7).")
+    shown = [f"{s['scope']} {s['id']} ({s['role']}, used {_ago(now - s['active'])} ago)" for s in open_sessions[:LOOP_SHOWN]]
+    more = len(open_sessions) - len(shown)
+    return "LOOP  open: " + "; ".join(shown) + (f"; and {more} older" if more > 0 else "") + count
+
+
 def candidates(situation: str, rows: list[dict[str, Any]]) -> str:
     if not rows:
         return f"No entry matches {situation!r}. Try other words, or browse with index."
@@ -100,6 +141,8 @@ def candidates(situation: str, rows: list[dict[str, Any]]) -> str:
             out.append(f"    SUPERSEDED BY {r['superseded_by']} — open that instead")
         if note := device_note(r.get("device")):
             out.append(f"    {note}")
+        for name, ledgers in r.get("routes") or []:
+            out.append(f"    entry: {route(name, ledgers)}")
         if r["condition"]:
             out.append(f"    condition: {r['condition']}")
         if r["objective"]:

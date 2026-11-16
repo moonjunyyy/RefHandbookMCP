@@ -102,7 +102,7 @@ search                                (FTS5: title, triggers, condition, body)
 | Tool | Purpose |
 | :- | :- |
 | `lookup` | Symptom to candidate cards, with condition and objective |
-| `open_entry` | The card, plus related entries |
+| `open_entry` | The card, plus related entries, and the entries that route to it with their ledgers (`ENTRY`: where the work the card describes is entered) |
 | `index` | Contents list grouped by tag, kind, or letter |
 | `traverse` | Walk relations outward from a card |
 | `save_entry` | Create or update a card |
@@ -113,6 +113,16 @@ search                                (FTS5: title, triggers, condition, body)
 | `research_*` | The research ledger: sessions, rows, plan objects, configurations and verdicts, documents (16 tools; card `rs-ref-ledger`) |
 | `cap` | Capability records of every kind (script, policy, layer, alias, rule, card): versioned, owned, reviewed on a TTL, deprecated and retired; a widening grant waits for the user (docs/kernel.md "Capabilities") |
 | `run`, `job`, `files` | Run a script in the user's sandbox as a background job, read jobs, and keep files in the workspace. No network of its own: a policy's egress profiles (pypi, npm, crates, github, …) reach out through the egress supervisor, HTTPS only, to those hosts only; the server's layers bring Python, Node and Rust (`refhandbook layers build`) |
+
+A tool that changes something outside a ledger (`save_entry`, `relate`, `run`, a `files` write, a
+`cap` change, an entry ref …) ends its result with one line, `LOOP  …`: the sessions the store has
+open, most recently used first, or that none is open, and how many changing calls were made since a
+chat session was last used. Inside the loop that count starts again with every research call;
+outside it only grows, whatever sessions other conversations left open. It stands in for the stop
+hook the cards name (a message answered without a session): card `rs-x7`, missed messages. The session loop's state lives in the store,
+and this is where a caller that skipped `research_begin` (or lost it with its context) meets it: at
+the call that does the work. The line states what the store knows and nothing else; reads and the
+research tools do not carry it (`server.CHANGES` names the changing calls of the mixed tools).
 
 Read tools are annotated `readOnlyHint`, and deletes `destructiveHint`, so a client can ask for
 confirmation on the right ones. Tools return the rendered card as text, since the reader is a
@@ -169,8 +179,15 @@ JSON, `@FILE` or `-` (stdin), and an import's `data_file` names the export, so a
 goes through argv. Through the tools, a long text goes once with `research_blob` (in pieces if
 needed) and is passed on as `ref`. `export` takes `include_log=false`; `import` takes `to` (another name) and
 `dry_run`; `copy` makes a sandbox copy, `rename` renames, and `research_ledger_delete` deletes with
-`confirm` set to the ledger id. `lookup` searches the ordinary cards unless `scope="research"` or
-`"all"`.
+`confirm` set to the ledger id. `lookup` searches the cards a situation leads to: the ordinary cards and
+the research cards whose page has an `ENTRY — signal:` line (the session loop and the abnormal cards;
+`research.parse_page` tags them `signal`). The cards entered by a routed plan object (stage, domain
+and reference cards) are found with `scope="research"`; `"all"` searches every card and `"handbook"`
+the ordinary ones only. A user's own cues on a research card (`save_entry(id="rs-…", triggers=…)`)
+survive the pages being loaded again, as a rule the user changed survives an upgrade; the rest of the
+card is the page's. A Hangul query word is also searched by its first
+two syllables (`store.stems`): Korean writes particles and endings onto the word, so only the stem
+is a prefix of what a card says.
 
 When porting a hand-kept ledger: `check` also judges the basis of `proposed` rows, and
 `[unverified]` propagates only from the first token of the evidence cell.

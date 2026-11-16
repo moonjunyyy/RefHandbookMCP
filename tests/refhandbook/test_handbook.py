@@ -143,9 +143,9 @@ def test_mcp_tools(hb, monkeypatch):
     assert "[rebase-conflict]" in asyncio.run(call("lookup", situation="rebase in progress"))
     card = asyncio.run(call("save_entry", title="Disk full", condition="ENOSPC", items=[{"text": "df -h"}]))
     assert card.startswith("# Disk full")
-    assert asyncio.run(call("relate", src="disk-full", type="see_also", dst="flaky-test-triage")) == (
-        "[disk-full] see_also -> [flaky-test-triage]"
-    )
+    out = asyncio.run(call("relate", src="disk-full", type="see_also", dst="flaky-test-triage")).splitlines()
+    assert out[0] == "[disk-full] see_also -> [flaky-test-triage]"
+    assert out[-1].startswith("LOOP  no session is open")  # a change outside a ledger shows the loop's state
     with pytest.raises(Exception, match="no entry with id"):
         asyncio.run(call("open_entry", id="nope"))
 

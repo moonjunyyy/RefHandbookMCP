@@ -185,8 +185,9 @@ def research_push(ledger: str, session: str, do: str, page: str, frm: str, on: s
 
 
 def research_next(ledger: str, session: str, kid: str = "") -> str:
-    """Take the oldest queued K (or the given one, also one awaiting the user), mark it running,
-    and print its card."""
+    """Take the next queued K: this session's own objects first, in the order it pushed them, then
+    the oldest of the queue earlier sessions left (or the given one, also one awaiting the user).
+    Mark it running and print its card."""
     return R().next(ledger, session, kid)
 
 

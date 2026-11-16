@@ -1,7 +1,7 @@
 # PAGE RV — Review the rules
 KIND: checklist
 TAGS: research, normal
-TRIGGERS: REVIEW; review the rules; rule gap; the rules got in the way; propose a rule; device change; loophole
+TRIGGERS: REVIEW; review the rules; rule gap; the rules got in the way; propose a rule; device change; loophole; 규칙 점검; 절차 개선; 절차가 놓쳤다; 규칙의 구멍; 카드를 고친다
 OBJECTIVE: Judge the device's rules against what happened since the last review, and propose the smallest rule change that removes a class of failure.
 
 ENTRY — obligation: `REVIEW` in research_begin (7 sessions since the last review, or 3 signals: refusals, UNAFFECTED disposals, carries, drops).

@@ -58,6 +58,16 @@ def open_sessions(g: Graph, scope: str) -> list[dict[str, Any]]:
                                           (scope,))]
 
 
+def all_open(g: Graph) -> list[dict[str, Any]]:
+    """Every open session of the store, on whatever scope, the most recently used first."""
+    return [dict(r) for r in g.db.execute("SELECT * FROM k_sessions WHERE closed IS NULL ORDER BY active DESC, scope, seq")]
+
+
+def last_chat_use(g: Graph) -> float | None:
+    """When a chat session of the store was last used (opened, read or written with, or closed); None if never."""
+    return g.db.execute("SELECT max(max(active, coalesce(closed, 0))) FROM k_sessions WHERE role = 'chat'").fetchone()[0]
+
+
 def open(g: Graph, scope: str, role: str = "chat", *, label: str = "", floor: int = 0,  # noqa: A001
          now: float | None = None) -> tuple[dict[str, Any], bool]:
     """(session, resumed). `floor` is the scope's own count of sessions before this table existed."""
