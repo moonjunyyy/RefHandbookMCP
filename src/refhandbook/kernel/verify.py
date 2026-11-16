@@ -51,8 +51,17 @@ def check(g: Graph, L: str) -> tuple[list[str], list[str], list[Finding]]:
     return errors, warnings, fs
 
 
+RULE_KIND = "rule"  # an obligation a rule outside the package's own wrote: (RULE_KIND, the rule, its message)
+
+
 def obligations(g: Graph, L: str) -> set[tuple[str, str, str]]:
-    return items(evaluate(g, "obligation", L, "ledger"), OBLIGATION_KIND)
+    """What a session starts from. The package's own obligation rules give typed items. Any other
+    rule of the obligation phase (one the store holds, approved or still proposed) gives its message
+    as written, whatever its severity: an obligation is something to be told, and a rule whose
+    finding is shown to no one informs no one."""
+    fs = evaluate(g, "obligation", L, "ledger")
+    return (items([f for f in fs if f.rule in OBLIGATION_KIND], OBLIGATION_KIND)
+            | {(RULE_KIND, f.rule, f.message) for f in fs if f.rule not in OBLIGATION_KIND})
 
 
 def blockers(g: Graph, L: str, seq: int, idle: str = "", role: str = "chat") -> set[tuple[str, str, str]]:
