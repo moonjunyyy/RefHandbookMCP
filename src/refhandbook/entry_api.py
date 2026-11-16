@@ -19,12 +19,13 @@ from pydantic import Field
 
 from . import research_api
 from .kernel.graph import ID_RE, Graph
+from .store import HandbookError
 
 ACTOR = "model"  # a tool call is the model's (docs/kernel.md, Authority); the site's own writes will pass "user"
 
 
-class EntryError(ValueError):
-    pass
+class EntryError(HandbookError):
+    """A request the caller can fix. A HandbookError, so the server passes its text on as it is."""
 
 
 def _g() -> Graph:
@@ -149,6 +150,52 @@ def bookmark(
     return f"{'bookmark' if on else 'unbookmark'} {entry} -> {node}"
 
 
+# where the nodes delete_node refuses are deleted instead
+_DELETED_ELSEWHERE = {
+    "card": "a card is deleted with delete_entry",
+    "ledger": "a ledger is deleted with research_ledger_delete",
+    "memo": "a memo is dropped with memo(action='drop')",
+}
+
+
+def _links(g: Graph, node: str, col: str) -> dict[str, int]:
+    return dict(g.db.execute(f"SELECT type, COUNT(*) FROM k_edges WHERE {col} = ? GROUP BY type ORDER BY type", (node,)))
+
+
+def delete_node(
+    node: Annotated[str, Field(description="An entry node's id, or a tag's (tag:<name>).")],
+    force: Annotated[bool, Field(description="Delete it together with the links it still has; what they reach stays.")] = False,
+) -> str:
+    """Delete an entry node, or a tag. One that still has links (an entry's routes and tags, another entry's
+    route to it, the nodes carrying a tag) is refused with their counts: take them off first (unref, tag with
+    remove=True), or pass force=True to delete it with them. The nodes it reached stay as they are. Only your
+    own nodes; a ledger row, a card or a ledger is deleted where it lives, not here. It cannot be undone."""
+    g = _g()
+    with g.tx():
+        n = _node(g, node)
+        if n["type"] not in ("entry", "tag"):
+            row = g.db.execute("SELECT 1 FROM k_type_class WHERE type = ? AND class = 'row'", (n["type"],)).fetchone()
+            where = _DELETED_ELSEWHERE.get(n["type"]) or (
+                "a ledger row is closed in its ledger, by its status" if row else "it is removed by what made it")
+            raise EntryError(f"REFUSED: {node!r} is a {n['type']}, not an entry node or a tag: {where}. Nothing was deleted.")
+        out, inn = _links(g, node, "src"), _links(g, node, "dst")
+        if (out or inn) and not force:
+            said = "; ".join(f"{way}: " + ", ".join(f"{t} {c}" for t, c in links.items())
+                             for way, links in (("out", out), ("in", inn)) if links)
+            raise EntryError(f"REFUSED: {n['type']} {node} still has links ({said}). Take them off (unref, tag with "
+                             "remove=True), or delete_node(node, force=True) deletes it with them; what they reach "
+                             "stays. Nothing was deleted.")
+        name = title(g, node)
+        ledgers = [e["dst"] for e in g.edges(src=node, type_="ref")
+                   if (m := g.get_node(e["dst"])) is not None and m["type"] == "ledger"]
+        g.tick()
+        g.delete_node(node, actor=ACTOR)  # the kernel's rule: the model deletes only its own nodes; edges go with it
+        g.log(ACTOR, "node.delete", node, type=n["type"], title=name, links_out=out, links_in=inn)
+    gone = sum(out.values()) + sum(inn.values())
+    return (f"deleted {n['type']} {node}: {name}" + (f" (with {gone} link{'' if gone == 1 else 's'})" if gone else "")
+            + "".join(f"\nledger {led} is no longer routed to by this entry" for led in ledgers))
+
+
 def card_entries(g: Graph, card: str) -> list[tuple[str, list[str]]]:
     """The entries that route to a card, each with the ledgers it stands for: (title, [ledger ids]).
     Read from the entries' refs, so a card says where the work it describes is entered without a link
@@ -265,3 +312,4 @@ def open_node(
 
 READ_TOOLS = [refs, open_node]
 WRITE_TOOLS = [entry_node, ref, unref, tag, bookmark]
+DELETE_TOOLS = [delete_node]

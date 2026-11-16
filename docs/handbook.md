@@ -108,6 +108,7 @@ search                                (FTS5: title, triggers, condition, body)
 | `save_entry` | Create or update a card |
 | `delete_entry` | Remove a card and its relations |
 | `relate`, `unrelate` | Typed edges between cards |
+| `delete_node` | Delete an entry node or a tag of the entry graph (docs/entry-graph.md): refused while it still has links, unless forced; only the caller's own nodes |
 | `define_relation_type`, `relation_types` | The relation vocabulary |
 | `audit` | CAP 676 assessment checks over the whole handbook |
 | `memo` | The model's quick notes, kept the way a cache is: a key, overwritten without asking, expiring, and stale once a node it was read from has changed. Never a basis: what the user said is a ledger row, a procedure a card |

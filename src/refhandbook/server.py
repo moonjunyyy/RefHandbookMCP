@@ -358,3 +358,5 @@ for _fn in entry_api.READ_TOOLS:
     tool(READ)(_fn)
 for _fn in entry_api.WRITE_TOOLS:
     tool(LEDGER_WRITE)(_fn)
+for _fn in entry_api.DELETE_TOOLS:
+    tool(DELETE)(_fn)
