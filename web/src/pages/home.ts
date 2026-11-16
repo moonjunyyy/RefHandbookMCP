@@ -57,6 +57,10 @@ export async function home(): Promise<void> {
     return;
   }
   const grid = h('div', { class: 'widgets' });
+  // the grid's columns are asked of a ruler beside it (the same columns with nothing in them): a cell wider than the
+  // grid makes columns of its own, so the grid itself cannot say how many the window gives it
+  const ruler = h('div', { class: 'widgets-ruler', 'aria-hidden': 'true' });
+  const columns = (): number => getComputedStyle(ruler).gridTemplateColumns.split(' ').filter(s => s.endsWith('px')).length || 1;
 
   function cell(c: Card, w: Widget, i = -1, p?: Placement): HTMLElement {
     const size = sizeOf(p?.size ?? w.size);
@@ -101,7 +105,8 @@ export async function home(): Promise<void> {
       grip.setPointerCapture(ev.pointerId);
       const r0 = el.getBoundingClientRect();
       const gap = parseFloat(getComputedStyle(grid).gap) || 0;
-      const unitW = (r0.width - gap * (size.cols - 1)) / size.cols;
+      const shown = Math.min(size.cols, columns());  // a cell wider than the grid is drawn as wide as the grid
+      const unitW = (r0.width - gap * (shown - 1)) / shown;
       const unitH = Math.max(80, (r0.height - gap * (size.rows - 1)) / size.rows);
       const maxCols = Math.max(1, Math.round((grid.clientWidth + gap) / (unitW + gap)));
       let want: Size = size;
@@ -116,9 +121,9 @@ export async function home(): Promise<void> {
         el.classList.remove('resizing');
         if (e.type !== 'pointercancel' && want.id !== size.id) void act(null, async () => {
           try { await resize(i, want); }
-          finally { el.setAttribute('style', spanStyle(size.id)); el.dataset.size = size.id; }
+          finally { el.setAttribute('style', spanStyle(size.id)); el.dataset.size = size.id; fitColumns(); }
         });
-        else { el.setAttribute('style', spanStyle(size.id)); el.dataset.size = size.id; }
+        else { el.setAttribute('style', spanStyle(size.id)); el.dataset.size = size.id; fitColumns(); }
       };
       grip.addEventListener('pointermove', onMove); grip.addEventListener('pointerup', onUp); grip.addEventListener('pointercancel', onUp);
     });
@@ -219,14 +224,24 @@ export async function home(): Promise<void> {
   const more = h('button', { type: 'button', class: 'add-widget', 'aria-keyshortcuts': 'w', onclick: () => void pick() },
     h('span', { class: 'add-mark', 'aria-hidden': 'true' }, '+'), t('위젯 고르기'));
 
+  /** A cell never asks for more columns than the grid has: the sizes are the site's, the columns the window's. */
+  function fitColumns(): void {
+    const n = columns();
+    for (const el of grid.querySelectorAll<HTMLElement>(':scope > .widget')) {
+      if (!el.classList.contains('resizing')) el.style.gridColumn = `span ${Math.min(sizeOf(el.dataset.size).cols, n)}`;
+    }
+  }
+
   function draw(): void {
     const list = placements();
     replace(grid, list.map((p, i) => { const r = resolve(p); return r && cell(r[0], r[1], i, p); }), more);
+    fitColumns();
   }
 
   keys([{ key: 'w', label: t('위젯 고르기'), run: pick }]);
-  replace(main(), grid);
+  replace(main(), grid, ruler);
   draw();
+  new ResizeObserver(fitColumns).observe(ruler);  // the ruler's width is the grid's, and no cell changes its height
 }
 
 export { placements };

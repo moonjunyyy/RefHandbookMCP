@@ -304,7 +304,7 @@ def test_the_frame_carries_a_widgets_settings(app):
     c, _ = sign_in(app)
     me = c.get("/auth/api/v1/me").json()
     widgets = {w["id"]: w for w in next(x for x in me["cards"] if x["id"] == "calendar")["widgets"]}
-    assert [p["id"] for p in widgets["upcoming"]["params"]] == ["days", "calendar"] and "params" not in widgets["tasks"]
+    assert [p["id"] for p in widgets["upcoming"]["params"]] == ["days", "calendar", "form"] and "params" not in widgets["tasks"]
     assert widgets["upcoming"]["params"][0]["default"] == "7" and widgets["upcoming"]["params"][1]["all"] == "모든 캘린더"
     en = c.get("/auth/api/v1/me", headers={"Accept-Language": "en"}).json()
     days = next(w for x in en["cards"] if x["id"] == "calendar" for w in x["widgets"] if w["id"] == "upcoming")["params"][0]

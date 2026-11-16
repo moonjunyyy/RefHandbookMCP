@@ -72,7 +72,11 @@ const EN = {
   "{n}개 더": "{n} more",
   "{n}개": "{n}",
   "이전 달": "Previous month",
-  "다음 달": "Next month"
+  "다음 달": "Next month",
+  "적음": "Few",
+  "많음": "Many",
+  "오늘": "Today",
+  "가장 많은 날 {n}": "Busiest day {n}"
 };
 const LANGS = [["ko", "한국어"], ["en", "English"]];
 const CATALOGS = { en: EN };
@@ -1087,7 +1091,9 @@ function groupHead(title2, aside) {
 }
 function items(list, none, more) {
   const groups = isGroups(list) ? list.filter((g) => g.items.length) : [];
-  if (!groups.length && (isGroups(list) || !list.length)) return h("p", { class: "items-none muted small" }, none);
+  if (!groups.length && (isGroups(list) || !list.length)) {
+    return h("p", { class: "items-none muted small" }, typeof none === "string" ? none : [none.text, " ", h("a", { href: none.href }, none.label)]);
+  }
   return h(
     "div",
     { class: "items" },
@@ -1197,13 +1203,40 @@ function bars(list, none) {
     return h("li", null, b.href ? h("a", { href: b.href }, inner) : h("span", null, inner));
   }));
 }
+function legend(text, scale) {
+  return h(
+    "div",
+    { class: "form-said" },
+    h("span", null, text),
+    scale && h(
+      "span",
+      { class: `form-scale scale-${scale}`, "aria-hidden": "true" },
+      t("적음"),
+      [...Array(LEVELS)].map((_, i) => h("i", { "data-level": String(i + 1) })),
+      t("많음")
+    )
+  );
+}
 function activity(days, label) {
   const max = Math.max(0, ...days.map((d) => d.n));
-  return h("div", { class: "activity", role: "img", "aria-label": label }, days.map((d) => {
-    const col = h("span", { class: "act", "data-level": level(d.n, max), title: `${d.date.toLocaleDateString(locale(), { month: "numeric", day: "numeric" })} · ${d.n}` });
-    col.style.setProperty("--v", String(max > 0 ? d.n / max : 0));
-    return col;
-  }));
+  const short = (d) => d.toLocaleDateString(locale(), { month: "numeric", day: "numeric" });
+  const last = days.length ? days[days.length - 1].date : null;
+  return h(
+    "div",
+    { class: "form" },
+    h("div", { class: "activity", role: "img", "aria-label": label }, days.map((d) => {
+      const col = h("span", { class: "act", "data-level": level(d.n, max), title: `${short(d.date)} · ${d.n}` });
+      col.style.setProperty("--v", String(max > 0 ? d.n / max : 0));
+      return col;
+    })),
+    last && h(
+      "div",
+      { class: "form-ends", "aria-hidden": "true" },
+      h("span", null, short(days[0].date)),
+      h("span", null, dayKey(last) === dayKey(/* @__PURE__ */ new Date()) ? t("오늘") : short(last))
+    ),
+    legend(max > 0 ? `${label} · ${t("가장 많은 날 {n}", { n: max })}` : label)
+  );
 }
 const openWord = () => t("열기");
 function guide(id, title2, steps, _host) {
@@ -1354,6 +1387,7 @@ export {
   keysDialog,
   lang,
   launcher,
+  legend,
   link,
   load,
   locale,

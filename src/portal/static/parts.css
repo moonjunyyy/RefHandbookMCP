@@ -376,8 +376,10 @@ a.primary:hover { background: var(--accent-fill-hover, var(--accent-hover)); col
    (from the sizes the site declares), its head is the drag handle, its corner grip resizes it, its ⋯ shows on hover */
 .widgets { display: grid; gap: var(--gap); grid-template-columns: var(--home-grid); grid-auto-rows: minmax(var(--cell), auto);
            grid-auto-flow: dense; margin-top: var(--s2); }
+/* the grid's columns with nothing in them: the main page asks it how many columns the window gives (pages/home.ts) */
+.widgets-ruler { display: grid; gap: var(--gap); grid-template-columns: var(--home-grid); height: 0; visibility: hidden; }
 .widget { position: relative; min-width: 0; display: flex; flex-direction: column; }
-@media (max-width: 560px) { .widgets { grid-template-columns: 1fr; } .widget { grid-column: span 1 !important; } }
+@media (max-width: 560px) { .widgets, .widgets-ruler { grid-template-columns: 1fr; } .widget { grid-column: span 1 !important; } }
 .widget > .widget-head { display: flex; align-items: center; gap: var(--s1); margin-bottom: var(--s2); font-size: .82rem; color: var(--muted); }
 .widget > .widget-head a { color: inherit; text-decoration: none; }
 .widget > .widget-head a:hover { color: var(--accent); }

@@ -209,7 +209,7 @@ async function run() {
   await page.focus('.widgets .widget:nth-child(2)');
   await page.keyboard.press('Shift+F10');
   await page.waitForSelector('.menu[role=menu]');
-  step('칸의 메뉴가 키보드로 열리고 설정·크기 넷·앞으로·뒤로·빼기다', JSON.stringify(await menuItems(page)) === '["설정","1×1","2×1","1×2","2×2","앞으로","뒤로","빼기"]' && (await page.evaluate(() => document.activeElement.classList.contains('menu-item'))), JSON.stringify(await menuItems(page)));
+  step('칸의 메뉴가 키보드로 열리고 설정·선언된 크기·앞으로·뒤로·빼기다', JSON.stringify(await menuItems(page)) === '["설정","1×1","2×1","1×2","2×2","3×1","3×2","4×2","앞으로","뒤로","빼기"]' && (await page.evaluate(() => document.activeElement.classList.contains('menu-item'))), JSON.stringify(await menuItems(page)));
   await page.keyboard.press('Escape');
   await sleep(100);
   step('Esc 로 닫히고 초점이 칸으로 돌아온다', !(await page.$('.menu[role=menu]')) && (await page.evaluate(() => document.activeElement.classList.contains('widget'))));
@@ -910,6 +910,53 @@ async function run() {
   step('선언에 없는 값은 기본값으로, 없어진 캘린더는 전부로 그린다 (C58)', w9[0].days === 7 && w9[0].text.includes('설정 하나') && w9[0].text.includes('설정 둘') && w9[0].head.endsWith('다가오는 일'), JSON.stringify(w9));
   await page.evaluate(async (ids) => { const { api } = await import('/auth/static/site.js'); for (const id of ids) await api('/calendar/api/v1').del(`/events/${id}`); },
     mock.events().filter((e) => e.summary.startsWith('설정 ')).map((e) => e.id));
+  mock.put('site', 'prefs', w9Prefs);
+
+  // (w10) the forms say what they show; a form as a setting; an empty list's way in; larger sizes (C61–C64)
+  mock.put('site', 'prefs', { ...w9Prefs, apps: ['calendar', 'vault'], homeCustomized: true,
+                              home: [{ app: 'calendar', widget: 'upcoming', size: '4x2' }, { app: 'vault', widget: 'recent' }, { app: 'calendar', widget: 'month' }] });
+  await open(page, `${BASE}/`, `${w9cell} .day-strip`);
+  await page.waitForSelector('.widget[data-widget=recent] .activity');
+  await page.waitForSelector('.widget[data-widget=month] .month-grid');
+  const w10 = await page.evaluate(async () => {
+    const said = (s) => document.querySelector(`${s} .form-said`)?.textContent ?? '';
+    const scale = (s) => [...document.querySelectorAll(`${s} .form-scale i`)].map((i) => getComputedStyle(i).backgroundColor);
+    const site = await import('/auth/static/site.js');
+    const part = site.activity([{ date: new Date(Date.now() - 864e5), n: 2 }, { date: new Date(), n: 5 }], '말');  // the part itself: the mock's notes are older than the run
+    return { busiest: part.querySelector('.form-said').textContent, levels: [...part.querySelectorAll('.act')].map((a) => a.dataset.level).join(),
+             act: said('.widget[data-widget=recent] .form'), ends: [...document.querySelectorAll('.widget[data-widget=recent] .form-ends span')].map((e) => e.textContent),
+             strip: said('.widget[data-widget=upcoming]'), days: scale('.widget[data-widget=upcoming]'), month: said('.widget[data-widget=month]'), shades: scale('.widget[data-widget=month]'),
+             legend: typeof site.legend === 'function', sizes: site.frame.sizes.length };
+  });
+  step('형식이 무엇을 보이는지 제 밑에 적는다: 흐름의 처음·오늘과 말(가장 많은 날의 수), 띠와 달의 농도 범례 (C61)', w10.act.includes('고친 노트') && w10.ends.length === 2 && w10.ends[1] === '오늘'
+    && w10.busiest === '말 · 가장 많은 날 5' && w10.levels === '2,3'
+    && w10.strip.includes('적음') && w10.strip.includes('많음') && w10.days.length === 3 && new Set(w10.days).size === 3
+    && w10.month.includes('많은 날') && w10.shades.length === 3 && new Set(w10.shades).size === 3 && w10.legend, JSON.stringify(w10));
+  const w10span = () => page.$eval(w9cell, (e) => [e.style.gridColumn, getComputedStyle(e.parentElement).gridTemplateColumns.split(' ').length, document.documentElement.scrollWidth <= document.documentElement.clientWidth]);
+  const w10wide = await w10span();
+  const w10view = page.viewportSize();
+  await page.setViewportSize({ width: 700, height: w10view.height });
+  await sleep(400);
+  const w10narrow = await w10span();
+  await page.setViewportSize(w10view);
+  await sleep(400);
+  const w10back = await w10span();
+  step('큰 크기: 칸은 격자의 열 수를 넘지 않는다 — 좁아지면 있는 열을 다 쓰고 옆으로 넘치지 않으며, 넓어지면 제 크기다 (C64)', w10.sizes === 7 && w10wide[0] === `span ${Math.min(4, w10wide[1])}` && w10wide[2]
+    && w10narrow[1] < 4 && w10narrow[0] === `span ${w10narrow[1]}` && w10narrow[2] && w10back[0] === w10wide[0], JSON.stringify([w10wide, w10narrow, w10back]));
+  await w9menu(0, '설정');
+  await page.waitForSelector('dialog[open] select[name=form]');
+  const w10forms = await page.$$eval('dialog[open] select[name=form] option', (os) => os.map((o) => o.textContent));
+  await page.selectOption('dialog[open] select[name=form]', 'list');
+  await page.click('dialog[open] button:text-is("저장")');
+  await page.waitForFunction((sel) => document.querySelector(sel) && !document.querySelector(`${sel} .day-strip`) && document.querySelector(`${sel} .widget-head`).textContent.includes('목록만'), w9cell);
+  step('모양을 설정으로 고른다: 목록만 고르면 띠와 그 범례가 빠지고 머리에 그 말이 선다 (C63)', w10forms.join() === '띠와 목록,목록만,띠만' && w9home()[0].params.form === 'list'
+    && !(await page.$(`${w9cell} .form-scale`)), JSON.stringify([w10forms, w9home()]));
+  const w10cal = await page.evaluate(async () => { const { api } = await import('/auth/static/site.js'); return api('/calendar/api/v1').post('/calendars', { name: '빈 캘린더' }); });
+  mock.put('site', 'prefs', { ...w9Prefs, apps: ['calendar', 'vault'], homeCustomized: true, home: [{ app: 'calendar', widget: 'upcoming', params: { calendar: w10cal.id } }] });
+  await open(page, `${BASE}/`, `${w9cell} .items-none`);
+  const w10none = await page.$eval(`${w9cell} .items-none`, (e) => [e.textContent, e.querySelector('a')?.getAttribute('href'), e.querySelector('a')?.textContent]);
+  step('빈 목록은 첫 항목으로 가는 길을 함께 적는다 (C62)', w10none[0].includes('일정이 없습니다') && w10none[1] === '/calendar' && w10none[2] === '일정 만들기', JSON.stringify(w10none));
+  await page.evaluate(async (id) => { const { api } = await import('/auth/static/site.js'); await api('/calendar/api/v1').del(`/calendars/${id}`); }, w10cal.id);
   mock.put('site', 'prefs', w9Prefs);
 
   // (h) the theme: chosen in the settings, applied at once, kept as the cookie and in the account, survives a reload

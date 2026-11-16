@@ -38,7 +38,7 @@
 # (its widgets: [[app.widget]], docs/frame.md §4). `optional = false` keeps an app out of the catalog and in
 # the person's own menu (the account); `default = true` has an optional app on for an account with no settings
 # kept yet (docs/frame.md §2). A widget: id, title, description (one line, for the person choosing it),
-# module, size (one of portal/site.py SIZES: 1x1 | 2x1 | 1x2 | 2x2 — the person may resize a placed one),
+# module, size (one of portal/site.py SIZES, columns x rows: 1x1 … 4x2 — the person may resize a placed one),
 # tr.en = { title, description }. Its settings, which a person keeps with each place they give the widget:
 # [[app.widget.param]] — id, label, and either default with choices = [{ value, label }] or
 # from = { path, list, value, label } (the person's own objects, read from a path of the site) with all (the
@@ -699,6 +699,12 @@ link = [{ label = "캘린더", href = "/calendar", tr = { en = "Calendar" } }]
     from = { path = "/calendar/api/v1/calendars", list = "calendars", value = "id", label = "name" }
     all = "모든 캘린더"
     tr.en = { label = "Calendar", all = "All calendars" }
+    [[app.widget.param]]
+    id = "form"
+    label = "모양"
+    default = "both"
+    choices = [{ value = "both", label = "띠와 목록" }, { value = "list", label = "목록만" }, { value = "strip", label = "띠만" }]
+    tr.en = { label = "Form", choices = { both = "Strip and list", list = "List only", strip = "Strip only" } }
   [[app.widget]]
   id = "month"
   title = "이번 달"
@@ -771,6 +777,12 @@ link = [{ label = "노트", href = "/vault", tr = { en = "Notes" } }]
     from = { path = "/vault/api/v1/vaults", list = "vaults", value = "id", label = "name" }
     all = "첫 볼트"
     tr.en = { label = "Vault", all = "The first vault" }
+    [[app.widget.param]]
+    id = "form"
+    label = "모양"
+    default = "both"
+    choices = [{ value = "both", label = "흐름과 목록" }, { value = "list", label = "목록만" }]
+    tr.en = { label = "Form", choices = { both = "Activity and list", list = "List only" } }
   [[app.widget]]
   id = "tags"
   title = "태그"

@@ -5,10 +5,11 @@
 //   upcoming — the days ahead (the place's setting: 3, 7 or 14) as a strip (how full each is, in its calendars' colours), then their events by day.
 //   month    — the month, each day shaded by how full it is; a day picked shows its events under it; ‹ › move.
 //   tasks    — the to-do list (written and checked in place) by when it is due, with how much is done.
-// A place's settings (ctx.params): which calendar (today, upcoming, month), how many days (upcoming).
+// A place's settings (ctx.params): which calendar (today, upcoming, month), how many days and which form — the strip
+// and the list, or one of them (upcoming). A form that shades days carries its legend.
 // Built by web/ into dist/widgets/calendar.js and declared in the site file as an absolute module path.
 
-import { api, ago, dayKey, dayStrip, fit, h, items, monthGrid, replace, stats } from '/auth/static/site.js';
+import { api, ago, dayKey, dayStrip, fit, h, items, legend, monthGrid, replace, stats } from '/auth/static/site.js';
 import type { Item, ItemGroup, WidgetContext } from '/auth/static/site.js';
 import { t } from '../src/lib/i18n';
 import { dueWord, taskList, Task } from '../src/lib/tasks';
@@ -122,8 +123,9 @@ async function upcoming(host: HTMLElement, ctx: WidgetContext): Promise<void> {
   const total = byDay.reduce((n, d) => n + d.list.length, 0);
   const strips: HTMLElement[] = [];  // a strip is a week long: a longer span is a strip per week
   for (let i = 0; i < byDay.length; i += WEEK) strips.push(dayStrip(byDay.slice(i, i + WEEK).map(d => ({ date: d.date, n: d.list.length, marks: d.list.map(colour), href: dayHref(d.key) })), now));
-  replace(host, strips,
-    items(groups, t('앞으로 {n}일 동안 일정이 없습니다.', { n }), total > room ? { href: '/calendar', n: total - room } : undefined));
+  const form = ctx.params?.form || 'both';  // the place's form: the strip and the list, or one of them
+  replace(host, form !== 'list' && [strips, legend(t('점은 그 날의 일정 · 진할수록 일정이 많은 날'), 'days')],
+    form !== 'strip' && items(groups, { text: t('앞으로 {n}일 동안 일정이 없습니다.', { n }), href: '/calendar', label: t('일정 만들기') }, total > room ? { href: '/calendar', n: total - room } : undefined));
 }
 
 async function month(host: HTMLElement, ctx: WidgetContext): Promise<void> {
@@ -158,7 +160,7 @@ async function month(host: HTMLElement, ctx: WidgetContext): Promise<void> {
     if (fromServer(picked).getMonth() !== mon) picked = dayKey(first);
     drawGrid(); drawAgenda();
   }
-  replace(host, grid, agenda);
+  replace(host, grid, legend(t('진할수록 일정이 많은 날'), 'month'), agenda);
   await load();
 }
 

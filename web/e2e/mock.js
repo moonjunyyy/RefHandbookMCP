@@ -18,6 +18,8 @@ const W = (app) => `/apps/site/widgets/${app}.js`;
 // a widget's settings as /me carries them (deploy/site.toml's [[app.widget.param]])
 const P_CAL = { id: 'calendar', label: '캘린더', default: '', from: { path: '/calendar/api/v1/calendars', list: 'calendars', value: 'id', label: 'name' }, all: '모든 캘린더' };
 const P_DAYS = { id: 'days', label: '기간', default: '7', choices: [{ value: '3', label: '3일' }, { value: '7', label: '7일' }, { value: '14', label: '14일' }] };
+const P_FORM_UP = { id: 'form', label: '모양', default: 'both', choices: [{ value: 'both', label: '띠와 목록' }, { value: 'list', label: '목록만' }, { value: 'strip', label: '띠만' }] };
+const P_FORM_RECENT = { id: 'form', label: '모양', default: 'both', choices: [{ value: 'both', label: '흐름과 목록' }, { value: 'list', label: '목록만' }] };
 const P_VAULT = { id: 'vault', label: '볼트', default: '', from: { path: '/vault/api/v1/vaults', list: 'vaults', value: 'id', label: 'name' }, all: '첫 볼트' };
 const CARDS = [
   { id: 'account', title: '계정', description: '내 프로필과 비밀번호', about: '프로필과 비밀번호를 고칩니다.', tags: [], code: '', icon: '👤', href: '/account/', optional: false,
@@ -25,11 +27,11 @@ const CARDS = [
   { id: 'projects', title: '프로젝트', description: '함께 쓰는 그룹', about: '프로젝트는 사람들이 직접 만드는 그룹입니다.', tags: ['자료'], code: '', icon: '🧩', href: '/projects', optional: true, default: true,
     links: [{ label: '프로젝트', href: '/projects' }], widgets: [{ id: 'mine', title: '내 프로젝트', description: '내가 든 프로젝트와 그 캘린더로 바로', href: W('projects'), size: '1x1' }] },
   { id: 'calendar', title: '캘린더', description: '내 일정과 프로젝트 일정을 한 달력에', about: '내 캘린더와 프로젝트의 캘린더를 한 달력에 겹쳐 봅니다. 구독 주소를 폰에 넣을 수 있습니다.', tags: ['일정'], code: '', icon: '📅', href: '/calendar', optional: true, default: true,
-    links: [{ label: '캘린더', href: '/calendar' }], widgets: [{ id: 'today', params: [P_CAL], title: '오늘', description: '오늘의 일정과 마감인 할 일 — 넓은 칸', href: W('calendar'), size: '2x1' }, { id: 'upcoming', params: [P_DAYS, P_CAL], title: '다가오는 일', description: '앞으로 7일의 일정', href: W('calendar'), size: '1x1' },
+    links: [{ label: '캘린더', href: '/calendar' }], widgets: [{ id: 'today', params: [P_CAL], title: '오늘', description: '오늘의 일정과 마감인 할 일 — 넓은 칸', href: W('calendar'), size: '2x1' }, { id: 'upcoming', params: [P_DAYS, P_CAL, P_FORM_UP], title: '다가오는 일', description: '앞으로 7일의 일정', href: W('calendar'), size: '1x1' },
              { id: 'month', params: [P_CAL], title: '이번 달', description: '한 달을 한눈에', href: W('calendar'), size: '2x2' },
              { id: 'tasks', title: '할 일', description: '체크리스트 — 홈에서 바로 적고, 끝나면 체크', href: W('calendar'), size: '1x1' }] },
   { id: 'vault', title: '노트', description: 'Obsidian 볼트를 브라우저에서', about: '내 저장소의 마크다운 볼트를 읽고 고칩니다. 검색, 백링크, 최근 노트.', tags: ['글쓰기', '연구'], code: '', icon: '📝', href: '/vault', optional: true, default: true,
-    links: [{ label: '노트', href: '/vault' }], widgets: [{ id: 'recent', params: [P_VAULT], title: '최근 노트', description: '마지막으로 고친 노트 다섯', href: W('vault'), size: '1x1' },
+    links: [{ label: '노트', href: '/vault' }], widgets: [{ id: 'recent', params: [P_VAULT, P_FORM_RECENT], title: '최근 노트', description: '마지막으로 고친 노트 다섯', href: W('vault'), size: '1x1' },
                                                           { id: 'tags', params: [P_VAULT], title: '태그', description: '볼트의 태그', href: W('vault'), size: '1x1' }, { id: 'home', title: 'Home', description: '볼트의 Home 노트를 그대로 — 큰 칸', href: W('vault'), size: '2x2' }] },
   { id: 'eq-sandbox', title: '수식 플립플롭', description: '수식을 블록처럼 뒤집고 옮기는 작업판', about: '방정식의 항을 끌어 옮기고 뒤집어 정리합니다.', tags: ['연구', '도구'], code: '', icon: '🧮', href: '/apps/eq-sandbox/', optional: true,
     links: [{ label: '열기', href: '/apps/eq-sandbox/' }], widgets: [{ id: 'boards', title: '최근 작업판', description: '최근에 연 작업판으로 바로', href: '/apps/eq-sandbox/widget.js', size: '1x1' }] },
@@ -40,7 +42,8 @@ const CARDS = [
 ];
 const PAGES = ['/', '/apps', '/settings', '/account', '/account/', '/agents', '/agents/', '/calendar', '/vault', '/projects', '/board'];
 // the sizes a cell may have (portal/site.py SIZES, as /me carries them)
-const SIZES = [{ id: '1x1', cols: 1, rows: 1 }, { id: '2x1', cols: 2, rows: 1 }, { id: '1x2', cols: 1, rows: 2 }, { id: '2x2', cols: 2, rows: 2 }];
+const SIZES = [{ id: '1x1', cols: 1, rows: 1 }, { id: '2x1', cols: 2, rows: 1 }, { id: '1x2', cols: 1, rows: 2 }, { id: '2x2', cols: 2, rows: 2 },
+               { id: '3x1', cols: 3, rows: 1 }, { id: '3x2', cols: 3, rows: 2 }, { id: '4x2', cols: 4, rows: 2 }];
 // the look's choices (the site file's [look], as /me carries them — run.sh reads them with portal/site.py)
 const GUIDES = ['home', 'apps', 'calendar', 'vault', 'projects', 'agents', 'settings', 'account', 'wordgen'].map(id => id + ':1');
 const LOOK = JSON.parse(process.env.LOOK_JSON || 'null') || { palette: [], corner: [], type: [], size: [], columns: [] };

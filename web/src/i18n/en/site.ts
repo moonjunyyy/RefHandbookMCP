@@ -302,6 +302,10 @@ export const SITE: Record<string, string> = {
   '지금': 'now',
   '크기': 'Size',
   '하나 더': 'One more',
+  '일정 만들기': 'Make an event',
+  '노트 쓰기': 'Write a note',
+  '점은 그 날의 일정 · 진할수록 일정이 많은 날': 'A dot is an event of that day · the darker, the fuller the day',
+  '진할수록 일정이 많은 날': 'The darker, the fuller the day',
   // the to-do list (widgets/calendar.ts, pages/calendar.ts; docs/apps-vault-calendar.md §7.3)
   '내일': 'Tomorrow',
   '{n}일 지남': '{n} days late',
@@ -345,6 +349,6 @@ export const SITE: Record<string, string> = {
   '지남': 'Overdue',
   '최근 {n}일 동안 날마다 고친 노트 수': 'Notes changed each day over the last {n} days',
   '태그': 'Tags',
-  '태그가 없습니다.': 'No tags.',
+  '태그가 없습니다. 노트에 #태그 를 적으면 여기에 모입니다.': 'No tags. Write #tag in a note and it gathers here.',
   '보관됨': 'Archived',
 };

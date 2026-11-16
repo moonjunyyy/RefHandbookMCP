@@ -152,11 +152,16 @@ export function groupHead(title: Child, aside?: Child): HTMLElement {
   return h('p', { class: 'items-group' }, h('span', null, title), aside !== undefined && aside !== null && h('span', { class: 'items-count' }, aside));
 }
 
+/** What an empty list says: a line, or a line and the way to its first item. */
+export type None = string | { text: string; href: string; label: string };
+
 /** A widget's list, one item a row — or its groups, each under its title. `none`: what an empty list says;
  * `more`: the rest that did not fit, as a link. */
-export function items(list: Item[] | ItemGroup[], none: string, more?: { href: string; n: number }): HTMLElement {
+export function items(list: Item[] | ItemGroup[], none: None, more?: { href: string; n: number }): HTMLElement {
   const groups = isGroups(list) ? list.filter(g => g.items.length) : [];
-  if (!groups.length && (isGroups(list) || !list.length)) return h('p', { class: 'items-none muted small' }, none);
+  if (!groups.length && (isGroups(list) || !list.length)) {
+    return h('p', { class: 'items-none muted small' }, typeof none === 'string' ? none : [none.text, ' ', h('a', { href: none.href }, none.label)]);
+  }
   return h('div', { class: 'items' },
     groups.length ? groups.map(g => [groupHead(g.title, g.aside), h('ul', { class: 'items-list' }, g.items.map(itemRow))])
       : h('ul', { class: 'items-list' }, (list as Item[]).map(itemRow)),
@@ -254,14 +259,28 @@ export function bars(list: Bar[], none: string): HTMLElement {
   }));
 }
 
-/** A run of days' counts as columns (what was done each day), the last today; its words for a reader. */
+/** What a form shows, in words under it — a form with no words is a picture to guess at. `scale`: for a form that
+ * draws counts as shades (a strip of days, a month), the shades from few to many in that form's own colours. */
+export function legend(text: string, scale?: 'days' | 'month'): HTMLElement {
+  return h('div', { class: 'form-said' }, h('span', null, text),
+    scale && h('span', { class: `form-scale scale-${scale}`, 'aria-hidden': 'true' },
+      t('적음'), [...Array(LEVELS)].map((_, i) => h('i', { 'data-level': String(i + 1) })), t('많음')));
+}
+
+/** A run of days' counts as columns (what was done each day), the last today — with its ends and its words under it. */
 export function activity(days: { date: Date; n: number }[], label: string): HTMLElement {
   const max = Math.max(0, ...days.map(d => d.n));
-  return h('div', { class: 'activity', role: 'img', 'aria-label': label }, days.map(d => {
-    const col = h('span', { class: 'act', 'data-level': level(d.n, max), title: `${d.date.toLocaleDateString(locale(), { month: 'numeric', day: 'numeric' })} · ${d.n}` });
-    col.style.setProperty('--v', String(max > 0 ? d.n / max : 0));
-    return col;
-  }));
+  const short = (d: Date) => d.toLocaleDateString(locale(), { month: 'numeric', day: 'numeric' });
+  const last = days.length ? days[days.length - 1].date : null;
+  return h('div', { class: 'form' },
+    h('div', { class: 'activity', role: 'img', 'aria-label': label }, days.map(d => {
+      const col = h('span', { class: 'act', 'data-level': level(d.n, max), title: `${short(d.date)} · ${d.n}` });
+      col.style.setProperty('--v', String(max > 0 ? d.n / max : 0));
+      return col;
+    })),
+    last && h('div', { class: 'form-ends', 'aria-hidden': 'true' }, h('span', null, short(days[0].date)),
+      h('span', null, dayKey(last) === dayKey(new Date()) ? t('오늘') : short(last))),
+    legend(max > 0 ? `${label} · ${t('가장 많은 날 {n}', { n: max })}` : label));
 }
 
 export const openWord = () => t('열기');

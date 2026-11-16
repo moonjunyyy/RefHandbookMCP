@@ -67,9 +67,15 @@ export interface ItemGroup {
 }
 /** The title a group of rows goes under (a day, a due, a folder), with its count. */
 export declare function groupHead(title: Child, aside?: Child): HTMLElement;
+/** What an empty list says: a line, or a line and the way to its first item. */
+export type None = string | {
+    text: string;
+    href: string;
+    label: string;
+};
 /** A widget's list, one item a row — or its groups, each under its title. `none`: what an empty list says;
  * `more`: the rest that did not fit, as a link. */
-export declare function items(list: Item[] | ItemGroup[], none: string, more?: {
+export declare function items(list: Item[] | ItemGroup[], none: None, more?: {
     href: string;
     n: number;
 }): HTMLElement;
@@ -120,7 +126,10 @@ export interface Bar {
     href?: string;
 }
 export declare function bars(list: Bar[], none: string): HTMLElement;
-/** A run of days' counts as columns (what was done each day), the last today; its words for a reader. */
+/** What a form shows, in words under it — a form with no words is a picture to guess at. `scale`: for a form that
+ * draws counts as shades (a strip of days, a month), the shades from few to many in that form's own colours. */
+export declare function legend(text: string, scale?: 'days' | 'month'): HTMLElement;
+/** A run of days' counts as columns (what was done each day), the last today — with its ends and its words under it. */
 export declare function activity(days: {
     date: Date;
     n: number;
