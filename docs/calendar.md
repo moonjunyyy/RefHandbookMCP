@@ -13,7 +13,7 @@ of weeks that scrolls on — the title and `?m=` follow the month in view; the w
 time, under the bound of one query), the week and the day (seven columns from Monday, or one, over an
 all-day row and 24 hours, overlapping events side by side, a line at the present time), and the list
 (the days ahead that have events, 30 at a time). The title goes up one level and a day goes down to its
-day (the picked day's title in the month, a day's head in the week); `g` goes to a date; on the hours a sideways swipe or wheel moves one range. An empty
+day (the picked day's title in the month, a day's head in the week); `g` goes to a date; on the hours a sideways swipe or wheel moves one range. In the head, what is pressed (‹ ›, today, the views, the scale) comes before the title, so nothing pressed moves when the title's length changes. The grid takes the room down to the window's lower edge and is fitted again when the window changes: the month shows six weeks of it and the hours the whole day, with nothing to scroll; `−` and `+` (in the head, and as keys) show more or fewer weeks (8, 6, 5, 4) or hours (24, 16, 12, 8, 6), the choice is kept in the browser, and neither grid draws a scrollbar. An empty
 slot pressed is a new event at that time, and an
 event is moved by dragging it onto another day or hour (`PATCH /events/<id>` with the new `start` and
 `end`, the length kept) — a repeating one is not dragged, its series is changed in the dialog. Every

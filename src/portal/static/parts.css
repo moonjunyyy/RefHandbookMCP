@@ -466,7 +466,9 @@ ul.plain li:first-child { border-top: 0; padding-top: 0; }
 /* ── the calendar (§3.3): one head row, a month grid, the day opened under it */
 .cal-head { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s4); align-items: center; justify-content: space-between; margin-bottom: var(--s3); }
 .cal-nav { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1); }
-.cal-nav h1 { margin: 0 var(--s1); font-size: 1.35rem; min-width: 9ch; text-align: center; }
+.cal-nav h1 { margin: 0 var(--s2); font-size: 1.35rem; }  /* after what is pressed: its length moves nothing */
+.cal-scale { display: inline-flex; }
+.cal-scale button.link:disabled { opacity: .4; cursor: default; }
 .cal-nav button.link { font-size: 1.4rem; line-height: 1; padding: 2px var(--s2); }
 .cal-nav > a { margin-left: var(--s2); }
 .cal-nav .chips { margin: 0 0 0 var(--s2); gap: var(--s1); }
@@ -478,12 +480,14 @@ ul.plain li:first-child { border-top: 0; padding-top: 0; }
 .cal-grid { display: flex; flex-direction: column; background: var(--line); border: 1px solid var(--line);
             border-radius: var(--grid-radius); overflow: hidden; }
 /* the month: weeks in a column that scrolls on, under the weekday names (calendar.ts drawGrid) */
-.cal-weeks { position: relative; display: flex; flex-direction: column; max-height: min(70vh, 720px); overflow-y: auto; overscroll-behavior: contain; }
+/* its height is the room down to the window's edge (--cal-h, calendar.ts fitMonth); it scrolls on with no bar: the weeks have no end to show */
+.cal-weeks { position: relative; display: flex; flex-direction: column; max-height: var(--cal-h, min(70vh, 720px)); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; }
+.cal-weeks::-webkit-scrollbar, .wk-body::-webkit-scrollbar { display: none; }
 .cal-wds, .cal-week { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); flex: none; }
 .cal-weeks, .cal-wds, .cal-week { gap: 1px; }  /* the lines between the days are the grid's ground showing through */
 .cal-wds { position: sticky; top: 0; z-index: 1; background: var(--line); border-bottom: 1px solid var(--line); }
 .cal-wd { overflow: hidden; text-overflow: ellipsis; background: var(--card);  /* the card, not soft: muted on soft is 4.29:1 */ padding: 6px; font-size: .78rem; color: var(--muted); text-align: center; }
-.cal-day { background: var(--card); min-height: 92px; padding: var(--s1) var(--s1) var(--s1); cursor: pointer; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.cal-day { background: var(--card); min-height: var(--cal-day, 92px); padding: var(--s1) var(--s1) var(--s1); cursor: pointer; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .cal-day:hover { background: var(--soft); }
 .cal-day.other .cal-num { color: var(--muted); }  /* another month: its number is dim; the background stays the card's (4.5:1) */
 .cal-day.today .cal-num { background: var(--accent-fill, var(--accent)); color: var(--accent-fill-text, var(--accent-text)); }
@@ -515,7 +519,7 @@ ul.plain li:first-child { border-top: 0; padding-top: 0; }
 .wk-day button.wk-num:hover { box-shadow: inset 0 0 0 1px var(--accent); }
 .wk-allday { border-bottom: 1px solid var(--line); min-height: 28px; }
 .wk-allcol { padding: 3px 2px; display: flex; flex-direction: column; gap: 2px; min-width: 0; border-left: 1px solid var(--line); }
-.wk-body { display: grid; grid-template-columns: 56px repeat(var(--wk-days, 7), minmax(0, 1fr)); max-height: min(70vh, 720px); overflow-y: auto; }
+.wk-body { display: grid; grid-template-columns: 56px repeat(var(--wk-days, 7), minmax(0, 1fr)); max-height: min(70vh, 720px); overflow-y: auto; scrollbar-width: none; }  /* the height is set to the room (calendar.ts drawWeek) */
 .wk-hours .wk-hour { font-size: .72rem; color: var(--muted); text-align: right; padding-right: var(--s1); transform: translateY(-.6em); font-variant-numeric: tabular-nums; }
 .wk-col { position: relative; border-left: 1px solid var(--line); cursor: pointer; }
 .wk-col .wk-line { border-top: 1px solid var(--line); box-sizing: border-box; }

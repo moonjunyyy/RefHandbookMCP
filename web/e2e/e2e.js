@@ -245,7 +245,7 @@ async function run() {
   await page.waitForSelector('.cal-grid .cal-day');
   await page.keyboard.press('?');
   await page.waitForSelector('dialog[open] ul.keys');
-  step('? 가 이 페이지의 키 목록을 보인다(선언 10 + 목록 1)', (await page.$$('dialog ul.keys li')).length === 11 && (await texts(page, 'dialog ul.keys li span')).includes('오늘'), JSON.stringify(await texts(page, 'dialog ul.keys li')));
+  step('? 가 이 페이지의 키 목록을 보인다(선언 12 + 목록 1)', (await page.$$('dialog ul.keys li')).length === 13 && (await texts(page, 'dialog ul.keys li span')).includes('오늘'), JSON.stringify(await texts(page, 'dialog ul.keys li')));
   await page.keyboard.press('Escape');
   await sleep(150);
   step('캘린더의 첫 요소는 달력이고 머리 한 줄이다', (await weeksOk(page)) && (await page.$$('.cal-sources .chip')).length === 2 && !(await page.$('main p.muted')));
@@ -404,14 +404,15 @@ async function run() {
   await page.waitForSelector('.wk-body');
   step('주 보기: 일곱 날의 머리·종일 줄·시간 격자, 달력은 비고 주소가 기억한다', (await page.$$('.wk-head .wk-day')).length === 7 && (await page.$$('.wk-allcol')).length === 7 && (await page.$$('.wk-col')).length === 7
     && (await page.$$('.wk-hours .wk-hour')).length === 24 && (await page.$$('.cal-grid .cal-day')).length === 0 && page.url().includes('v=week')
-    && (await page.$eval('.wk-body', (e) => e.scrollTop)) > 0, page.url());
+    && (await page.$eval('.wk-body', (e) => e.scrollHeight <= e.clientHeight + 1)), page.url());  // the whole day shows: nothing to scroll
+  const H = await page.$eval('.wk-body .wk-hour', (e) => e.getBoundingClientRect().height);  // an hour's height: the room over the 24 hours shown
   const allWk = await page.$(`.wk-allcol[data-day="${nextKey}"] .cal-ev`);
   const wkHasIt = !!allWk && (await allWk.textContent()).includes('랩 미팅');
   // the day it was moved to may be in the next week (moved on a Sunday: the weeks start on Monday) — then this week shows none
   const shownWeek = await page.$$eval('.wk-allcol', (els) => els.map((e) => e.dataset.day));
   step('종일 일정은 종일 줄의 그 날에 있다', wkHasIt || !shownWeek.includes(nextKey) && !(await page.$('.wk-allcol .cal-ev')) && (await page.$$('.wk-col')).length === 7, `${wkHasIt} ${nextKey} ${shownWeek.join()}`);
-  // a slot pressed: 10:00 of today (the column is 24 hours tall; the body is scrolled to the morning)
-  await page.click(`.wk-col[data-day="${todayKey}"]`, { position: { x: 10, y: 10 * 44 + 5 } });
+  // a slot pressed: 10:00 of today (the column is 24 hours tall, all of it in view)
+  await page.click(`.wk-col[data-day="${todayKey}"]`, { position: { x: 10, y: 10 * H + H / 9 } });
   await page.waitForSelector('dialog[open]');
   step('빈 칸을 누르면 그 시각의 새 일정이다', (await page.inputValue('dialog input[type=datetime-local] >> nth=0')) === `${todayKey}T10:00`
     && (await page.inputValue('dialog input[type=datetime-local] >> nth=1')) === `${todayKey}T11:00`, await page.inputValue('dialog input[type=datetime-local] >> nth=0'));
@@ -419,23 +420,23 @@ async function run() {
   await page.click('dialog button:text-is("저장")');
   await page.waitForSelector(`.wk-col[data-day="${todayKey}"] .wk-ev`);
   const ev1 = mock.events()[1];
-  step('주 보기의 일정은 그 시각 높이의 블록이다', (await page.$eval(`.wk-col[data-day="${todayKey}"] .wk-ev`, (e) => Math.round(parseFloat(e.style.top)))) === 440
-    && (await page.$eval(`.wk-col[data-day="${todayKey}"] .wk-ev`, (e) => Math.round(parseFloat(e.style.height)))) === 42
+  step('주 보기의 일정은 그 시각 높이의 블록이다', (await page.$eval(`.wk-col[data-day="${todayKey}"] .wk-ev`, (e) => Math.round(parseFloat(e.style.top)))) === Math.round(10 * H)
+    && (await page.$eval(`.wk-col[data-day="${todayKey}"] .wk-ev`, (e) => Math.round(parseFloat(e.style.height)))) === Math.round(Math.max(H - 2, 18))
     && new Date(ev1.start).getTime() === new Date(`${todayKey}T10:00`).getTime(), JSON.stringify(ev1));
   // dragged to 14:00 of the same day
   const col = await (await page.$(`.wk-col[data-day="${todayKey}"]`)).boundingBox();
   const blk = await (await page.$(`.wk-col[data-day="${todayKey}"] .wk-ev`)).boundingBox();
   await page.mouse.move(blk.x + blk.width / 2, blk.y + blk.height / 2);
   await page.mouse.down();
-  await page.mouse.move(col.x + col.width / 2, col.y + 14 * 44 + 8, { steps: 8 });
-  await page.mouse.move(col.x + col.width / 2, col.y + 14 * 44 + 10, { steps: 4 });
+  await page.mouse.move(col.x + col.width / 2, col.y + 14 * H + H / 6, { steps: 8 });
+  await page.mouse.move(col.x + col.width / 2, col.y + 14 * H + H / 5, { steps: 4 });
   await page.mouse.up();
   await sleep(400);
   const ev2 = mock.events()[1];
   step('주 보기에서 다른 시각으로 끌면 그 시각으로 옮겨 길이를 지킨다', new Date(ev2.start).getTime() === new Date(`${todayKey}T14:00`).getTime() && new Date(ev2.end) - new Date(ev2.start) === 3600e3
-    && (await page.$eval(`.wk-col[data-day="${todayKey}"] .wk-ev`, (e) => Math.round(parseFloat(e.style.top)))) === 14 * 44, JSON.stringify(ev2));
+    && (await page.$eval(`.wk-col[data-day="${todayKey}"] .wk-ev`, (e) => Math.round(parseFloat(e.style.top)))) === Math.round(14 * H), JSON.stringify(ev2));
   // a repeating event is not dragged: its series is changed in the dialog
-  await page.click(`.wk-col[data-day="${todayKey}"]`, { position: { x: 10, y: 16 * 44 + 5 } });
+  await page.click(`.wk-col[data-day="${todayKey}"]`, { position: { x: 10, y: 16 * H + H / 9 } });
   await page.waitForSelector('dialog[open]');
   await page.fill('dialog input[name=summary]', '주간 회의');
   await page.selectOption('dialog select[name=rrule]', 'FREQ=WEEKLY');
@@ -511,7 +512,7 @@ async function run() {
   step('달에서 고른 날의 제목을 누르면 그 날의 일 보기다: 한 열, 24시간, 종일 줄 (C43, C45)', (await page.$$('.wk-col')).length === 1 && (await page.$$('.wk-hours .wk-hour')).length === 24 && (await page.$$('.wk-allcol')).length === 1
     && page.url().includes(`v=day&d=${todayKey}`) && (await page.$eval('.wk-col', (e) => e.dataset.day)) === todayKey, page.url());
   await page.$eval('.wk-body', (e) => { e.scrollTop = 0; });
-  await page.click('.wk-col', { position: { x: 40, y: 44 * 5 + 4 } });
+  await page.click('.wk-col', { position: { x: 40, y: H * 5 + H / 11 } });
   await page.waitForSelector('dialog[open]');
   const slot = await page.inputValue('dialog input[type=datetime-local] >> nth=0');
   await page.keyboard.press('Escape');
