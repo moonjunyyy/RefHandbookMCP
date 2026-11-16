@@ -91,12 +91,17 @@ def test_a_change_outside_a_ledger_ends_with_the_loops_state(rs, monkeypatch):  
     s = tok(_call("research_begin", ledger="geo"))
     out = _call("relate", src="disk-full", type="see_also", dst="rs-n1").splitlines()
     assert out[0] == "[disk-full] see_also -> [rs-n1]"
-    assert re.fullmatch(rf"LOOP  open: geo {s} \(chat, used \d+ s ago\)", out[-1]), out[-1]
+    count = rf" · 1 changing call since a chat session was last used \(\d+ s ago\)"  # begin moved that moment
+    assert re.fullmatch(rf"LOOP  open: geo {s} \(chat, used \d+ s ago\)" + count, out[-1]), out[-1]
+    assert _call("relate", src="disk-full", type="see_also", dst="rs-x7").splitlines()[-1].split(" · ")[1].startswith("2 changing calls")
+    rs.add("geo", s, "U", "a question", "user", "active")  # a research call: the count starts again
+    assert " · 1 changing call since" in _call("unrelate", src="disk-full", type="see_also", dst="rs-x7")
     for reading in (_call("lookup", situation="disk full"), _call("open_entry", id="disk-full"),
                     _call("research_ledgers", action="list"), _call("research_show", ledger="geo")):
         assert "LOOP  " not in reading  # reads and the loop's own tools carry their state already
     _call("research_end", ledger="geo", session=s, idle="nothing was asked")
-    assert _call("delete_entry", id="disk-full").splitlines()[-1].startswith("LOOP  no session is open")
+    last = _call("delete_entry", id="disk-full").splitlines()[-1]
+    assert last.startswith("LOOP  no session is open · 1 changing call since a chat session was last used") and "rs-x7" in last
 
 
 def test_only_the_changing_calls_of_a_mixed_tool_show_it(monkeypatch):
@@ -115,7 +120,9 @@ def test_the_line_names_the_most_recent_sessions_and_counts_the_rest():
             for i, age in enumerate((30, 600, 7200 * 2, 86400 * 6, 86400 * 9))]
     assert render.loop_state(live, now) == ("LOOP  open: l0 S1-0 (chat, used 30 s ago); l1 S1-1 (chat, used 10 min ago); "
                                             "l2 S1-2 (chat, used 4 h ago); and 2 older")
-    assert render.loop_state([], now).startswith("LOOP  no session is open: this call ran outside the loop.")
+    assert render.loop_state([], now).startswith("LOOP  no session is open. Work that has a ledger")
+    stale = render.loop_state(live[3:], now, calls=37, last_used=now - 9 * 3600)  # only old sessions of other chats
+    assert stale.endswith("; l4 S1-4 (chat, used 9 d ago) · 37 changing calls since a chat session was last used (9 h ago)")
 
 
 # 5 ── the instructions are the loop; a loop diagnosis reaches the rule review ──

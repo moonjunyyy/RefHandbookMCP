@@ -116,7 +116,10 @@ search                                (FTS5: title, triggers, condition, body)
 
 A tool that changes something outside a ledger (`save_entry`, `relate`, `run`, a `files` write, a
 `cap` change, an entry ref …) ends its result with one line, `LOOP  …`: the sessions the store has
-open, most recently used first, or that none is open. The session loop's state lives in the store,
+open, most recently used first, or that none is open, and how many changing calls were made since a
+chat session was last used. Inside the loop that count starts again with every research call;
+outside it only grows, whatever sessions other conversations left open. It stands in for the stop
+hook the cards name (a message answered without a session): card `rs-x7`, missed messages. The session loop's state lives in the store,
 and this is where a caller that skipped `research_begin` (or lost it with its context) meets it: at
 the call that does the work. The line states what the store knows and nothing else; reads and the
 research tools do not carry it (`server.CHANGES` names the changing calls of the mixed tools).

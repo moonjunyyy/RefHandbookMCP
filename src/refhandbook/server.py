@@ -97,7 +97,14 @@ def _loop_line() -> str:
     from .kernel import runtime, sessions
 
     try:
-        return render.loop_state(sessions.all_open(runtime.attach(handbook()).g), time.time())
+        hb = handbook()
+        g = runtime.attach(hb).g
+        last = sessions.last_chat_use(g)
+        # the changing calls since a chat session was last used: counted on the store, started again
+        # whenever a research call has moved that moment
+        seen, calls = getattr(hb, "_loop_calls", (None, 0))
+        hb._loop_calls = (last, calls + 1 if seen == last else 1)
+        return render.loop_state(sessions.all_open(g), time.time(), hb._loop_calls[1], last)
     except Exception:  # noqa: BLE001 — the line is a display; the tool's own result stands without it
         log.exception("could not read the open sessions")
         return ""

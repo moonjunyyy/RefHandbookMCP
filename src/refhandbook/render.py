@@ -111,16 +111,24 @@ def _ago(seconds: float) -> str:
     return f"{int(max(seconds, 0))} s"
 
 
-def loop_state(open_sessions: list[dict[str, Any]], now: float) -> str:
+def loop_state(open_sessions: list[dict[str, Any]], now: float, calls: int | None = None,
+               last_used: float | None = None) -> str:
     """The state of the session loop as the store has it, on one line: the open sessions (most recently
-    used first) or that there is none. A tool that changes something outside a ledger ends its result
-    with it, so whether the work is inside a session is shown where the work happens, not remembered."""
+    used first) or that there is none, and `calls`, the changing calls made since a chat session was
+    last used (at `last_used`). Inside the loop that count starts again with every research call;
+    outside it only grows, whatever sessions other conversations left open. A tool that changes
+    something outside a ledger ends its result with this line, so whether the work is inside a session
+    is shown where the work happens, not remembered."""
+    count = ""
+    if calls is not None:
+        since = f"{_ago(now - last_used)} ago" if last_used else "never"
+        count = f" · {calls} changing call{'' if calls == 1 else 's'} since a chat session was last used ({since})"
     if not open_sessions:
-        return ("LOOP  no session is open: this call ran outside the loop. A message about the user's work is "
-                "answered inside a session of its ledger: research_begin(ledger=…) first (card rs-n1).")
+        return (f"LOOP  no session is open{count}. Work that has a ledger is answered inside a session of it: "
+                "research_begin(ledger=…) first (card rs-n1); calls made without one are missed messages (card rs-x7).")
     shown = [f"{s['scope']} {s['id']} ({s['role']}, used {_ago(now - s['active'])} ago)" for s in open_sessions[:LOOP_SHOWN]]
     more = len(open_sessions) - len(shown)
-    return "LOOP  open: " + "; ".join(shown) + (f"; and {more} older" if more > 0 else "")
+    return "LOOP  open: " + "; ".join(shown) + (f"; and {more} older" if more > 0 else "") + count
 
 
 def candidates(situation: str, rows: list[dict[str, Any]]) -> str:
