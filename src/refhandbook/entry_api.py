@@ -58,6 +58,25 @@ def tag_id(name: str) -> str:
     return "tag:" + t
 
 
+# The structure every ledger is reconstructed to: an entry node routes to the ledger, to its live
+# knowledge rows and to its cards, and carries the tag `structure:<STRUCTURE>` once all are routed.
+# Raising the structure means changing this name: the server's instructions carry it with the order
+# to reconstruct, and every ledger then counts as not reconstructed until its entry carries the new tag.
+STRUCTURE = "entry-1"
+
+
+def reconstructed(g: Graph, ledger: str) -> bool:
+    """Whether a ledger is an entry of the current structure: an entry node routes to it and carries
+    the structure's tag. Read from the graph alone: no session on the ledger is needed to know it."""
+    tag = tag_id(f"structure:{STRUCTURE}")
+    for (src,) in g.db.execute("SELECT src FROM k_edges WHERE dst = ? AND type = 'ref'", (ledger,)).fetchall():
+        n = g.get_node(src)
+        if n is not None and n["type"] == "entry" and g.db.execute(
+                "SELECT 1 FROM k_edges WHERE src = ? AND type = 'tagged' AND dst = ?", (src, tag)).fetchone():
+            return True
+    return False
+
+
 def entry_node(
     title: Annotated[str, Field(description="The topic, as a reader names it: one line.")],
     id: Annotated[str, Field(description="An entry node to retitle; empty makes a new one.")] = "",
