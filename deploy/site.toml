@@ -578,7 +578,7 @@ public = true
 storage = true  # each person's settings (language, theme, start page, the apps they turned on, their main page)
 card = false
 build = "web/dist"
-pages = ["/", "/apps", "/app/", "/settings", "/projects", "/projects/", "@@portal_root@@/", "/agents/", "/calendar", "/vault", "/vault/", "/board"]
+pages = ["/", "/apps", "/app/", "/settings", "/projects", "/projects/", "@@portal_root@@/", "/agents/", "/calendar", "/vault", "/vault/", "/board", "/handbook"]
   [[app.route]]
   path = "/agents"
   match = "exact"
@@ -873,6 +873,13 @@ tr.en = { title = "Handbook", description = "Research cards and ledgers, plugged
 code = "https://@@domain@@/mcp"
 audience = "refhandbook"
 upstream = "@@upstream:handbook@@"
+link = [{ label = "지식 그래프", href = "/handbook", tr = { en = "Knowledge graph" } }]
+  [[app.route]]
+  path = "/handbook/api/"
+  limit = "api"
+  burst = 40
+  signin = false
+  note = "the graph's JSON API (refhandbook/graph_api.py): a 401 is answered as JSON, not sent to the sign-in page"
   [[app.route]]
   path = "/login"
   match = "exact"

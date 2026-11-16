@@ -271,13 +271,14 @@ pages, as long as the API keeps its version.
 
 | path | who answers |
 |---|---|
-| `/`, `/apps`, `/app/<id>`, `/settings`, `/account/…`, `/agents/…`, `/projects/…`, `/calendar`, `/vault/…`, `/board` | the pages app (`[[app]] id = "site"`, `pages = [...]`): nginx answers each with its `index.html` |
+| `/`, `/apps`, `/app/<id>`, `/settings`, `/account/…`, `/agents/…`, `/projects/…`, `/calendar`, `/vault/…`, `/board`, `/handbook` | the pages app (`[[app]] id = "site"`, `pages = [...]`): nginx answers each with its `index.html` |
 | `/apps/site/api/store/prefs` | each person's settings, in the pages app's own store (`portal/apps.py`) |
 | `/apps/site/widgets/<app>.js` | the widget modules of the apps the pages app draws (the calendar, the notes, the projects, the board), built with it |
 | `/auth/api/v1/me`, `/account/api/v1/…`, `/agents/api/v1/…` | the sign-in, the portal (`portal/account_api.py`), the handbook (`refhandbook/agents/api.py`) |
 | `/calendar/api/v1/…`, `/calendar/feed/<token>.ics` | the calendar (`portal/calendar.py`, docs/calendar.md); the feed is public, the token is its key |
 | `/vault/api/v1/…` | the notes (`portal/vault.py`, docs/vault.md) |
 | `/board/api/v1/…` | the public board: notices, shared presets and layers (`refhandbook/board_api.py`, docs/board.md) |
+| `/handbook/api/v1/…` | the knowledge graph of the person signed in, read-only: the topics and what joins them, one topic opened into its rows, one node (`refhandbook/graph_api.py`); `/handbook` draws it |
 | `/auth/login`, `/auth/expired`, `/login` (Claude's consent), `/approvals/…` | server pages with no script: who someone is, and what a model may do, are decided there |
 | `/account/request`, `/account/join/…` | the portal's public pages (no account yet) |
 

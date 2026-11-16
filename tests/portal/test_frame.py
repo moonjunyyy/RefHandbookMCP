@@ -174,9 +174,10 @@ def test_connection_only_apps_open_their_information_page(app):
     c, _ = sign_in(app)
     cards = c.get('/auth/api/v1/me').json()['cards']
     assert all(c['href'] for c in cards)
-    for app_id in ('smb', 'refhandbook'):
-        c = next(x for x in cards if x['id'] == app_id)
-        assert c['code'] and c['href'] == f'/app/{app_id}'
+    smb = next(x for x in cards if x['id'] == 'smb')
+    assert smb['code'] and smb['href'] == '/app/smb'
+    handbook = next(x for x in cards if x['id'] == 'refhandbook')  # it has a page of its own now: the knowledge graph
+    assert handbook['code'] and handbook['href'] == '/handbook'
 
 
 def test_the_sign_in_serves_the_frame(app):
@@ -266,7 +267,7 @@ def test_a_services_widget_names_its_own_path(tmp_path):
 PAGES = WEB / "src" / "pages"
 # explanatory paragraphs the pages still carry (docs/frame.md §5): the rewritten pages have none, and the
 # others may only lose them. Raise a number here only with a reason in the same commit.
-RATCHET = {"account.ts": 0, "agents.ts": 0, "flows.ts": 0, "projects.ts": 0, "schedule.ts": 0, "grant.ts": 0,
+RATCHET = {"account.ts": 0, "agents.ts": 0, "flows.ts": 0, "projects.ts": 0, "schedule.ts": 0, "grant.ts": 0, "graph.ts": 0,
            "home.ts": 0, "apps.ts": 0, "settings.ts": 0, "tabs.ts": 0, "calendar.ts": 0, "vault.ts": 0, "board.ts": 0}
 EXPLANATION = re.compile(r"h\('p',\s*\{\s*class:\s*'(?:muted small|muted)'")
 

@@ -331,7 +331,7 @@ def test_the_pages_take_over_their_paths_once_published_and_not_before(fresh, tm
     assert "location = / {" not in after[f"/etc/nginx/sites-available/{f.domain}.conf"][0]
     apps = after[f"/etc/nginx/snippets/{f.name}-apps.conf"][0]
     n = len(next(a for a in site.load(SITE, f).apps if a.id == "site").pages)
-    assert "location = / {" in apps and apps.count("rewrite ^ /apps/site/index.html last;") == n == 12  # the site file's pages
+    assert "location = / {" in apps and apps.count("rewrite ^ /apps/site/index.html last;") == n == 13  # the site file's pages
 
 
 def test_the_calendar_and_the_vault_have_their_units():

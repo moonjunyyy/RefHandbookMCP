@@ -19,7 +19,7 @@ def test_the_shipped_file_declares_the_site():
     assert {a.id for a in s.apps} >= {"account", "agents", "refhandbook", "site", "projects", "calendar", "vault"}
     pages = next(a for a in s.apps if a.id == "site")
     assert pages.pages == ("/", "/apps", "/app/", "/settings", "/projects", "/projects/", "/account/", "/agents/",
-                           "/calendar", "/vault", "/vault/", "/board")
+                           "/calendar", "/vault", "/vault/", "/board", "/handbook")
     assert pages.public and not pages.card
     # its files are public; each person's settings are in its store, behind the sign-in, for it alone
     assert pages.audience == "site" and pages.storage
