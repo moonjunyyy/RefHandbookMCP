@@ -21,6 +21,10 @@ TYPES: list[tuple[str, str, dict[str, Any]]] = [
     ("ref", "edge", {"inverse": "ref_of", "classes": ["navigation"],
                      "description": "An entry routes to a node (attrs: label, the node's name there; bookmark)."}),
     ("tagged", "edge", {"inverse": "tag_of", "classes": ["navigation"], "description": "A node carries a tag."}),
+    ("memo", "node", {"description": "A quick note of the model's own, kept like a cache: keyed, overwritten, "
+                                     "expiring, and never a basis (memo_api)."}),
+    ("about", "edge", {"inverse": "noted_in", "classes": ["navigation"],
+                       "description": "A memo was read from this node: its source."}),
 ]
 
 
