@@ -356,6 +356,11 @@ for _fn in memo_api.WRITE_TOOLS:
 # entry nodes and their refs (docs/entry-graph.md): reading any node, and the write path
 for _fn in entry_api.READ_TOOLS:
     tool(READ)(_fn)
+# the compact read: one SELECT over the graph laid out as tables (query_api)
+from . import query_api  # noqa: E402
+
+for _fn in query_api.READ_TOOLS:
+    tool(READ)(_fn)
 for _fn in entry_api.WRITE_TOOLS:
     tool(LEDGER_WRITE)(_fn)
 for _fn in entry_api.DELETE_TOOLS:

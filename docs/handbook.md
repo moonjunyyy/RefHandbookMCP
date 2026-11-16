@@ -104,6 +104,7 @@ search                                (FTS5: title, triggers, condition, body)
 | `lookup` | Symptom to candidate cards, with condition and objective |
 | `open_entry` | The card, plus related entries, and the entries that route to it with their ledgers (`ENTRY`: where the work the card describes is entered) |
 | `index` | Contents list grouped by tag, kind, or letter |
+| `query` | One read-only SELECT (SQLite syntax) over the graph laid out as tables: `rows` (ledger rows by id, status and node id), `nodes`, `links`, `verdicts`, `cards`. For a question about many nodes at once; it changes nothing and reads no other table of the store |
 | `traverse` | Walk relations outward from a card |
 | `save_entry` | Create or update a card |
 | `delete_entry` | Remove a card and its relations |
