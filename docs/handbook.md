@@ -176,8 +176,13 @@ JSON, `@FILE` or `-` (stdin), and an import's `data_file` names the export, so a
 goes through argv. Through the tools, a long text goes once with `research_blob` (in pieces if
 needed) and is passed on as `ref`. `export` takes `include_log=false`; `import` takes `to` (another name) and
 `dry_run`; `copy` makes a sandbox copy, `rename` renames, and `research_ledger_delete` deletes with
-`confirm` set to the ledger id. `lookup` searches every card; `scope="handbook"` leaves the research
-cards out and `scope="research"` keeps only them. A Hangul query word is also searched by its first
+`confirm` set to the ledger id. `lookup` searches the cards a situation leads to: the ordinary cards and
+the research cards whose page has an `ENTRY — signal:` line (the session loop and the abnormal cards;
+`research.parse_page` tags them `signal`). The cards entered by a routed plan object (stage, domain
+and reference cards) are found with `scope="research"`; `"all"` searches every card and `"handbook"`
+the ordinary ones only. A user's own cues on a research card (`save_entry(id="rs-…", triggers=…)`)
+survive the pages being loaded again, as a rule the user changed survives an upgrade; the rest of the
+card is the page's. A Hangul query word is also searched by its first
 two syllables (`store.stems`): Korean writes particles and endings onto the word, so only the stem
 is a prefix of what a card says.
 

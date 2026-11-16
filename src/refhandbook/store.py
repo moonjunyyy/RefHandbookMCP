@@ -164,6 +164,20 @@ def stems(term: str) -> list[str]:
     return [term, term[:2]] if len(term) > 2 and _HANGUL_STEM.match(term) else [term]
 
 
+# research.parse_page gives this tag to a card whose page has an `ENTRY — signal:` line: the card is
+# entered from a situation (the session loop, the abnormal cards), not only by a routed plan object.
+SIGNAL_TAG = "signal"
+
+# lookup's scopes, as the condition each adds to the search
+SCOPES = {
+    "all": "",
+    "handbook": " AND e.id NOT LIKE 'rs-%'",
+    "research": " AND e.id LIKE 'rs-%'",
+    "situation": (" AND (e.id NOT LIKE 'rs-%' OR EXISTS"
+                  f" (SELECT 1 FROM tags t WHERE t.entry_id = e.id AND t.tag = '{SIGNAL_TAG}'))"),
+}
+
+
 class HandbookError(ValueError):
     """A request the caller can fix: unknown id, bad item, reserved name."""
 
@@ -395,15 +409,17 @@ class Handbook:
     # ── finding the right entry ──────────────────────────────────────────
 
     def lookup(self, situation: str, limit: int = 5, scope: str = "all") -> list[dict[str, Any]]:
-        """scope: all | handbook (without the managed research cards, id rs-*) | research (only those)."""
-        if scope not in ("all", "handbook", "research"):
-            raise HandbookError("scope must be 'handbook', 'research' or 'all'")
+        """scope: all | handbook (without the managed research cards, id rs-*) | research (only those) |
+        situation (the cards a situation leads to: the ordinary ones and the research cards tagged
+        `signal`; stage, domain and reference cards are reached by a routed plan object instead)."""
+        if scope not in SCOPES:
+            raise HandbookError("scope must be 'situation', 'handbook', 'research' or 'all'")
         terms = [s for t in re.findall(r"\w+", situation.lower()) if len(t) > 1 and t not in STOPWORDS
                  for s in stems(t)]
         if not terms:
             return []
         query = " OR ".join(f'"{t}"*' for t in dict.fromkeys(terms))
-        where = {"all": "", "handbook": " AND e.id NOT LIKE 'rs-%'", "research": " AND e.id LIKE 'rs-%'"}[scope]
+        where = SCOPES[scope]
         rows = self.db.execute(
             f"SELECT e.id, e.kind, e.title, e.condition, e.objective,"
             f"       bm25(search, {SEARCH_WEIGHTS}) AS score,"

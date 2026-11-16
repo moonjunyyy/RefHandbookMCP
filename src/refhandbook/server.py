@@ -169,13 +169,16 @@ def handbook() -> Handbook:
 def lookup(
     situation: Annotated[str, Field(description="The symptom as observed: error text, alert name, or a few words.")],
     limit: int = 5,
-    scope: Annotated[Literal["handbook", "research", "all"], Field(
-        description="all: every card (default); handbook: without the research loop's cards (rs-*); research: only those.")] = "all",
+    scope: Annotated[Literal["situation", "handbook", "research", "all"], Field(
+        description="situation (default): the ordinary cards and the research cards a situation leads to (the "
+                    "session loop and the abnormal cards); handbook: the ordinary cards only; research: only the "
+                    "research cards (rs-*), stage and reference cards included; all: every card.")] = "situation",
 ) -> str:
     """Find the entries that fit a situation: a fault, a request, or what just happened in the
-    conversation (the user corrected something, a reference cannot be resolved, a step was refused).
-    Returns each candidate's condition and objective so the right one can be confirmed before it is
-    opened. The research loop's cards (rs-*) are among them; `scope` narrows the search."""
+    conversation (the user corrected something, the same correction came again, a reference cannot
+    be resolved, a step was refused). Returns each candidate's condition and objective so the right
+    one can be confirmed before it is opened. The research cards entered by a routed plan object
+    (stage, domain and reference cards) are found with scope="research"."""
     hb = handbook()
     rows = hb.lookup(situation, limit, scope)
     for r in rows:

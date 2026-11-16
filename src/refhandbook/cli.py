@@ -40,7 +40,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("index", help="list every entry")
     lk = sub.add_parser("lookup", help="find entries for a situation")
     lk.add_argument("situation", nargs="+")
-    lk.add_argument("--scope", choices=["handbook", "research", "all"], default="all")
+    lk.add_argument("--scope", choices=["situation", "handbook", "research", "all"], default="all")
     sub.add_parser("show", help="print one entry").add_argument("id")
     sub.add_parser("export", help="write the handbook as JSON").add_argument("file", nargs="?", default="-")
     sub.add_parser("import", help="load entries from JSON").add_argument("file")

@@ -131,3 +131,31 @@ def test_the_instructions_name_the_line_the_device_prints():
     marker = "LOOP  no session is open"
     assert marker in server.INSTRUCTIONS and render.loop_state([], 0.0).startswith(marker)
     assert server.INSTRUCTIONS.index("research_begin") < server.INSTRUCTIONS.index("save_entry")  # enter, then write back
+
+
+# 6 ── the default lookup is the cards a situation leads to; a user's cues stay ──
+
+def test_the_default_lookup_holds_the_signal_cards_and_no_stage_card(rs, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(server, "_handbook", rs.hb)
+    assert "[rs-x6]" in _call("lookup", situation="사용자가 정정했다: 그게 아니라고 한다")
+    signal = set(rs.hb._column("SELECT entry_id FROM tags WHERE tag = 'signal'"))
+    assert {"rs-n1"} | {f"rs-x{n}" for n in range(1, 10)} <= signal  # the pages' `ENTRY — signal:` lines
+    assert not {"rs-rf", "rs-vf", "rs-ex", "rs-dom-ml", "rs-ref-use", "rs-start"} & signal
+    words = "premise assumption verify claim domain geometry retrieve implement review"
+    found = {c["id"] for c in rs.hb.lookup(words, limit=500, scope="situation")}
+    assert found and all(i in signal for i in found if i.startswith("rs-"))
+    assert {"rs-vf", "rs-dom-ml"} <= {c["id"] for c in rs.hb.lookup(words, limit=500, scope="research")}
+
+
+def test_a_users_cue_on_a_managed_card_survives_a_reload():
+    hb = Handbook(":memory:")
+    research.ensure_cards(hb)
+    hb.save_entry(id="rs-x6", triggers=hb.get_entry("rs-x6")["triggers"] + ["gecorrigeerd"])  # a user's own word
+    digest, data = research.load_pages()
+    for e in data["entries"]:
+        if e["id"] == "rs-x6":
+            e["triggers"] = [t for t in e["triggers"] if t != "correction"]  # the page drops one of its own
+    research._load_cards(hb, digest + "+", data)
+    cues = hb.get_entry("rs-x6")["triggers"]
+    assert "gecorrigeerd" in cues and "correction" not in cues and "that is wrong" in cues
+    assert [c["id"] for c in hb.lookup("gecorrigeerd")] == ["rs-x6"]
