@@ -2,14 +2,14 @@
 // in the order and the sizes they arranged them. The first thing on the page is the grid, handled in place
 // (docs/apps-vault-calendar.md §8.1, R10·R15): a widget is moved by dragging its head (a launcher: the cell)
 // onto another cell, resized by dragging its corner grip (it snaps to one of the sizes the site declares),
-// and every cell's ⋯ (right-click, Shift+F10) offers the sizes, forward, back and taking it off; by keyboard a
+// and every cell's ⋯ (right-click, Shift+F10) offers its settings (a title, the size, what the widget declares: kept with that place), the sizes, forward, back and taking it off; by keyboard a
 // focused cell moves with Alt+←/→ and leaves with Delete. The grid's last cell, "위젯 고르기" (key w), is the
-// one tool, with no row of tools above the grid: a sheet of the apps added, a row per widget — a switch, what it shows, its size — with the widget
+// one tool, with no row of tools above the grid: a sheet of the apps added, a row per widget — a switch, what it shows, its size, and 하나 더 for another place of a widget that has settings — with the widget
 // itself drawn beside the list as the row is pointed at (the preview is the module, not a picture). With no
 // app on, the page is one action — add apps — which goes to the store (/apps); the main page itself is never
 // the store. Right after signing in it opens the person's start page.
 
-import { act, dialog, frame, h, keys, main, menuButton, mount, onApps, onMenu, prefs, primaryLink, replace, savePrefs, sizeOf, spanStyle,
+import { act, button, choicesOf, dialog, frame, h, keys, main, menuButton, mount, onApps, onMenu, paramsOf, prefs, primaryLink, replace, savePrefs, sizeOf, spanStyle,
          tag, title, toggle, widgetsOf, LAUNCHER } from '/auth/static/site.js';
 import type { Card, MenuSection, Placement, Size, Widget } from '/auth/static/site.js';
 import { t } from '../lib/i18n';
@@ -61,11 +61,12 @@ export async function home(): Promise<void> {
   function cell(c: Card, w: Widget, i = -1, p?: Placement): HTMLElement {
     const size = sizeOf(p?.size ?? w.size);
     const el = h('article', { class: 'widget card', style: spanStyle(size.id), 'data-app': c.id, 'data-widget': w.id, 'data-size': size.id,
-                              tabindex: i >= 0 ? 0 : null, 'aria-label': `${c.title} · ${w.title}` });
-    void mount(el, c, w, size);  // the module draws as much as the cell's size holds
+                              tabindex: i >= 0 ? 0 : null, 'aria-label': `${c.title} · ${p?.title || w.title}` });
+    void mount(el, c, w, size, p);  // the module draws as much as the cell's size holds
     if (i < 0) return el;
     const sections = (): MenuSection[] => [
-      { title: `${c.title} · ${w.title}`, items: frame.sizes.map(s => ({ label: sizeWord(s), detail: s.id === size.id ? t('지금') : undefined, disabled: s.id === size.id,
+      { title: `${c.title} · ${p?.title || w.title}`, items: [{ label: t('설정'), run: () => settings(i) }] },
+      { items: frame.sizes.map(s => ({ label: sizeWord(s), detail: s.id === size.id ? t('지금') : undefined, disabled: s.id === size.id,
                                                                       run: () => resize(i, s) })) },
       { items: [
         { label: t('앞으로'), kbd: 'Alt+←', run: () => move(i, i - 1), disabled: i === 0 },
@@ -140,6 +141,33 @@ export async function home(): Promise<void> {
   const remove = (i: number) => keep(placements().filter((_, k) => k !== i), i);
   const resize = (i: number, s: Size) => keep(placements().map((p, k) => (k === i ? { ...p, size: s.id } : p)), i);
 
+  /** A place's own settings: its title, its size, and what the widget declares — each a choice, the person's
+   * own objects read when this opens. Kept with the place; a setting left at the widget's own is not kept. */
+  async function settings(i: number): Promise<void> {
+    const p = placements()[i];
+    const r = p && resolve(p);
+    if (!r) return;
+    const [c, w] = r;
+    const now = paramsOf(w, p);
+    const name = h('input', { type: 'text', name: 'title', maxlength: 60, value: p.title ?? '', placeholder: w.title });
+    const size = h('select', { name: 'size' }, frame.sizes.map(s => h('option', { value: s.id, selected: s.id === sizeOf(p.size ?? w.size).id }, sizeWord(s))));
+    const fields = await Promise.all((w.params ?? []).map(async d =>
+      [d, h('select', { name: d.id }, (await choicesOf(d)).map(o => h('option', { value: o.value, selected: o.value === now[d.id] }, o.label)))] as const));
+    const body = h('div', { class: 'fields' }, h('label', null, t('제목'), name), h('label', null, t('크기'), size),
+      fields.map(([d, field]) => h('label', null, d.label, field)));
+    if (!await dialog(`${c.title} · ${w.title}`, body, { ok: t('저장') })) return;
+    const kept: Record<string, string> = {};
+    for (const [d, field] of fields) if (field.value !== d.default) kept[d.id] = field.value;
+    const own = name.value.trim();
+    await keep(placements().map((q, k) => {
+      if (k !== i) return q;
+      const next: Placement = { app: q.app, widget: q.widget, size: size.value };
+      if (own) next.title = own;
+      if (Object.keys(kept).length) next.params = kept;
+      return next;
+    }), i);
+  }
+
   /** The sheet of widgets (R12): by app, each a row — a switch, the title, what it shows, its size — kept as
    * it is switched; a widget switched on goes to the end of the grid. The row pointed at (hover, focus) is
    * drawn beside the list, by its own module (R16). */
@@ -164,14 +192,24 @@ export async function home(): Promise<void> {
     const rows = onApps().map(c => h('div', { class: 'pick-group' },
       h('h3', null, c.icon && h('span', { class: 'app-icon', 'aria-hidden': 'true' }, c.icon), c.title),
       widgetsOf(c).map(w => {
+        // another place of a widget that has settings: the count placed, and 하나 더
+        const more = h('span', { class: 'pick-more' });
+        const fill = () => {
+          const n = placements().filter(p => p.app === c.id && p.widget === w.id).length;
+          replace(more, n > 1 && tag(`×${n}`), n > 0 && (w.params ?? []).length > 0
+            && button(t('하나 더'), async () => { await keep(() => [...placements(), { app: c.id, widget: w.id }]); fill(); }, 'link'));
+        };
+        fill();
         const row = h('div', { class: 'pick-row', 'data-app': c.id, 'data-widget': w.id,
                                onmouseenter: () => show(c, w), onfocusin: () => show(c, w) },
-          toggle('', isOn(c, w), on => keep(() => on ? [...placements(), { app: c.id, widget: w.id }]
-            : placements().filter(p => !(p.app === c.id && p.widget === w.id))), { 'aria-label': `${c.title} · ${w.title}` }),
+          toggle('', isOn(c, w), async on => {
+            await keep(() => on ? [...placements(), { app: c.id, widget: w.id }] : placements().filter(p => !(p.app === c.id && p.widget === w.id)));
+            fill();
+          }, { 'aria-label': `${c.title} · ${w.title}` }),
           h('div', { class: 'pick-text' },
             h('span', { class: 'pick-title' }, w.id === LAUNCHER ? t('바로가기') : w.title),
             h('span', { class: 'pick-desc muted small' }, w.id === LAUNCHER ? t('앱의 이름과 링크') : w.description)),
-          tag(sizeWord(sizeOf(w.size)), 'size'));
+          more, tag(sizeWord(sizeOf(w.size)), 'size'));
         return row;
       })));
     await dialog(t('위젯 고르기'), h('div', { class: 'pick-wrap' }, h('div', { class: 'pick-list' }, rows), preview), { justClose: true });

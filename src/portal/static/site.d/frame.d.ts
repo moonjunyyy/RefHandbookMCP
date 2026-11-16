@@ -5,12 +5,31 @@ export interface Size {
     cols: number;
     rows: number;
 }
+/** A setting a widget declares ([[app.widget.param]]): one of `choices`, or one of the person's own objects read
+ * `from` a path of the site (`list` in its answer; an item's `value` and `label`) with `all`, the word for no filter. */
+export interface Param {
+    id: string;
+    label: string;
+    default: string;
+    choices?: {
+        value: string;
+        label: string;
+    }[];
+    from?: {
+        path: string;
+        list: string;
+        value: string;
+        label: string;
+    };
+    all?: string;
+}
 export interface Widget {
     id: string;
     title: string;
     description: string;
     href: string;
     size: string;
+    params?: Param[];
 }
 /** One way to connect to an app (site.toml's `code`): its value may name the person looking as {user}. */
 export interface Address {
@@ -97,10 +116,14 @@ export interface Frame {
 }
 export declare const THEMES: readonly ["auto", "light", "dark"];
 export type Theme = (typeof THEMES)[number];
+/** A place a person gave a widget: its size and title (their own, else the widget's) and its settings (the
+ * widget's declared parameters, as they set them here). The same widget may have several places. */
 export interface Placement {
     app: string;
     widget: string;
     size?: string;
+    title?: string;
+    params?: Record<string, string>;
 }
 export interface Prefs {
     lang: string;

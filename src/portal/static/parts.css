@@ -632,6 +632,7 @@ dialog.wide, dialog:has(.pick-list) { max-width: min(860px, 96vw); }
 .pick-row .pick-title { font-weight: 600; font-size: .92rem; }
 .pick-row .pick-desc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pick-row .tag.size { flex: none; }
+.pick-row .pick-more { flex: none; display: flex; align-items: center; gap: var(--s2); }
 /* devices over CalDAV (§8.3): the address, the username, a password shown once, the devices made */
 ul.devices { margin: 0; padding: 0; }
 ul.devices li { display: flex; align-items: center; gap: var(--s2); padding: var(--s1) 0; border-top: 1px solid var(--line); }

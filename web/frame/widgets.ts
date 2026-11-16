@@ -10,12 +10,12 @@
 // holds is theme.css's (--cell-items beside --cell).
 
 import { Child, h, replace } from './dom';
-import { Card, Size, Widget, frame, prefs, sizeOf } from './frame';
+import { Card, Param, Placement, Size, Widget, frame, prefs, sizeOf } from './frame';
 import { lang, locale, t } from './i18n';
 import { api, go } from './parts';
 
 export interface WidgetContext { frame: typeof frame; prefs: typeof prefs; t: typeof t; lang: string; theme: string;
-                                 go: typeof go; api: typeof api; card: Card; widget: Widget; size: Size }
+                                 go: typeof go; api: typeof api; card: Card; widget: Widget; size: Size; params: Record<string, string> }
 export type WidgetModule = { default: (host: HTMLElement, ctx: WidgetContext) => void | (() => void) | Promise<void | (() => void)> };
 
 /** The widget every app has: a launcher — its mark and name, the way in; an app with more than one page lists
@@ -43,17 +43,59 @@ export function spanStyle(sizeId: string | undefined): string {
   return `grid-column: span ${s.cols}; grid-row: span ${s.rows};`;
 }
 
+/** A place's settings: the widget's declared defaults under what the person kept for this place; a kept value
+ * that is no longer one of the declared choices gives way to the default. */
+export function paramsOf(w: Widget, p?: Placement): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const d of w.params ?? []) {
+    const kept = p?.params?.[d.id];
+    out[d.id] = typeof kept === 'string' && (!d.choices || d.choices.some(c => c.value === kept)) ? kept : d.default;
+  }
+  return out;
+}
+
+const reading = new Map<string, Promise<{ value: string; label: string }[]>>();
+/** What a setting may be: its declared choices, or the word for no filter and then the person's own objects, read
+ * from the setting's path (askers at the same moment share one read). */
+export function choicesOf(d: Param): Promise<{ value: string; label: string }[]> {
+  const from = d.from;
+  if (!from) return Promise.resolve(d.choices ?? []);
+  const key = [from.path, from.list, from.value, from.label].join(' ');
+  let list = reading.get(key);
+  if (!list) {
+    list = api(from.path).get('').then(r => ((r?.[from.list] ?? []) as Record<string, unknown>[])
+      .map(x => ({ value: String(x[from.value] ?? ''), label: String(x[from.label] ?? '') })).filter(x => x.value), () => [])
+      .finally(() => reading.delete(key));
+    reading.set(key, list);
+  }
+  return list.then(own => [{ value: '', label: d.all ?? '' }, ...own]);
+}
+
+/** The words of the settings a place changed from the widget's own: what its head says after the title. */
+async function said(w: Widget, params: Record<string, string>): Promise<string[]> {
+  const out: string[] = [];
+  for (const d of w.params ?? []) {
+    if (params[d.id] === d.default) continue;
+    const hit = (await choicesOf(d)).find(c => c.value === params[d.id]);
+    if (hit) out.push(hit.label);
+  }
+  return out;
+}
+
 /** Draw a widget into its cell: the module when there is one, the launcher otherwise or on failure. `size`: the
- * cell's (the person's own, else the widget's declared one). */
-export async function mount(cell: HTMLElement, c: Card, w: Widget, size: Size = sizeOf(w.size)): Promise<void> {
+ * cell's (the person's own, else the widget's declared one); `p`: the place, for its title and its settings. */
+export async function mount(cell: HTMLElement, c: Card, w: Widget, size: Size = sizeOf(w.size), p?: Placement): Promise<void> {
   const body = h('div', { class: 'widget-body' });
+  const params = paramsOf(w, p);
+  const words = h('span', { class: 'widget-said' });
   replace(cell, w.id === LAUNCHER ? null : h('div', { class: 'widget-head' },
-    c.icon && h('span', { class: 'app-icon', 'aria-hidden': 'true' }, c.icon), h('a', { href: c.href }, c.title), ' · ', w.title), body);
+    c.icon && h('span', { class: 'app-icon', 'aria-hidden': 'true' }, c.icon), h('a', { href: c.href }, c.title), ' · ', p?.title || w.title, words), body);
+  if (!p?.title) void said(w, params).then(list => { if (list.length) replace(words, ' — ', list.join(' · ')); });
   if (w.id === LAUNCHER || !w.href) { replace(body, launcher(c)); return; }
   try {
     const mod = (await import(/* @vite-ignore */ w.href)) as WidgetModule;
     if (typeof mod.default !== 'function') throw new Error(`${w.href}: no default export`);
-    await mod.default(body, { frame, prefs, t, lang: lang(), theme: frame.theme, go, api, card: c, widget: w, size });
+    await mod.default(body, { frame, prefs, t, lang: lang(), theme: frame.theme, go, api, card: c, widget: w, size, params });
   } catch (e) {
     console.warn('widget', c.id, w.id, e);  // the person sees the launcher; the console says why
     replace(body, launcher(c));

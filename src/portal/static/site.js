@@ -929,16 +929,51 @@ function spanStyle(sizeId) {
   const s = sizeOf(sizeId);
   return `grid-column: span ${s.cols}; grid-row: span ${s.rows};`;
 }
-async function mount(cell, c, w, size = sizeOf(w.size)) {
+function paramsOf(w, p) {
+  const out = {};
+  for (const d of w.params ?? []) {
+    const kept = p?.params?.[d.id];
+    out[d.id] = typeof kept === "string" && (!d.choices || d.choices.some((c) => c.value === kept)) ? kept : d.default;
+  }
+  return out;
+}
+const reading = /* @__PURE__ */ new Map();
+function choicesOf(d) {
+  const from = d.from;
+  if (!from) return Promise.resolve(d.choices ?? []);
+  const key = [from.path, from.list, from.value, from.label].join(" ");
+  let list = reading.get(key);
+  if (!list) {
+    list = api(from.path).get("").then((r) => (r?.[from.list] ?? []).map((x) => ({ value: String(x[from.value] ?? ""), label: String(x[from.label] ?? "") })).filter((x) => x.value), () => []).finally(() => reading.delete(key));
+    reading.set(key, list);
+  }
+  return list.then((own) => [{ value: "", label: d.all ?? "" }, ...own]);
+}
+async function said(w, params) {
+  const out = [];
+  for (const d of w.params ?? []) {
+    if (params[d.id] === d.default) continue;
+    const hit = (await choicesOf(d)).find((c) => c.value === params[d.id]);
+    if (hit) out.push(hit.label);
+  }
+  return out;
+}
+async function mount(cell, c, w, size = sizeOf(w.size), p) {
   const body = h("div", { class: "widget-body" });
+  const params = paramsOf(w, p);
+  const words = h("span", { class: "widget-said" });
   replace(cell, w.id === LAUNCHER ? null : h(
     "div",
     { class: "widget-head" },
     c.icon && h("span", { class: "app-icon", "aria-hidden": "true" }, c.icon),
     h("a", { href: c.href }, c.title),
     " · ",
-    w.title
+    p?.title || w.title,
+    words
   ), body);
+  if (!p?.title) void said(w, params).then((list) => {
+    if (list.length) replace(words, " — ", list.join(" · "));
+  });
   if (w.id === LAUNCHER || !w.href) {
     replace(body, launcher(c));
     return;
@@ -949,7 +984,7 @@ async function mount(cell, c, w, size = sizeOf(w.size)) {
       w.href
     );
     if (typeof mod.default !== "function") throw new Error(`${w.href}: no default export`);
-    await mod.default(body, { frame, prefs, t, lang: lang(), theme: frame.theme, go, api, card: c, widget: w, size });
+    await mod.default(body, { frame, prefs, t, lang: lang(), theme: frame.theme, go, api, card: c, widget: w, size, params });
   } catch (e) {
     console.warn("widget", c.id, w.id, e);
     replace(body, launcher(c));
@@ -1234,6 +1269,7 @@ export {
   bars,
   button,
   choice,
+  choicesOf,
   chrome,
   closeMenu,
   dayKey,
@@ -1279,6 +1315,7 @@ export {
   openWord,
   ownCard,
   pageHead,
+  paramsOf,
   prefs,
   previewFonts,
   primaryLink,
