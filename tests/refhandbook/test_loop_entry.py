@@ -171,3 +171,14 @@ def test_a_users_cue_on_a_managed_card_survives_a_reload():
     cues = hb.get_entry("rs-x6")["triggers"]
     assert "gecorrigeerd" in cues and "correction" not in cues and "that is wrong" in cues
     assert [c["id"] for c in hb.lookup("gecorrigeerd")] == ["rs-x6"]
+
+
+# 7 ── building or changing an artifact is dispatched to IM, also after a correction ──
+
+def test_dispatch_and_correction_lead_to_implement_for_an_artifact():
+    hb = Handbook(":memory:")
+    research.ensure_cards(hb)
+    for src in ("rs-n3", "rs-x6"):
+        assert hb.db.execute("SELECT 1 FROM relations WHERE src = ? AND type = 'pushes_to' AND dst = 'rs-im'", (src,)).fetchone()
+    assert "built or changed as an artifact" in render.card(hb.get_entry("rs-n3"), [])
+    assert "(c) push `realize the change on <rows>` @IM" in render.card(hb.get_entry("rs-x6"), [])
