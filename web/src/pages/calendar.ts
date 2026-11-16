@@ -3,7 +3,7 @@
 // the month (a column of weeks that scrolls on: the title and the address follow the month in view), the
 // week and the day (hours on a grid), and the list (the days ahead that have events). Moving along time is
 // scrolling the month, a swipe or a sideways wheel on the hours, ‹ › and ← →; the title goes up one level
-// and a day goes down to its day (the picked day's title in the month, a day's head in the week); g goes to a date. The head is one row: the title and its arrows, today,
+// and a day goes down to its day (the picked day's title in the month, a day's head in the week); g goes to a date. The head is one row: what is pressed first (the arrows, today, the views, the scale) and the title after it, so that nothing pressed moves when the title's length changes; then today,
 // the view, a chip per calendar (off: hidden on this browser), and the subscription address. In the month,
 // a day pressed opens below the grid: its events, and "+ 일정". On the hours, a slot pressed is a small card
 // there: a title and Enter make an hour's event at that time, and 자세히 takes it to the dialog. An event
@@ -28,7 +28,10 @@ const cal = api('/calendar/api/v1');
 const HIDDEN = 'cal.hidden';  // the calendars this browser keeps off the grid
 const REPEATS: [string, string][] = [['', n_('반복 없음')], ['FREQ=DAILY', n_('매일')], ['FREQ=WEEKLY', n_('매주')],
                                      ['FREQ=MONTHLY', n_('매달')], ['FREQ=YEARLY', n_('매년')]];
-const HOUR = 44;      // px per hour in the week grid
+let HOUR = 44;        // px per hour on the hours: the room there is over the hours shown (drawWeek)
+const HOURS_SHOWN = [24, 16, 12, 8, 6];  // the hours' scale: how many hours the room shows; 24 is the whole day, with nothing to scroll
+const WEEKS_SHOWN = [8, 6, 5, 4];        // the month's scale: how many weeks the room shows
+const SCALE = 'cal.scale';               // the scale this browser keeps
 const SNAP = 30;      // minutes a dropped or pressed time snaps to
 const DAY_MS = 86400_000;
 const WEEKS_BEFORE = 16;   // the month's scroller holds this many weeks before the shown month's first week…
@@ -83,6 +86,14 @@ function hidden(): Set<string> {
 function keepHidden(s: Set<string>): void {
   try { localStorage.setItem(HIDDEN, JSON.stringify([...s])); } catch { /* storage may be off */ }
 }
+type Scale = { hours: number; weeks: number };
+function scaleKept(): Scale {
+  let s: Partial<Scale> = {};
+  try { s = JSON.parse(localStorage.getItem(SCALE) ?? '{}') ?? {}; } catch { /* storage may be off */ }
+  return { hours: HOURS_SHOWN.includes(s.hours ?? 0) ? s.hours! : 24, weeks: WEEKS_SHOWN.includes(s.weeks ?? 0) ? s.weeks! : 6 };
+}
+/** The room there is for a grid that starts where `el` does: down to the window's lower edge. */
+const room = (el: HTMLElement) => Math.max(240, Math.floor(window.innerHeight - el.getBoundingClientRect().top - 24));
 
 // ── the event dialog ──────────────────────────────────────────────────────
 
@@ -258,6 +269,7 @@ export async function calendar(): Promise<void> {
   let projects: string[] = [];
   let events: Json[] = [];
   const head = h('div', { class: 'cal-head' });
+  const scale = scaleKept();
   const grid = h('div', { class: 'cal-grid', role: 'grid' });
   const week = h('div', { class: 'wk' });
   const wds = h('div', { class: 'cal-wds', role: 'row' });
@@ -503,13 +515,42 @@ export async function calendar(): Promise<void> {
     if (now) { remember(); drawTitle(); drawGrid(); void refresh(); }
   }
 
+  /** The scale of the view, where it has one: − shows more of time (weeks, hours), + less of it, larger. */
+  function scaleBox(): HTMLElement | false {
+    const steps = view === 'month' ? WEEKS_SHOWN : view === 'week' || view === 'day' ? HOURS_SHOWN : null;
+    if (!steps) return false;
+    const at = steps.indexOf(view === 'month' ? scale.weeks : scale.hours);
+    const out = button('−', () => zoom(-1), 'link'), into = button('+', () => zoom(1), 'link');
+    out.title = t('축소'); out.setAttribute('aria-label', t('축소')); out.disabled = at <= 0;
+    into.title = t('확대'); into.setAttribute('aria-label', t('확대')); into.disabled = at >= steps.length - 1;
+    return h('span', { class: 'cal-scale', role: 'group', 'aria-label': t('보기 크기') }, out, into);
+  }
+  function zoom(by: number): void {
+    const month = view === 'month';
+    if (!month && view !== 'week' && view !== 'day') return;
+    const steps = month ? WEEKS_SHOWN : HOURS_SHOWN;
+    const next = steps[steps.indexOf(month ? scale.weeks : scale.hours) + by];
+    if (next === undefined) return;
+    if (month) scale.weeks = next; else scale.hours = next;
+    try { localStorage.setItem(SCALE, JSON.stringify(scale)); } catch { /* storage may be off */ }
+    drawHead();
+    draw();
+  }
+  /** The month's weeks take the room there is: as many weeks of it as the scale says. */
+  function fitMonth(): void {
+    const height = room(grid);
+    weeksBox.style.setProperty('--cal-h', `${height}px`);
+    weeksBox.style.setProperty('--cal-day', `${Math.max(44, Math.floor((height - (wds.offsetHeight || 30)) / scale.weeks) - 1)}px`);
+  }
+
   function drawHead(): void {
     drawTitle();
     replace(head,
       h('div', { class: 'cal-nav' },
-        button('‹', () => move(-1), 'link'), titleBox, button('›', () => move(1), 'link'),
+        button('‹', () => move(-1), 'link'), button('›', () => move(1), 'link'),
         link(view !== 'month' ? `/calendar?v=${view}&d=${today}` : `/calendar?d=${today}`, t('오늘')),
-        choice([['year', t('연')], ['month', t('월')], ['week', t('주')], ['day', t('일')], ['list', t('목록')]], view, v => show(v as View), { 'aria-label': t('보기') })),
+        choice([['year', t('연')], ['month', t('월')], ['week', t('주')], ['day', t('일')], ['list', t('목록')]], view, v => show(v as View), { 'aria-label': t('보기') }),
+        scaleBox(), titleBox),
       h('div', { class: 'cal-sources-row' },
         h('div', { class: 'chips cal-sources', role: 'group', 'aria-label': t('캘린더') }, calendars.map(c =>
           onMenu(h('button', { type: 'button', class: 'chip', 'aria-pressed': off.has(c.id) ? 'false' : 'true', style: c.color ? `--ev: ${c.color}` : null,
@@ -565,6 +606,7 @@ export async function calendar(): Promise<void> {
     const placed = !grid.contains(weeksBox) || !!pendingTop;
     const top = placed ? undefined : topRow();
     const offset = top ? top.offsetTop - weeksBox.scrollTop : 0;
+    fitMonth();  // after the week on top is noted: the rows' height may change with the room, and that week stays on top
     const days = perDay();
     const m = monthKey();
     replace(wds, [...Array(7)].map((_, i) => h('div', { class: 'cal-wd', role: 'columnheader' }, addDays(first, i).toLocaleDateString(undefined, { weekday: 'short' }))));
@@ -677,7 +719,11 @@ export async function calendar(): Promise<void> {
     });
     const body = h('div', { class: 'wk-body' }, hours, cols);
     replace(week, headRow, allRow, body);
-    body.scrollTop = 7 * HOUR;  // the morning first
+    // the hours take the room there is: at 24 hours shown the whole day fits and nothing scrolls
+    const height = room(body), hour = Math.max(12, (height - 2) / scale.hours);
+    if (Math.abs(hour - HOUR) > 0.5) { HOUR = hour; drawWeek(); return; }
+    body.style.maxHeight = `${height}px`;
+    body.scrollTop = scale.hours < 24 ? 7 * HOUR : 0;  // on a larger scale: the morning first
   }
 
   const byTime = (a: Json, b: Json) => Number(!!b.allday) - Number(!!a.allday) || a.start.localeCompare(b.start);
@@ -761,9 +807,20 @@ export async function calendar(): Promise<void> {
     { key: 'd', label: t('일'), run: () => { if (view !== 'day') show('day'); } },
     { key: 'a', label: t('목록'), run: () => { if (view !== 'list') show('list'); } },
     { key: 'g', label: t('날짜로 가기'), run: goToDate },
+    { key: '-', label: t('축소'), run: () => zoom(-1) },
+    { key: '+', label: t('확대'), run: () => zoom(1) },
     { key: 'n', label: t('새 일정'), run: async () => { if (await editEvent(calendars, selected || today).catch(e => { flash('error', message(e)); return false; })) await refresh(); } },
   ]);
   replace(main(), head, status, grid, week, list, year, panel);
+  // the room changes with the window: the grids are fitted again (on another page this stops itself)
+  let fitting = false;
+  const refit = (): void => {
+    if (!head.isConnected) { window.removeEventListener('resize', refit); return; }
+    if (fitting) return;
+    fitting = true;
+    requestAnimationFrame(() => { fitting = false; draw(); });
+  };
+  window.addEventListener('resize', refit);
   drawHead();
   await refresh();
 }
