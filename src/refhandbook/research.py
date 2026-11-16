@@ -394,8 +394,17 @@ class Research:
             "SELECT id, question, turn, open, last_closed FROM rl_ledgers ORDER BY id").fetchall()
         if not rows:
             return "No research ledgers yet. Create one with init."
-        return "\n".join(f"{r['id']}  {self._sessions_line(r['id'])} · {r['turn']} sessions · {r['question']}"
-                         for r in rows)
+        from . import entry_api  # (it reads the graph this object's kernel holds; imported here, not at the top)
+
+        def mark(lid: str) -> str:
+            """What the list says of a ledger that is not an entry of the current structure: the order
+            to reconstruct it (the server's instructions) is about exactly these."""
+            if self.k is None or entry_api.reconstructed(self.k.g, lid):
+                return ""
+            return f"NOT RECONSTRUCTED (structure {entry_api.STRUCTURE}) · "
+
+        return "\n".join(f"{r['id']}  {mark(r['id'])}{self._sessions_line(r['id'])} · {r['turn']} sessions · "
+                         f"{r['question']}" for r in rows)
 
     def _sessions_line(self, ledger: str) -> str:
         live = sessions.open_sessions(self.k.g, ledger) if self.k is not None else []

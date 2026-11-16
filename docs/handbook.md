@@ -261,3 +261,13 @@ another store move over with `research_ledgers(action="export")` there and `acti
 - Model Context Protocol, [Tools specification](https://modelcontextprotocol.io/specification/2025-06-18/server/tools).
 - Model Context Protocol, [Knowledge Graph Memory Server](https://github.com/modelcontextprotocol/servers/tree/main/src/memory).
 - Further reading, not consulted directly for this prototype: Burian, Barshi and Dismukes (NASA Ames), work on emergency and abnormal checklist design; Degani and Wiener (1990), cockpit checklist human factors.
+
+## The structure order
+
+The server's instructions name the structure every ledger is reconstructed to (`entry_api.STRUCTURE`,
+now `entry-1`) and give the order to reconstruct a ledger that is not an entry of it, at once and
+before anything else is done with it. The order is a command of the instruction set: it does not
+depend on a session of the research loop being opened. `research_ledgers` (list) marks the ledgers
+it is about, `NOT RECONSTRUCTED (structure entry-1)`: a ledger no entry node routes to with the tag
+`structure:entry-1`. Raising the structure is changing that one name; every ledger is then marked
+again until its entry carries the new tag.

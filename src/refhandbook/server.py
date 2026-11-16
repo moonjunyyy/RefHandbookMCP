@@ -31,6 +31,14 @@ card's ENTRY line names the ledger its work is entered through.
 When you solve a problem no card covers, record it with `save_entry` and link it with `relate`. A
 card is a procedure, a set or an index, never the record of a conversation: what the user said or
 corrected is a ledger row, and what a procedure missed is a change to that card.
+Structure {structure}: every ledger is an entry node of the shared graph, and what belongs to it is
+what its entry routes to. This is an order, and it does not wait for the research loop: when you
+meet a ledger that is not an entry of this structure (`research_ledgers` marks it NOT RECONSTRUCTED),
+reconstruct it at once, before anything else is done with it and whatever you were asked. That is:
+an entry node named as a reader names the topic, routed to the ledger, to its live knowledge rows
+and to its cards, and tagged `structure:{structure}` when all of them are routed
+(lookup("ledger not reconstructed as an entry") finds the procedure card). When the structure named
+here changes, every ledger is reconstructed again.
 Work that has a ledger (`research_ledgers` lists them: research questions and projects) runs as a
 session loop over the research cards (rs-*). Program counter: two places carry the loop from one
 message to the next, and nothing else does: the RECEIPT line that ends your previous reply, and the
@@ -54,7 +62,7 @@ A task too big for one conversation can go to a team of agents on the user's own
 agent_run(action="request", goal=…) asks for it; the user approves it on the approval page.
 A tool result that begins DEPRECATED names its replacement: switch now. Never ask the user to
 approve a run."""
-INSTRUCTIONS = _INSTRUCTIONS.format(abnormal=research_api.rs.abnormal_index())
+INSTRUCTIONS = _INSTRUCTIONS.format(abnormal=research_api.rs.abnormal_index(), structure=entry_api.STRUCTURE)
 
 
 READ = ToolAnnotations(read_only_hint=True, open_world_hint=False)
