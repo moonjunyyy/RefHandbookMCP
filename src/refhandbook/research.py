@@ -618,7 +618,9 @@ class Research:
         m = re.match(r"([UCRSAZTEHXPK])(\d+)", ref or "")
         return (list(SECTIONS).index(m.group(1)), int(m.group(2)), ref) if m else (99, 0, ref or "")
 
-    OBLIGATION_ORDER = ("pending", "k", "directive", "rejudge", "stale_verdict", "doc_plan", "doc_behind", "review")
+    # a rule's own line speaks of the ledger as a whole (MIGRATE …): it is read before the row-level ones
+    OBLIGATION_ORDER = ("rule", "pending", "k", "directive", "rejudge", "stale_verdict", "doc_plan", "doc_behind",
+                        "review")
 
     def obligation_items(self, ledger: str) -> list[tuple[str, str, str, str]]:
         """(kind, ref, src, line) for each obligation the kernel finds, in reading order."""
@@ -633,6 +635,8 @@ class Research:
         return out
 
     def _obligation_line(self, ledger: str, kind: str, ref: str, src: str) -> str:
+        if kind == "rule":  # (kind, the rule, its message): the message is the line
+            return f"  {src}"
         r = self._row_or_none(ledger, ref)
         k = key(r["status"]) if r else ""
         if kind == "pending":
