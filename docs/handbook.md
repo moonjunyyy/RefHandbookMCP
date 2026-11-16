@@ -97,16 +97,34 @@ edges = relations ∪ items.goto        (view)
 search                                (FTS5: title, triggers, condition, body)
 ```
 
+### Revisions and merging
+
+A card is rewritten whole, so a save made from an older reading would undo what another conversation saved
+in between, unseen. A save through the tool therefore works as a push does in version control. It names its
+base, the revision its writer read (`open_entry` shows `rev N`); an update without one is refused. On the
+current revision it goes in as it is. On an older one it is merged three ways (what was read, what is sent,
+what is saved now): one-line fields as a whole, the body line by line, the items item by item, cues and
+tags as sets. What does not overlap is merged and saved, and the result says what was merged. Where both
+sides changed the same place nothing is written: the save comes back as `CONFLICT` with every field it
+sent as it stands on the current revision, the overlapping places between `<<<<<<< yours`, `||||||| rev N`,
+`=======` and `>>>>>>> rev M`. Resolving is settling those places and saving again with the current
+revision as base; a text that still carries marks is refused.
+
+Each replaced revision is kept (`entry_revisions`, written when the next save replaces it), which is what a
+merge starts from; `open_entry(id, rev=N)` reads one. A base older than the first kept revision has nothing
+to merge from, and every field that differs is a conflict. The store's own writers (the research cards, a
+card capability record, an import) save without a base and replace what is stored, as before.
+
 ### MCP tools
 
 | Tool | Purpose |
 | :- | :- |
 | `lookup` | Symptom to candidate cards, with condition and objective |
-| `open_entry` | The card, plus related entries, and the entries that route to it with their ledgers (`ENTRY`: where the work the card describes is entered) |
+| `open_entry` | The card, plus related entries, and the entries that route to it with their ledgers (`ENTRY`: where the work the card describes is entered); `rev=N` shows a kept earlier revision |
 | `index` | Contents list grouped by tag, kind, or letter |
 | `query` | One read-only SELECT (SQLite syntax) over the graph laid out as tables: `rows` (ledger rows by id, status and node id), `nodes`, `links`, `verdicts`, `cards`. For a question about many nodes at once; it changes nothing and reads no other table of the store |
 | `traverse` | Walk relations outward from a card |
-| `save_entry` | Create or update a card |
+| `save_entry` | Create or update a card; an update names the revision it was written against (`base`) and is merged with what was saved since, or refused as a conflict ("Revisions and merging") |
 | `delete_entry` | Remove a card and its relations |
 | `relate`, `unrelate` | Typed edges between cards |
 | `delete_node` | Delete an entry node or a tag of the entry graph (docs/entry-graph.md): refused while it still has links, unless forced; only the caller's own nodes |

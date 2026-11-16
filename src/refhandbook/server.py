@@ -15,7 +15,7 @@ from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from . import agents_api, cap_api, entry_api, render, research_api
-from .store import Handbook, HandbookError
+from .store import Handbook, HandbookError, slugify
 
 # What a conversation is given at its start. It says where the procedure is and what carries it from
 # one message to the next; the procedure itself is the cards, and they win where the two differ.
@@ -204,12 +204,19 @@ def _routes(hb: Handbook, card: str) -> list[tuple[str, list[str]]]:
 
 
 @tool(READ)
-def open_entry(id: str) -> str:
+def open_entry(
+    id: str,
+    rev: Annotated[int | None, Field(description="A kept earlier revision to show instead of the card in use.")] = None,
+) -> str:
     """Show one entry as a card: condition, objective, memory items, numbered steps,
-    deferred items, and its related entries."""
+    deferred items, and its related entries. Its head line gives 'rev N': the base a later
+    save_entry of this card names."""
     from .store import decomposition
 
     hb = handbook()
+    if rev is not None and rev != (head := hb.get_entry(id)["revision"]):
+        return (f"REVISION {rev} of [{id}], kept as the base of merges; the card in use is rev {head}.\n\n"
+                + render.card(hb.get_revision(id, rev), []))
     e = hb.get_entry(id)
     card = render.card(e, hb.neighbors(id), _routes(hb, e["id"]))
     parts = decomposition(e)
@@ -248,6 +255,7 @@ def save_entry(
     body: Annotated[str | None, Field(description="Free reference text shown above the steps.")] = None,
     triggers: Annotated[list[str] | None, Field(description="Cues the entry should be found by: error strings, alert names, symptoms.")] = None,
     tags: list[str] | None = None,
+    base: Annotated[int | None, Field(description="The revision you read: open_entry shows 'rev N'. Required to update a card; omit to create one.")] = None,
     items: Annotated[
         list[dict[str, Any]] | None,
         Field(
@@ -266,13 +274,24 @@ def save_entry(
     procedure (one situation, one outcome, one sequence of at most 10 steps) or a set (one list or
     table); an entry holding more is refused with its parts, to be written as separate cards.
     A card is not the record of a conversation: what the user said, decided or corrected is a
-    ledger row (research_add), and what a procedure missed is a change to that procedure's card."""
+    ledger row (research_add), and what a procedure missed is a change to that procedure's card.
+    An update names the revision it was written against (base). If the card was saved since, the
+    update is merged with it; where both changed the same place it is refused as a CONFLICT that
+    returns the text with the place marked: settle the marks, then save on the current revision."""
     hb = handbook()
+    target = slugify(id or title) if id or title else None
+    if base is None and target and hb.exists(target):
+        raise HandbookError(
+            f"REFUSED: [{target}] exists, and an update names the revision it was written against: "
+            f"open_entry({target!r}) shows the card and its 'rev N'; pass base=N. "
+            + ("" if id else "(Sent without an id, this save would have replaced the card that has this title.) ")
+            + "Nothing was written.")
     entry = hb.save_entry(
         id=id, title=title, kind=kind, condition=condition, objective=objective,
-        body=body, triggers=triggers, tags=tags, items=items, atomic=True,
+        body=body, triggers=triggers, tags=tags, items=items, atomic=True, base=base,
     )  # fmt: skip
-    return render.card(entry, hb.neighbors(entry["id"]))
+    card = render.card(entry, hb.neighbors(entry["id"]))
+    return f"{entry['merge']}\n\n{card}" if entry.get("merge") else card
 
 
 @tool(DELETE)
