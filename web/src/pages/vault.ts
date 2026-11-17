@@ -130,14 +130,16 @@ export async function vault(vid = '', path = ''): Promise<void> {
   const tree: Json = await v.get('/tree');
   const notes = notesOf(tree);
   const paths = new Set(notes.map(([p]) => p));
+  // a bare [[name]] is the first note of that name: looked up, not searched for among every note at every link
+  const byName = new Map<string, string>();
+  for (const [p] of notes) { const name = p.split('/').pop()!.toLowerCase(); if (!byName.has(name)) byName.set(name, p); }
   const md = await import('../lib/markdown');  // markdown-it; KaTeX comes with the first note that has mathematics
   const render = md.renderer({
     note: target => {
       const name = target.replace(/^\/+|\/+$/g, '');
       for (const cand of [name, `${name}.md`]) if (paths.has(cand)) return noteHref(current.id, cand);
-      const tail = `${name.split('/').pop()!.toLowerCase()}.md`;
-      const hit = notes.find(([p]) => p.split('/').pop()!.toLowerCase() === tail);
-      return hit ? noteHref(current.id, hit[0]) : null;
+      const hit = byName.get(`${name.split('/').pop()!.toLowerCase()}.md`);
+      return hit ? noteHref(current.id, hit) : null;
     },
     raw: p => rawHref(current.id, p.replace(/^\/+/, '')),
   });

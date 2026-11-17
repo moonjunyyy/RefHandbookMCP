@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from portal import tokens
 from portal.config import Settings
-from portal.vault import Registry, VaultError, clean, create_app
+from portal.vault import Registry, Vault, VaultError, clean, create_app
 from refhandbook.agents import mounts
 
 ISS = "https://www.m00nny.kr"
@@ -196,3 +196,51 @@ def test_root_stages_what_people_registered(tmp_path):
     assert p.status["alice"][str(tmp_path / "data" / "alice" / "Nowhere")].endswith("does not exist")
     assert p.skipped == ["bob: no such account"]
     assert mounts.vault_picks(tmp_path / "nothing") == []
+
+
+def test_the_index_is_written_in_one_transaction(tmp_path):
+    """A pass over the notes is one transaction. Statement by statement, the first index of a vault of 2,700 notes
+    took seven minutes, and the service answered nothing else meanwhile."""
+    for i in range(30):
+        (tmp_path / f"n{i}.md").write_text(f"[[n{(i + 1) % 30}]] #t{i % 3}\n")
+    v = Vault(tmp_path, ":memory:")
+    said: list[str] = []
+    v.index.set_trace_callback(said.append)
+    v.refresh(force=True)
+    v.index.set_trace_callback(None)
+    assert said.count("BEGIN") == 1 and said.count("COMMIT") == 1
+    begin, commit = said.index("BEGIN"), said.index("COMMIT")
+    writes = [i for i, s in enumerate(said) if s.startswith(("INSERT", "DELETE", "REPLACE"))]
+    assert sum(1 for s in said if s.startswith("INSERT INTO fts VALUES")) == 30 and all(begin < i < commit for i in writes)
+    assert v.links("n0.md")["backlinks"] == ["n29.md"]
+
+
+def test_a_bare_name_is_the_first_note_of_that_name(tmp_path):
+    """[[Same]] with two notes of that name means the first path in order — the answer it had when every link was
+    searched for among every note (twelve seconds for one note's backlinks on a vault of 2,700)."""
+    for d in ("a", "b"):
+        (tmp_path / d).mkdir()
+        (tmp_path / d / "Same.md").write_text("x\n")
+    (tmp_path / "c.md").write_text("[[Same]] and [[b/Same]] and [[SAME]] and [[Nowhere]]\n")
+    v = Vault(tmp_path, ":memory:")
+    assert v.links("c.md")["links"] == [{"path": "a/Same.md", "text": "Same"}, {"path": "b/Same.md", "text": "b/Same"}, {"path": None, "text": "Nowhere"}]
+    assert v.links("a/Same.md")["backlinks"] == ["c.md"] and v.links("b/Same.md")["backlinks"] == ["c.md"]
+    paths = {"a/Same.md", "b/Same.md", "c.md"}
+    assert all(v.resolve_link(x, paths) == v.resolve_link(x, paths, v.names(paths)) for x in ("Same", "same", "b/Same", "a/Same.md", "Nowhere", "x/c", ""))
+
+
+def test_reading_does_not_wait_for_the_index(client, home):
+    """The handlers that read are plain functions — the framework runs those off the event loop — and a note's text
+    and the tree do not take the index's lock: a note opens while another's backlinks are still being found."""
+    import inspect
+    import threading
+    reads = {r.path.rsplit("/", 1)[1]: r.endpoint for r in client.app.routes if "GET" in (getattr(r, "methods", None) or ()) and "/vaults/{vid}/" in r.path}
+    assert set(reads) == {"tree", "file", "raw", "search", "links", "recent", "tags"}
+    assert not [name for name, fn in reads.items() if inspect.iscoroutinefunction(fn)]
+    v = Vault(home / "data" / "alice" / "Obsidian" / "Research", ":memory:")
+    got: list = []
+    with v._lock:  # the index is busy
+        th = threading.Thread(target=lambda: got.append((v.read("Home.md")["path"], bool(v.tree()["children"]))))
+        th.start()
+        th.join(5)
+    assert got == [("Home.md", True)]

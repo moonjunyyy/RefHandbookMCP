@@ -318,41 +318,51 @@ class Vault:
 
     # index
     def refresh(self, force: bool = False) -> None:
-        """Read the notes whose mtime changed since the index saw them; forget the ones gone."""
+        """Read the notes whose mtime changed since the index saw them; forget the ones gone. The whole pass is one
+        transaction: the connection commits each statement by itself otherwise, and a first index of a few thousand
+        notes is then written to the disk statement by statement (minutes)."""
         if not force and time.monotonic() - self._refreshed < REFRESH_EVERY:
             return
         with self._lock:
-            known = {r[0]: r[1] for r in self.index.execute("SELECT path, mtime FROM notes")}
-            seen = set()
-            for rel, p in self.walk():
-                if not is_note(rel):
-                    continue
-                seen.add(rel)
-                try:
-                    st = p.stat()
-                except OSError:
-                    continue
-                if known.get(rel) == st.st_mtime:
-                    continue
-                try:
-                    text = p.read_bytes()[:MAX_TEXT].decode("utf-8", "replace")
-                except OSError:
-                    continue
-                title = note_name(rel).rpartition("/")[2]
-                self.index.execute("DELETE FROM fts WHERE path=?", (rel,))
-                self.index.execute("DELETE FROM links WHERE src=?", (rel,))
-                self.index.execute("DELETE FROM tags WHERE path=?", (rel,))
-                self.index.execute("INSERT OR REPLACE INTO notes VALUES (?,?,?,?)", (rel, title, st.st_mtime, st.st_size))
-                self.index.execute("INSERT INTO fts VALUES (?,?,?)", (rel, title, text))
-                for m in WIKILINK.finditer(text):
-                    self.index.execute("INSERT INTO links VALUES (?,?)", (rel, m.group(1).strip()))
-                for m in TAG.finditer(text):
-                    self.index.execute("INSERT INTO tags VALUES (?,?)", (rel, m.group(1)))
-            for rel in set(known) - seen:
-                self.index.execute("DELETE FROM notes WHERE path=?", (rel,))
-                self.index.execute("DELETE FROM fts WHERE path=?", (rel,))
-                self.index.execute("DELETE FROM links WHERE src=?", (rel,))
-                self.index.execute("DELETE FROM tags WHERE path=?", (rel,))
+            if not force and time.monotonic() - self._refreshed < REFRESH_EVERY:
+                return  # another request refreshed it while this one waited for the lock
+            self.index.execute("BEGIN")
+            try:
+                known = {r[0]: r[1] for r in self.index.execute("SELECT path, mtime FROM notes")}
+                seen = set()
+                for rel, p in self.walk():
+                    if not is_note(rel):
+                        continue
+                    seen.add(rel)
+                    try:
+                        st = p.stat()
+                    except OSError:
+                        continue
+                    if known.get(rel) == st.st_mtime:
+                        continue
+                    try:
+                        text = p.read_bytes()[:MAX_TEXT].decode("utf-8", "replace")
+                    except OSError:
+                        continue
+                    title = note_name(rel).rpartition("/")[2]
+                    self.index.execute("DELETE FROM fts WHERE path=?", (rel,))
+                    self.index.execute("DELETE FROM links WHERE src=?", (rel,))
+                    self.index.execute("DELETE FROM tags WHERE path=?", (rel,))
+                    self.index.execute("INSERT OR REPLACE INTO notes VALUES (?,?,?,?)", (rel, title, st.st_mtime, st.st_size))
+                    self.index.execute("INSERT INTO fts VALUES (?,?,?)", (rel, title, text))
+                    for m in WIKILINK.finditer(text):
+                        self.index.execute("INSERT INTO links VALUES (?,?)", (rel, m.group(1).strip()))
+                    for m in TAG.finditer(text):
+                        self.index.execute("INSERT INTO tags VALUES (?,?)", (rel, m.group(1)))
+                for rel in set(known) - seen:
+                    self.index.execute("DELETE FROM notes WHERE path=?", (rel,))
+                    self.index.execute("DELETE FROM fts WHERE path=?", (rel,))
+                    self.index.execute("DELETE FROM links WHERE src=?", (rel,))
+                    self.index.execute("DELETE FROM tags WHERE path=?", (rel,))
+            except BaseException:
+                self.index.execute("ROLLBACK")
+                raise
+            self.index.execute("COMMIT")
             self._refreshed = time.monotonic()
 
     def search(self, q: str, limit: int = 50) -> list[dict]:
@@ -367,7 +377,16 @@ class Vault:
                 (match, limit)).fetchall()
         return [{"path": r[0], "title": r[1], "snippet": r[2]} for r in rows]
 
-    def resolve_link(self, target: str, paths: set[str]) -> str | None:
+    @staticmethod
+    def names(paths: set[str]) -> dict[str, str]:
+        """Each note's file name (lower case) → the first path, in order, that has it: what a bare [[name]] means.
+        Made once for a pass over many links, so that a link is looked up and not searched for among every note."""
+        out: dict[str, str] = {}
+        for p in sorted(paths):
+            out.setdefault(p.rpartition("/")[2].lower(), p)
+        return out
+
+    def resolve_link(self, target: str, paths: set[str], names: dict[str, str] | None = None) -> str | None:
         """Where a [[wikilink]] points: the note of that path, else the one note with that name."""
         name = target.strip().strip("/")
         if not name:
@@ -376,6 +395,8 @@ class Vault:
             if cand in paths:
                 return cand
         tail = name.rpartition("/")[2].lower() + NOTE
+        if names is not None:
+            return names.get(tail)
         hits = sorted(p for p in paths if p.rpartition("/")[2].lower() == tail)
         return hits[0] if hits else None
 
@@ -385,14 +406,15 @@ class Vault:
             paths = {r[0] for r in self.index.execute("SELECT path FROM notes")}
             out = [r[0] for r in self.index.execute("SELECT dst FROM links WHERE src=? ORDER BY rowid", (rel,))]
             rows = self.index.execute("SELECT src, dst FROM links").fetchall()
+        names = self.names(paths)  # every link of the vault is resolved below: by a look-up each, not a search each
         links, seen = [], set()
         for dst in out:
-            to = self.resolve_link(dst, paths)
+            to = self.resolve_link(dst, paths, names)
             if (to or dst) in seen:
                 continue
             seen.add(to or dst)
             links.append({"path": to, "text": dst})
-        backlinks = sorted({src for src, dst in rows if src != rel and self.resolve_link(dst, paths) == rel})
+        backlinks = sorted({src for src, dst in rows if src != rel and self.resolve_link(dst, paths, names) == rel})
         return {"path": rel, "links": links, "backlinks": backlinks}
 
     def recent(self, n: int = 10) -> list[dict]:
@@ -589,12 +611,14 @@ def create_app(settings: Settings | None = None, registry: Registry | None = Non
         return Response(status_code=204)
 
     # ── files
+    # The handlers that only read (and the trash, which awaits no body) are plain functions: the framework runs those
+    # off the event loop, so a pass over the index — a first one is long — does not hold back a note's text or the tree.
     @app.get(f"{PREFIX}/vaults/{{vid}}/tree")
-    async def tree(request: Request, vid: str):
+    def tree(request: Request, vid: str):
         return opened(gate(request), vid).tree()
 
     @app.get(f"{PREFIX}/vaults/{{vid}}/file")
-    async def read(request: Request, vid: str):
+    def read(request: Request, vid: str):
         return opened(gate(request), vid).read(rel_of(request))
 
     @app.put(f"{PREFIX}/vaults/{{vid}}/file")
@@ -608,7 +632,7 @@ def create_app(settings: Settings | None = None, registry: Registry | None = Non
         return opened(uid, vid).write(rel, text, request.headers.get("if-match"))
 
     @app.get(f"{PREFIX}/vaults/{{vid}}/raw")
-    async def raw(request: Request, vid: str):
+    def raw(request: Request, vid: str):
         data_, kind = opened(gate(request), vid).raw(rel_of(request))
         # a file that could run as a page (an SVG with a script, an HTML file) is only ever downloaded
         how = "attachment" if kind in ("image/svg+xml", "text/html", "application/xhtml+xml", "text/xml", "application/xml") else "inline"
@@ -624,22 +648,22 @@ def create_app(settings: Settings | None = None, registry: Registry | None = Non
         return {"path": dst}
 
     @app.delete(f"{PREFIX}/vaults/{{vid}}/file")
-    async def trash(request: Request, vid: str):
+    def trash(request: Request, vid: str):
         rel = rel_of(request)
         return {"path": rel, "trash": opened(gate(request), vid).trash(rel)}
 
     # ── index
     @app.get(f"{PREFIX}/vaults/{{vid}}/search")
-    async def search(request: Request, vid: str):
+    def search(request: Request, vid: str):
         q = request.query_params.get("q", "")
         return {"q": q, "hits": opened(gate(request), vid).search(q)}
 
     @app.get(f"{PREFIX}/vaults/{{vid}}/links")
-    async def links(request: Request, vid: str):
+    def links(request: Request, vid: str):
         return opened(gate(request), vid).links(rel_of(request))
 
     @app.get(f"{PREFIX}/vaults/{{vid}}/recent")
-    async def recent(request: Request, vid: str):
+    def recent(request: Request, vid: str):
         try:
             n = max(1, min(100, int(request.query_params.get("n", "10"))))
         except ValueError:
@@ -647,7 +671,7 @@ def create_app(settings: Settings | None = None, registry: Registry | None = Non
         return {"notes": opened(gate(request), vid).recent(n)}
 
     @app.get(f"{PREFIX}/vaults/{{vid}}/tags")
-    async def tags(request: Request, vid: str):
+    def tags(request: Request, vid: str):
         return {"tags": opened(gate(request), vid).tags()}
 
     @app.get("/vault/healthz")
