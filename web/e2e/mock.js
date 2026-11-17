@@ -40,7 +40,25 @@ const CARDS = [
   { id: 'agents', title: '에이전트', description: '내 API 키로 돌리는 에이전트 팀과 샌드박스', about: '에이전트 팀을 실행합니다.', tags: ['AI', '도구'], code: '', icon: '🤖', href: '/agents/', optional: true,
     links: [{ label: '에이전트 실행', href: '/agents/' }, { label: '프리셋', href: '/agents/presets' }, { label: '파일', href: '/agents/files' }], widgets: [] },
 ];
-const PAGES = ['/', '/apps', '/settings', '/account', '/account/', '/agents', '/agents/', '/calendar', '/vault', '/projects', '/board'];
+const PAGES = ['/', '/apps', '/settings', '/account', '/account/', '/agents', '/agents/', '/calendar', '/vault', '/projects', '/board', '/handbook'];
+// the handbook's graph (/handbook, refhandbook/graph_api.py): two topics, what joins them (a route, a row both reach, a
+// tag of both), a card, and what one topic opens into
+const GRAPH = {
+  overview: {
+    nodes: [{ id: 'n:geo', type: 'entry', title: '로그 차트', n: 3, ledger: 'geo' }, { id: 'n:num', type: 'entry', title: '자연수', n: 2, ledger: 'num' },
+            { id: 'card:geo-where', type: 'card', title: 'Geo: where things are' }, { id: 'tag:charts', type: 'tag', title: 'charts' },
+            { id: 'n:e1', type: 'row', kind: 'object', state: 'established', title: 'geo/E1 · the object', shared: true }],
+    links: [{ s: 'n:geo', t: 'n:num', kind: 'route', n: 1 }, { s: 'n:geo', t: 'card:geo-where', kind: 'card', n: 1 }, { s: 'n:geo', t: 'n:e1', kind: 'shared', n: 1 },
+            { s: 'n:num', t: 'n:e1', kind: 'shared', n: 1 }, { s: 'n:geo', t: 'tag:charts', kind: 'tag', n: 1 }, { s: 'n:num', t: 'tag:charts', kind: 'tag', n: 1 }],
+  },
+  entries: { 'n:geo': {
+    nodes: [{ id: 'n:e1', type: 'row', kind: 'object', state: 'established', label: 'E1', title: 'E1 · the object', mark: true },
+            { id: 'n:e2', type: 'row', kind: 'object', state: 'established', label: 'E2', title: 'E2 · its chart', mark: false },
+            { id: 'n:h1', type: 'row', kind: 'claim', state: 'open', label: 'H1', title: 'H1 · the chart is smooth', mark: false },
+            { id: 'tag:charts', type: 'tag', title: 'charts' }],
+    links: [{ s: 'n:e2', t: 'n:e1', kind: 'basis' }, { s: 'n:h1', t: 'n:e2', kind: 'basis' }, { s: 'n:e2', t: 'tag:charts', kind: 'tag' }],
+  } },
+};
 // the sizes a cell may have (portal/site.py SIZES, as /me carries them)
 const SIZES = [{ id: '1x1', cols: 1, rows: 1 }, { id: '2x1', cols: 2, rows: 1 }, { id: '1x2', cols: 1, rows: 2 }, { id: '2x2', cols: 2, rows: 2 },
                { id: '3x1', cols: 3, rows: 1 }, { id: '3x2', cols: 3, rows: 2 }, { id: '4x2', cols: 4, rows: 2 }];
@@ -363,6 +381,16 @@ async function handle(route) {
       return json(route, 200, { deleted: rels.length === 1 ? rels[0] : rels });
     }
     return json(route, 404, { error: { code: 'not_found', message: 'no such api' } });
+  }
+  if (p.startsWith('/handbook/api/v1/')) {  // the handbook's graph: read-only, {error: {code, message}} as the handbook says it
+    if (!uid) return json(route, 401, { error: { code: 'unauthorized', message: 'sign in first' } });
+    const id = new URL(req.url()).searchParams.get('id') || '';
+    const none = () => json(route, 404, { error: { code: 'not_found', message: `no node '${id}'` } });
+    if (p.endsWith('/graph')) return json(route, 200, GRAPH.overview);
+    if (p.endsWith('/graph/entry')) return GRAPH.entries[id] ? json(route, 200, { id, ...GRAPH.entries[id] }) : none();
+    const n = [...GRAPH.overview.nodes, ...Object.values(GRAPH.entries).flatMap(e => e.nodes)].find(x => x.id === id);
+    return n ? json(route, 200, { id, type: n.kind || n.type, state: n.state || '', author: 'model', title: n.title, name: '', content: `${n.title}\n본문`, cut: false,
+                                  out: { ref: 2 }, in: { ref: 1 } }) : none();
   }
   if (p.startsWith('/board/api/v1/')) {  // the handbook's board: {error: {code, message}} as the handbook says it
     if (!uid) return json(route, 401, { error: { code: 'unauthorized', message: 'sign in first' } });

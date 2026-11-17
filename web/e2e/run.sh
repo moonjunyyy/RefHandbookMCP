@@ -28,6 +28,10 @@ line=$(head -1 layout.log)
 echo "layout: $line"
 grep '^BAD' layout.log | head -20
 case "$line" in *"violations: 0"*) ok=$((ok + 1));; *) bad=$((bad + 1));; esac
+# the knowledge graph's page (graph-view.js)
+if node graph-view.js > graph.log 2>&1; then ok=$((ok + 1)); else bad=$((bad + 1)); fi
+head -1 graph.log
+grep '^FAIL' graph.log
 if node appearance.js; then ok=$((ok + 1)); else bad=$((bad + 1)); fi
 if node procedure.js; then ok=$((ok + 1)); else bad=$((bad + 1)); fi
 # the calendar's head, scale and room (calendar-scale.js)

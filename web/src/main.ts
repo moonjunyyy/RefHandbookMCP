@@ -13,6 +13,7 @@ import { boardPage } from './pages/board';
 import { presets } from './pages/flows';
 import { app, apps } from './pages/apps';
 import { calendar } from './pages/calendar';
+import { graph } from './pages/graph';
 import { vault } from './pages/vault';
 import { home } from './pages/home';
 import * as projects from './pages/projects';
@@ -31,6 +32,7 @@ function routes(): [RegExp, Page][] {
     [/^\/vault\/([a-z0-9]+)\/?(.*)$/, vault],
     [/^\/settings\/?$/, settings],
     [/^\/board\/?$/, boardPage],
+    [/^\/handbook\/?$/, graph],
     [/^\/projects\/?$/, projects.projects],
     [/^\/projects\/join\/([^/]+)\/?$/, projects.join],
     [/^\/projects\/([^/]+)\/?$/, projects.project],

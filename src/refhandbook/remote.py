@@ -648,6 +648,10 @@ def build(cfg: Config, accounts: Accounts | None = None, sso_tokens: SsoTokens |
     board_api.install(m, stores=stores, who=who, is_admin=accounts.is_admin, data_dir=Path(cfg.data_dir),
                       public_url=cfg.public_url, lock=server._CALLS)
 
+    from . import graph_api  # the entry graph as nodes and links, for the site's page /handbook
+
+    graph_api.install(m, stores=stores, who=who, public_url=cfg.public_url, lock=server._CALLS)
+
     @m.custom_route("/healthz", methods=["GET"])
     async def healthz(request: Request) -> Response:
         return PlainTextResponse("ok")
