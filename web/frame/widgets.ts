@@ -10,12 +10,12 @@
 // holds is theme.css's (--cell-items beside --cell).
 
 import { Child, h, replace } from './dom';
-import { Card, Size, Widget, frame, prefs, sizeOf } from './frame';
+import { Card, Param, Placement, Size, Widget, frame, prefs, sizeOf } from './frame';
 import { lang, locale, t } from './i18n';
 import { api, go } from './parts';
 
 export interface WidgetContext { frame: typeof frame; prefs: typeof prefs; t: typeof t; lang: string; theme: string;
-                                 go: typeof go; api: typeof api; card: Card; widget: Widget; size: Size }
+                                 go: typeof go; api: typeof api; card: Card; widget: Widget; size: Size; params: Record<string, string> }
 export type WidgetModule = { default: (host: HTMLElement, ctx: WidgetContext) => void | (() => void) | Promise<void | (() => void)> };
 
 /** The widget every app has: a launcher — its mark and name, the way in; an app with more than one page lists
@@ -43,17 +43,59 @@ export function spanStyle(sizeId: string | undefined): string {
   return `grid-column: span ${s.cols}; grid-row: span ${s.rows};`;
 }
 
+/** A place's settings: the widget's declared defaults under what the person kept for this place; a kept value
+ * that is no longer one of the declared choices gives way to the default. */
+export function paramsOf(w: Widget, p?: Placement): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const d of w.params ?? []) {
+    const kept = p?.params?.[d.id];
+    out[d.id] = typeof kept === 'string' && (!d.choices || d.choices.some(c => c.value === kept)) ? kept : d.default;
+  }
+  return out;
+}
+
+const reading = new Map<string, Promise<{ value: string; label: string }[]>>();
+/** What a setting may be: its declared choices, or the word for no filter and then the person's own objects, read
+ * from the setting's path (askers at the same moment share one read). */
+export function choicesOf(d: Param): Promise<{ value: string; label: string }[]> {
+  const from = d.from;
+  if (!from) return Promise.resolve(d.choices ?? []);
+  const key = [from.path, from.list, from.value, from.label].join(' ');
+  let list = reading.get(key);
+  if (!list) {
+    list = api(from.path).get('').then(r => ((r?.[from.list] ?? []) as Record<string, unknown>[])
+      .map(x => ({ value: String(x[from.value] ?? ''), label: String(x[from.label] ?? '') })).filter(x => x.value), () => [])
+      .finally(() => reading.delete(key));
+    reading.set(key, list);
+  }
+  return list.then(own => [{ value: '', label: d.all ?? '' }, ...own]);
+}
+
+/** The words of the settings a place changed from the widget's own: what its head says after the title. */
+async function said(w: Widget, params: Record<string, string>): Promise<string[]> {
+  const out: string[] = [];
+  for (const d of w.params ?? []) {
+    if (params[d.id] === d.default) continue;
+    const hit = (await choicesOf(d)).find(c => c.value === params[d.id]);
+    if (hit) out.push(hit.label);
+  }
+  return out;
+}
+
 /** Draw a widget into its cell: the module when there is one, the launcher otherwise or on failure. `size`: the
- * cell's (the person's own, else the widget's declared one). */
-export async function mount(cell: HTMLElement, c: Card, w: Widget, size: Size = sizeOf(w.size)): Promise<void> {
+ * cell's (the person's own, else the widget's declared one); `p`: the place, for its title and its settings. */
+export async function mount(cell: HTMLElement, c: Card, w: Widget, size: Size = sizeOf(w.size), p?: Placement): Promise<void> {
   const body = h('div', { class: 'widget-body' });
+  const params = paramsOf(w, p);
+  const words = h('span', { class: 'widget-said' });
   replace(cell, w.id === LAUNCHER ? null : h('div', { class: 'widget-head' },
-    c.icon && h('span', { class: 'app-icon', 'aria-hidden': 'true' }, c.icon), h('a', { href: c.href }, c.title), ' · ', w.title), body);
+    c.icon && h('span', { class: 'app-icon', 'aria-hidden': 'true' }, c.icon), h('a', { href: c.href }, c.title), ' · ', p?.title || w.title, words), body);
+  if (!p?.title) void said(w, params).then(list => { if (list.length) replace(words, ' — ', list.join(' · ')); });
   if (w.id === LAUNCHER || !w.href) { replace(body, launcher(c)); return; }
   try {
     const mod = (await import(/* @vite-ignore */ w.href)) as WidgetModule;
     if (typeof mod.default !== 'function') throw new Error(`${w.href}: no default export`);
-    await mod.default(body, { frame, prefs, t, lang: lang(), theme: frame.theme, go, api, card: c, widget: w, size });
+    await mod.default(body, { frame, prefs, t, lang: lang(), theme: frame.theme, go, api, card: c, widget: w, size, params });
   } catch (e) {
     console.warn('widget', c.id, w.id, e);  // the person sees the launcher; the console says why
     replace(body, launcher(c));
@@ -110,11 +152,16 @@ export function groupHead(title: Child, aside?: Child): HTMLElement {
   return h('p', { class: 'items-group' }, h('span', null, title), aside !== undefined && aside !== null && h('span', { class: 'items-count' }, aside));
 }
 
+/** What an empty list says: a line, or a line and the way to its first item. */
+export type None = string | { text: string; href: string; label: string };
+
 /** A widget's list, one item a row — or its groups, each under its title. `none`: what an empty list says;
  * `more`: the rest that did not fit, as a link. */
-export function items(list: Item[] | ItemGroup[], none: string, more?: { href: string; n: number }): HTMLElement {
+export function items(list: Item[] | ItemGroup[], none: None, more?: { href: string; n: number }): HTMLElement {
   const groups = isGroups(list) ? list.filter(g => g.items.length) : [];
-  if (!groups.length && (isGroups(list) || !list.length)) return h('p', { class: 'items-none muted small' }, none);
+  if (!groups.length && (isGroups(list) || !list.length)) {
+    return h('p', { class: 'items-none muted small' }, typeof none === 'string' ? none : [none.text, ' ', h('a', { href: none.href }, none.label)]);
+  }
   return h('div', { class: 'items' },
     groups.length ? groups.map(g => [groupHead(g.title, g.aside), h('ul', { class: 'items-list' }, g.items.map(itemRow))])
       : h('ul', { class: 'items-list' }, (list as Item[]).map(itemRow)),
@@ -212,14 +259,28 @@ export function bars(list: Bar[], none: string): HTMLElement {
   }));
 }
 
-/** A run of days' counts as columns (what was done each day), the last today; its words for a reader. */
+/** What a form shows, in words under it — a form with no words is a picture to guess at. `scale`: for a form that
+ * draws counts as shades (a strip of days, a month), the shades from few to many in that form's own colours. */
+export function legend(text: string, scale?: 'days' | 'month'): HTMLElement {
+  return h('div', { class: 'form-said' }, h('span', null, text),
+    scale && h('span', { class: `form-scale scale-${scale}`, 'aria-hidden': 'true' },
+      t('적음'), [...Array(LEVELS)].map((_, i) => h('i', { 'data-level': String(i + 1) })), t('많음')));
+}
+
+/** A run of days' counts as columns (what was done each day), the last today — with its ends and its words under it. */
 export function activity(days: { date: Date; n: number }[], label: string): HTMLElement {
   const max = Math.max(0, ...days.map(d => d.n));
-  return h('div', { class: 'activity', role: 'img', 'aria-label': label }, days.map(d => {
-    const col = h('span', { class: 'act', 'data-level': level(d.n, max), title: `${d.date.toLocaleDateString(locale(), { month: 'numeric', day: 'numeric' })} · ${d.n}` });
-    col.style.setProperty('--v', String(max > 0 ? d.n / max : 0));
-    return col;
-  }));
+  const short = (d: Date) => d.toLocaleDateString(locale(), { month: 'numeric', day: 'numeric' });
+  const last = days.length ? days[days.length - 1].date : null;
+  return h('div', { class: 'form' },
+    h('div', { class: 'activity', role: 'img', 'aria-label': label }, days.map(d => {
+      const col = h('span', { class: 'act', 'data-level': level(d.n, max), title: `${short(d.date)} · ${d.n}` });
+      col.style.setProperty('--v', String(max > 0 ? d.n / max : 0));
+      return col;
+    })),
+    last && h('div', { class: 'form-ends', 'aria-hidden': 'true' }, h('span', null, short(days[0].date)),
+      h('span', null, dayKey(last) === dayKey(new Date()) ? t('오늘') : short(last))),
+    legend(max > 0 ? `${label} · ${t('가장 많은 날 {n}', { n: max })}` : label));
 }
 
 export const openWord = () => t('열기');

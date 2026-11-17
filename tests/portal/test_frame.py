@@ -261,6 +261,70 @@ def test_a_services_widget_names_its_own_path(tmp_path):
     assert s.apps[0].widgets[0].href == "/x/widget.js" and s.apps[0].widgets[0].size == "2x1"
 
 
+# ── a widget's settings ([[app.widget.param]]): declared in the site file, kept by a person with each place ──
+
+PARAM = WIDGET + 'id = "w"\ntitle = "W"\nmodule = "w.js"\n[[app.widget.param]]\n'
+DAYS = 'id = "days"\nlabel = "기간"\ndefault = "7"\nchoices = [{ value = "3", label = "사흘" }, { value = "7", label = "이레" }]\n'
+FROM = 'from = { path = "/calendar/api/v1/calendars", list = "calendars", value = "id", label = "name" }\n'
+
+
+def test_a_widget_declares_its_settings(tmp_path):
+    f = tmp_path / "site.toml"
+    f.write_text(PARAM + DAYS + 'tr.en = { label = "Range", choices = { "3" = "3 days" } }\n'
+                 '[[app.widget.param]]\nid = "calendar"\nlabel = "캘린더"\n' + FROM + 'all = "모든 캘린더"\ntr.en = { label = "Calendar", all = "All calendars" }\n')
+    days, cal = site.load(f, facts(str(SITE))).apps[0].widgets[0].params
+    assert days.json("ko") == {"id": "days", "label": "기간", "default": "7", "choices": [{"value": "3", "label": "사흘"}, {"value": "7", "label": "이레"}]}
+    assert days.json("en") == {"id": "days", "label": "Range", "default": "7", "choices": [{"value": "3", "label": "3 days"}, {"value": "7", "label": "이레"}]}
+    assert cal.json("en") == {"id": "calendar", "label": "Calendar", "default": "", "all": "All calendars",
+                              "from": {"path": "/calendar/api/v1/calendars", "list": "calendars", "value": "id", "label": "name"}}
+    assert cal.json("ko")["all"] == "모든 캘린더"
+
+
+@pytest.mark.parametrize("bad, message", [
+    (PARAM + 'id = "days"\nlabel = "기간"\n', "one of choices and from"),
+    (PARAM + DAYS + FROM + 'all = "모두"\n', "one of choices and from"),
+    (PARAM + DAYS.replace('default = "7"', 'default = "9"'), "default is one of its choices"),
+    (PARAM + DAYS + 'colour = "red"\n', "unknown parameter fields"),
+    (PARAM + DAYS + 'all = "모두"\n', "all goes with from"),
+    (PARAM + 'id = "cal"\nlabel = "캘린더"\nfrom = { path = "https://elsewhere/x", list = "a", value = "id", label = "name" }\nall = "모두"\n', "a path of the site"),
+    (PARAM + 'id = "cal"\nlabel = "캘린더"\n' + FROM, "the word for no filter"),
+    (PARAM + DAYS + '[[app.widget.param]]\n' + DAYS, "parameter id is declared twice"),
+    (PARAM + DAYS + 'tr.en = { title = "x" }\n', "names label, all or choices"),
+    (PARAM + 'id = "Bad Id"\nlabel = "기간"\n', "a parameter needs an id"),
+])
+def test_a_bad_setting_is_refused(tmp_path, bad, message):
+    f = tmp_path / "site.toml"
+    f.write_text(bad)
+    with pytest.raises(site.SiteError, match=message):
+        site.load(f, facts(str(SITE)))
+
+
+def test_the_frame_carries_a_widgets_settings(app):
+    """A widget's settings reach the page through /me in the person's language; a widget without any is as before."""
+    c, _ = sign_in(app)
+    me = c.get("/auth/api/v1/me").json()
+    widgets = {w["id"]: w for w in next(x for x in me["cards"] if x["id"] == "calendar")["widgets"]}
+    assert [p["id"] for p in widgets["upcoming"]["params"]] == ["days", "calendar", "form"] and "params" not in widgets["tasks"]
+    assert widgets["upcoming"]["params"][0]["default"] == "7" and widgets["upcoming"]["params"][1]["all"] == "모든 캘린더"
+    en = c.get("/auth/api/v1/me", headers={"Accept-Language": "en"}).json()
+    days = next(w for x in en["cards"] if x["id"] == "calendar" for w in x["widgets"] if w["id"] == "upcoming")["params"][0]
+    assert days["label"] == "Range" and [o["label"] for o in days["choices"]] == ["3 days", "7 days", "14 days"]
+
+
+def test_every_setting_is_said_in_both_languages():
+    s = site.load(SITE, facts(str(SITE)))
+    seen = 0
+    for a in s.apps:
+        for w in a.widgets:
+            for p in w.params:
+                seen += 1
+                ko, en = p.json("ko"), p.json("en")
+                assert en["label"] != ko["label"], (a.id, w.id, p.id)
+                assert "all" not in ko or en["all"] != ko["all"], (a.id, w.id, p.id)
+                assert all(x["label"] != y["label"] for x, y in zip(en.get("choices", []), ko.get("choices", []))), (a.id, w.id, p.id)
+    assert seen  # the shipped file declares some
+
+
 # ── C6: the pages are held to the rules ───────────────────────────────────
 
 PAGES = WEB / "src" / "pages"
@@ -396,4 +460,4 @@ def test_widgets_draw_with_the_frames_parts():
         assert not re.search(r"h\(\s*'(?:ul|ol|li)'", text), f"{p.name} writes list markup of its own"
         assert "from '/auth/static/site.js'" in text and re.search(r"\b(?:items|bars|monthGrid|dayStrip)\b", text), f"{p.name} draws without the frame's parts"
     home = (WEB / "src" / "pages" / "home.ts").read_text()
-    assert "mount(el, c, w, size)" in home  # the module learns the cell's size
+    assert "mount(el, c, w, size, p)" in home  # the module learns the cell's size, and the place's settings

@@ -89,6 +89,15 @@ const MEASURE = (scope) => {
   await page.waitForSelector('.widget[data-widget=tasks] ul.tasks li');
   await page.hover('.widget[data-widget=tasks] ul.tasks li');
   await measure('home');
+  // a place's settings: the dialog a widget's declared parameters make
+  await page.hover('.widget[data-widget=today]');
+  await page.click('.widget[data-widget=today] .widget-tools button.more');
+  await page.waitForSelector('.menu[role=menu]');
+  await page.click('.menu[role=menu] .menu-item:has(strong:text-is("설정"))');
+  await page.waitForSelector('dialog[open] select[name=calendar]');
+  await measure('widget-settings', 'dialog');
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(100);
   await menuAt('.widget[data-widget=tasks] ul.tasks li');
   await measure('task-menu', '.menu[role=menu]');
   await page.keyboard.press('Escape');
@@ -146,6 +155,10 @@ const MEASURE = (scope) => {
   await page.waitForSelector('.wk-body');
   await page.waitForTimeout(100);
   await measure('week');
+  await page.click('.wk-col:not(:has(.wk-ev)) >> nth=0', { position: { x: 20, y: 44 * 9 + 6 } });
+  await page.waitForSelector('.peek input[name=summary]');
+  await measure('quick', '.peek');
+  await page.keyboard.press('Escape');
   await page.keyboard.press('d');
   await page.waitForFunction(() => document.querySelectorAll('.wk-col').length === 1);
   await measure('day');
@@ -158,6 +171,9 @@ const MEASURE = (scope) => {
   await page.click('.cal-nav .chip:text-is("월")');
   await page.waitForSelector('.day-list .cal-ev');
   await page.click('.day-list .cal-ev');
+  await page.waitForSelector('.peek');
+  await measure('peek', '.peek');
+  await page.click('.peek button:text-is("편집")');
   await page.waitForSelector('dialog[open]');
   await measure('event', 'dialog');
   await page.keyboard.press('Escape');

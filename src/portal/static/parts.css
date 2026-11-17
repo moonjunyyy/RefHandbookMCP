@@ -343,6 +343,19 @@ details.help > p { position: absolute; z-index: 20; margin: var(--s1) 0 0; paddi
 .menu .menu-item strong { font-weight: 600; white-space: nowrap; }
 .menu .menu-item .detail { color: var(--muted); font-size: .85em; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .menu .menu-item kbd { margin-left: auto; font: .75em var(--mono); color: var(--muted); }
+/* a peek: a thing's card at its place, between its line in a list and its dialog — a sheet on a narrow screen */
+.peek { position: fixed; z-index: 60; width: min(340px, 92vw); max-height: min(70vh, 480px); overflow: auto; padding: var(--s3); background: var(--card); color: var(--text);
+        border: 1px solid var(--line); border-radius: var(--panel-radius); box-shadow: var(--shadow-pop); }
+.peek h2 { margin: 0; font-size: 1rem; overflow-wrap: anywhere; }
+.peek p { margin: var(--s1) 0 0; overflow-wrap: anywhere; }
+.peek form { margin: 0; }
+.peek form input[type=text], .peek form select { width: 100%; margin: 0; }
+.peek form select { margin-top: var(--s2); }
+.peek .peek-cal { border-left: 3px solid var(--ev, var(--accent)); padding-left: var(--s1); }
+.peek .peek-notes { max-height: 9em; overflow: auto; white-space: pre-wrap; color: var(--muted); }
+.peek .actions { align-items: center; }
+.peek .actions .more { margin-left: auto; }
+@media (max-width: 640px) { .peek { left: 0 !important; right: 0; top: auto !important; bottom: 0; width: auto; max-height: 70vh; } }
 button.more { background: none; border: 0; color: var(--muted); padding: 2px var(--s2); font: 600 1.05rem/1 var(--sans); border-radius: var(--control-radius); }
 button.more:hover { background: var(--soft); color: var(--text); }
 /* a dialog: a question with its answer, or a form; Enter and Esc close it */
@@ -363,8 +376,10 @@ a.primary:hover { background: var(--accent-fill-hover, var(--accent-hover)); col
    (from the sizes the site declares), its head is the drag handle, its corner grip resizes it, its ⋯ shows on hover */
 .widgets { display: grid; gap: var(--gap); grid-template-columns: var(--home-grid); grid-auto-rows: minmax(var(--cell), auto);
            grid-auto-flow: dense; margin-top: var(--s2); }
+/* the grid's columns with nothing in them: the main page asks it how many columns the window gives (pages/home.ts) */
+.widgets-ruler { display: grid; gap: var(--gap); grid-template-columns: var(--home-grid); height: 0; visibility: hidden; }
 .widget { position: relative; min-width: 0; display: flex; flex-direction: column; }
-@media (max-width: 560px) { .widgets { grid-template-columns: 1fr; } .widget { grid-column: span 1 !important; } }
+@media (max-width: 560px) { .widgets, .widgets-ruler { grid-template-columns: 1fr; } .widget { grid-column: span 1 !important; } }
 .widget > .widget-head { display: flex; align-items: center; gap: var(--s1); margin-bottom: var(--s2); font-size: .82rem; color: var(--muted); }
 .widget > .widget-head a { color: inherit; text-decoration: none; }
 .widget > .widget-head a:hover { color: var(--accent); }
@@ -466,7 +481,9 @@ ul.plain li:first-child { border-top: 0; padding-top: 0; }
 /* ── the calendar (§3.3): one head row, a month grid, the day opened under it */
 .cal-head { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s4); align-items: center; justify-content: space-between; margin-bottom: var(--s3); }
 .cal-nav { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1); }
-.cal-nav h1 { margin: 0 var(--s1); font-size: 1.35rem; min-width: 9ch; text-align: center; }
+.cal-nav h1 { margin: 0 var(--s2); font-size: 1.35rem; }  /* after what is pressed: its length moves nothing */
+.cal-scale { display: inline-flex; }
+.cal-scale button.link:disabled { opacity: .4; cursor: default; }
 .cal-nav button.link { font-size: 1.4rem; line-height: 1; padding: 2px var(--s2); }
 .cal-nav > a { margin-left: var(--s2); }
 .cal-nav .chips { margin: 0 0 0 var(--s2); gap: var(--s1); }
@@ -478,12 +495,14 @@ ul.plain li:first-child { border-top: 0; padding-top: 0; }
 .cal-grid { display: flex; flex-direction: column; background: var(--line); border: 1px solid var(--line);
             border-radius: var(--grid-radius); overflow: hidden; }
 /* the month: weeks in a column that scrolls on, under the weekday names (calendar.ts drawGrid) */
-.cal-weeks { position: relative; display: flex; flex-direction: column; max-height: min(70vh, 720px); overflow-y: auto; overscroll-behavior: contain; }
+/* its height is the room down to the window's edge (--cal-h, calendar.ts fitMonth); it scrolls on with no bar: the weeks have no end to show */
+.cal-weeks { position: relative; display: flex; flex-direction: column; max-height: var(--cal-h, min(70vh, 720px)); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; }
+.cal-weeks::-webkit-scrollbar, .wk-body::-webkit-scrollbar { display: none; }
 .cal-wds, .cal-week { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); flex: none; }
 .cal-weeks, .cal-wds, .cal-week { gap: 1px; }  /* the lines between the days are the grid's ground showing through */
 .cal-wds { position: sticky; top: 0; z-index: 1; background: var(--line); border-bottom: 1px solid var(--line); }
 .cal-wd { overflow: hidden; text-overflow: ellipsis; background: var(--card);  /* the card, not soft: muted on soft is 4.29:1 */ padding: 6px; font-size: .78rem; color: var(--muted); text-align: center; }
-.cal-day { background: var(--card); min-height: 92px; padding: var(--s1) var(--s1) var(--s1); cursor: pointer; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.cal-day { background: var(--card); min-height: var(--cal-day, 92px); padding: var(--s1) var(--s1) var(--s1); cursor: pointer; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .cal-day:hover { background: var(--soft); }
 .cal-day.other .cal-num { color: var(--muted); }  /* another month: its number is dim; the background stays the card's (4.5:1) */
 .cal-day.today .cal-num { background: var(--accent-fill, var(--accent)); color: var(--accent-fill-text, var(--accent-text)); }
@@ -515,13 +534,14 @@ ul.plain li:first-child { border-top: 0; padding-top: 0; }
 .wk-day button.wk-num:hover { box-shadow: inset 0 0 0 1px var(--accent); }
 .wk-allday { border-bottom: 1px solid var(--line); min-height: 28px; }
 .wk-allcol { padding: 3px 2px; display: flex; flex-direction: column; gap: 2px; min-width: 0; border-left: 1px solid var(--line); }
-.wk-body { display: grid; grid-template-columns: 56px repeat(var(--wk-days, 7), minmax(0, 1fr)); max-height: min(70vh, 720px); overflow-y: auto; }
+.wk-body { display: grid; grid-template-columns: 56px repeat(var(--wk-days, 7), minmax(0, 1fr)); max-height: min(70vh, 720px); overflow-y: auto; scrollbar-width: none; }  /* the height is set to the room (calendar.ts drawWeek) */
 .wk-hours .wk-hour { font-size: .72rem; color: var(--muted); text-align: right; padding-right: var(--s1); transform: translateY(-.6em); font-variant-numeric: tabular-nums; }
 .wk-col { position: relative; border-left: 1px solid var(--line); cursor: pointer; }
 .wk-col .wk-line { border-top: 1px solid var(--line); box-sizing: border-box; }
 .wk-col .wk-ev { position: absolute; overflow: hidden; z-index: 1; width: auto; align-items: flex-start; flex-direction: column; gap: 0; cursor: grab; }
 .wk-col .wk-ev.repeats { cursor: pointer; }
 .wk-col .wk-ev .cal-title { white-space: normal; }
+.wk-col .wk-ghost { position: absolute; left: 0; z-index: 1; box-sizing: border-box; border: 1px dashed var(--accent); border-radius: 3px; background: var(--soft); pointer-events: none; }
 .wk-now { position: absolute; left: 0; right: 0; border-top: 2px solid var(--bad); z-index: 2; pointer-events: none; }
 @media (max-width: 640px) {
   .wk-row, .wk-body { grid-template-columns: 40px repeat(7, minmax(0, 1fr)); }
@@ -632,6 +652,7 @@ dialog.wide, dialog:has(.pick-list) { max-width: min(860px, 96vw); }
 .pick-row .pick-title { font-weight: 600; font-size: .92rem; }
 .pick-row .pick-desc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pick-row .tag.size { flex: none; }
+.pick-row .pick-more { flex: none; display: flex; align-items: center; gap: var(--s2); }
 /* devices over CalDAV (§8.3): the address, the username, a password shown once, the devices made */
 ul.devices { margin: 0; padding: 0; }
 ul.devices li { display: flex; align-items: center; gap: var(--s2); padding: var(--s1) 0; border-top: 1px solid var(--line); }

@@ -1,5 +1,5 @@
 import { Child } from './dom';
-import { Card, Size, Widget, frame, prefs } from './frame';
+import { Card, Param, Placement, Size, Widget, frame, prefs } from './frame';
 import { t } from './i18n';
 import { api, go } from './parts';
 export interface WidgetContext {
@@ -13,6 +13,7 @@ export interface WidgetContext {
     card: Card;
     widget: Widget;
     size: Size;
+    params: Record<string, string>;
 }
 export type WidgetModule = {
     default: (host: HTMLElement, ctx: WidgetContext) => void | (() => void) | Promise<void | (() => void)>;
@@ -26,9 +27,18 @@ export declare function widgetsOf(c: Card): Widget[];
 /** A cell's place on the grid for a size: the spans, as inline style (no class per size — the sizes are the
  * site's declaration, docs/frame.md §4). */
 export declare function spanStyle(sizeId: string | undefined): string;
+/** A place's settings: the widget's declared defaults under what the person kept for this place; a kept value
+ * that is no longer one of the declared choices gives way to the default. */
+export declare function paramsOf(w: Widget, p?: Placement): Record<string, string>;
+/** What a setting may be: its declared choices, or the word for no filter and then the person's own objects, read
+ * from the setting's path (askers at the same moment share one read). */
+export declare function choicesOf(d: Param): Promise<{
+    value: string;
+    label: string;
+}[]>;
 /** Draw a widget into its cell: the module when there is one, the launcher otherwise or on failure. `size`: the
- * cell's (the person's own, else the widget's declared one). */
-export declare function mount(cell: HTMLElement, c: Card, w: Widget, size?: Size): Promise<void>;
+ * cell's (the person's own, else the widget's declared one); `p`: the place, for its title and its settings. */
+export declare function mount(cell: HTMLElement, c: Card, w: Widget, size?: Size, p?: Placement): Promise<void>;
 /** How many list rows a cell holds: its rows × --cell-items (theme.css, beside --cell). */
 export declare function fit(ctx: {
     size: Size;
@@ -57,9 +67,15 @@ export interface ItemGroup {
 }
 /** The title a group of rows goes under (a day, a due, a folder), with its count. */
 export declare function groupHead(title: Child, aside?: Child): HTMLElement;
+/** What an empty list says: a line, or a line and the way to its first item. */
+export type None = string | {
+    text: string;
+    href: string;
+    label: string;
+};
 /** A widget's list, one item a row — or its groups, each under its title. `none`: what an empty list says;
  * `more`: the rest that did not fit, as a link. */
-export declare function items(list: Item[] | ItemGroup[], none: string, more?: {
+export declare function items(list: Item[] | ItemGroup[], none: None, more?: {
     href: string;
     n: number;
 }): HTMLElement;
@@ -110,7 +126,10 @@ export interface Bar {
     href?: string;
 }
 export declare function bars(list: Bar[], none: string): HTMLElement;
-/** A run of days' counts as columns (what was done each day), the last today; its words for a reader. */
+/** What a form shows, in words under it — a form with no words is a picture to guess at. `scale`: for a form that
+ * draws counts as shades (a strip of days, a month), the shades from few to many in that form's own colours. */
+export declare function legend(text: string, scale?: 'days' | 'month'): HTMLElement;
+/** A run of days' counts as columns (what was done each day), the last today — with its ends and its words under it. */
 export declare function activity(days: {
     date: Date;
     n: number;

@@ -72,7 +72,11 @@ const EN = {
   "{n}개 더": "{n} more",
   "{n}개": "{n}",
   "이전 달": "Previous month",
-  "다음 달": "Next month"
+  "다음 달": "Next month",
+  "적음": "Few",
+  "많음": "Many",
+  "오늘": "Today",
+  "가장 많은 날 {n}": "Busiest day {n}"
 };
 const LANGS = [["ko", "한국어"], ["en", "English"]];
 const CATALOGS = { en: EN };
@@ -746,7 +750,7 @@ function keys(list) {
   if (keysInstalled) return;
   keysInstalled = true;
   document.addEventListener("keydown", (ev) => {
-    if (ev.defaultPrevented || ev.isComposing || document.querySelector("dialog[open]") || openMenu) return;
+    if (ev.defaultPrevented || ev.isComposing || document.querySelector("dialog[open]") || openMenu || openPeek) return;
     const combo = `${ev.altKey ? "Alt+" : ""}${ev.ctrlKey || ev.metaKey ? "Ctrl+" : ""}${ev.key}`;
     if (ev.key === "?" && !typing(ev.target)) {
       ev.preventDefault();
@@ -770,6 +774,16 @@ let openMenu = null;
 function closeMenu() {
   openMenu?.remove();
   openMenu = null;
+}
+function placeAt(el, at) {
+  const r = at instanceof HTMLElement ? at.getBoundingClientRect() : null;
+  const pt = at instanceof HTMLElement ? { x: 0, y: 0 } : at;
+  let x = r ? r.left : pt.x, y = r ? r.bottom + 4 : pt.y;
+  const w = el.offsetWidth, hgt = el.offsetHeight;
+  if (x + w > innerWidth - 8) x = Math.max(8, (r ? r.right : pt.x) - w);
+  if (y + hgt > innerHeight - 8) y = Math.max(8, (r ? r.top - 4 : pt.y) - hgt);
+  el.style.left = `${x}px`;
+  el.style.top = `${y}px`;
 }
 function menu(at, sections, opts = {}) {
   closeMenu();
@@ -825,14 +839,7 @@ function menu(at, sections, opts = {}) {
   });
   document.body.appendChild(el);
   openMenu = el;
-  const r = at instanceof HTMLElement ? at.getBoundingClientRect() : null;
-  const pt = at instanceof HTMLElement ? { x: 0, y: 0 } : at;
-  let x = r ? r.left : pt.x, y = r ? r.bottom + 4 : pt.y;
-  const w = el.offsetWidth, hgt = el.offsetHeight;
-  if (x + w > innerWidth - 8) x = Math.max(8, (r ? r.right : pt.x) - w);
-  if (y + hgt > innerHeight - 8) y = Math.max(8, (r ? r.top - 4 : pt.y) - hgt);
-  el.style.left = `${x}px`;
-  el.style.top = `${y}px`;
+  placeAt(el, at);
   const outside = (ev) => {
     if (!el.contains(ev.target)) {
       done();
@@ -887,6 +894,62 @@ function menuButton(build, label = t("더 보기")) {
   }, "⋯");
   return b;
 }
+let openPeek = null;
+function closePeek() {
+  openPeek?.close();
+}
+function peek(at, body, opts) {
+  closePeek();
+  closeMenu();
+  const back = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  const el = h("div", { class: "peek", role: "dialog", "aria-label": opts.label, tabindex: "-1" }, body);
+  const mine = (n) => n instanceof Node && (el.contains(n) || n instanceof Element && !!n.closest(".menu"));
+  let open = true;
+  const close = (refocus = false) => {
+    if (!open) return;
+    open = false;
+    document.removeEventListener("pointerdown", away, true);
+    document.removeEventListener("wheel", away, true);
+    document.removeEventListener("touchmove", away, true);
+    document.removeEventListener("keydown", key, true);
+    window.removeEventListener("resize", again);
+    el.remove();
+    if (openPeek === handle) openPeek = null;
+    opts.onClose?.();
+    if (refocus && back?.isConnected) back.focus();
+  };
+  const away = (ev) => {
+    if (!mine(ev.target)) close();
+  };
+  const key = (ev) => {
+    if (ev.key !== "Escape" || openMenu || document.querySelector("dialog[open]")) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    close(true);
+  };
+  const again = () => {
+    if (at instanceof HTMLElement && !at.isConnected) close();
+    else placeAt(el, at);
+  };
+  const handle = { el, close: () => close() };
+  el.addEventListener("focusout", (ev) => {
+    const to = ev.relatedTarget;
+    if (to instanceof Element && !mine(to) && !to.closest("dialog")) close();
+  });
+  document.body.appendChild(el);
+  placeAt(el, at);
+  openPeek = handle;
+  setTimeout(() => {
+    if (!open) return;
+    document.addEventListener("pointerdown", away, true);
+    document.addEventListener("wheel", away, { capture: true, passive: true });
+    document.addEventListener("touchmove", away, { capture: true, passive: true });
+    window.addEventListener("resize", again);
+  });
+  document.addEventListener("keydown", key, true);
+  (el.querySelector("input:not([hidden]), select:not([hidden]), textarea, button") ?? el).focus();
+  return handle;
+}
 function go(path) {
   history.pushState(null, "", path);
   window.dispatchEvent(new PopStateEvent("popstate"));
@@ -929,16 +992,51 @@ function spanStyle(sizeId) {
   const s = sizeOf(sizeId);
   return `grid-column: span ${s.cols}; grid-row: span ${s.rows};`;
 }
-async function mount(cell, c, w, size = sizeOf(w.size)) {
+function paramsOf(w, p) {
+  const out = {};
+  for (const d of w.params ?? []) {
+    const kept = p?.params?.[d.id];
+    out[d.id] = typeof kept === "string" && (!d.choices || d.choices.some((c) => c.value === kept)) ? kept : d.default;
+  }
+  return out;
+}
+const reading = /* @__PURE__ */ new Map();
+function choicesOf(d) {
+  const from = d.from;
+  if (!from) return Promise.resolve(d.choices ?? []);
+  const key = [from.path, from.list, from.value, from.label].join(" ");
+  let list = reading.get(key);
+  if (!list) {
+    list = api(from.path).get("").then((r) => (r?.[from.list] ?? []).map((x) => ({ value: String(x[from.value] ?? ""), label: String(x[from.label] ?? "") })).filter((x) => x.value), () => []).finally(() => reading.delete(key));
+    reading.set(key, list);
+  }
+  return list.then((own) => [{ value: "", label: d.all ?? "" }, ...own]);
+}
+async function said(w, params) {
+  const out = [];
+  for (const d of w.params ?? []) {
+    if (params[d.id] === d.default) continue;
+    const hit = (await choicesOf(d)).find((c) => c.value === params[d.id]);
+    if (hit) out.push(hit.label);
+  }
+  return out;
+}
+async function mount(cell, c, w, size = sizeOf(w.size), p) {
   const body = h("div", { class: "widget-body" });
+  const params = paramsOf(w, p);
+  const words = h("span", { class: "widget-said" });
   replace(cell, w.id === LAUNCHER ? null : h(
     "div",
     { class: "widget-head" },
     c.icon && h("span", { class: "app-icon", "aria-hidden": "true" }, c.icon),
     h("a", { href: c.href }, c.title),
     " · ",
-    w.title
+    p?.title || w.title,
+    words
   ), body);
+  if (!p?.title) void said(w, params).then((list) => {
+    if (list.length) replace(words, " — ", list.join(" · "));
+  });
   if (w.id === LAUNCHER || !w.href) {
     replace(body, launcher(c));
     return;
@@ -949,7 +1047,7 @@ async function mount(cell, c, w, size = sizeOf(w.size)) {
       w.href
     );
     if (typeof mod.default !== "function") throw new Error(`${w.href}: no default export`);
-    await mod.default(body, { frame, prefs, t, lang: lang(), theme: frame.theme, go, api, card: c, widget: w, size });
+    await mod.default(body, { frame, prefs, t, lang: lang(), theme: frame.theme, go, api, card: c, widget: w, size, params });
   } catch (e) {
     console.warn("widget", c.id, w.id, e);
     replace(body, launcher(c));
@@ -993,7 +1091,9 @@ function groupHead(title2, aside) {
 }
 function items(list, none, more) {
   const groups = isGroups(list) ? list.filter((g) => g.items.length) : [];
-  if (!groups.length && (isGroups(list) || !list.length)) return h("p", { class: "items-none muted small" }, none);
+  if (!groups.length && (isGroups(list) || !list.length)) {
+    return h("p", { class: "items-none muted small" }, typeof none === "string" ? none : [none.text, " ", h("a", { href: none.href }, none.label)]);
+  }
   return h(
     "div",
     { class: "items" },
@@ -1103,13 +1203,40 @@ function bars(list, none) {
     return h("li", null, b.href ? h("a", { href: b.href }, inner) : h("span", null, inner));
   }));
 }
+function legend(text, scale) {
+  return h(
+    "div",
+    { class: "form-said" },
+    h("span", null, text),
+    scale && h(
+      "span",
+      { class: `form-scale scale-${scale}`, "aria-hidden": "true" },
+      t("적음"),
+      [...Array(LEVELS)].map((_, i) => h("i", { "data-level": String(i + 1) })),
+      t("많음")
+    )
+  );
+}
 function activity(days, label) {
   const max = Math.max(0, ...days.map((d) => d.n));
-  return h("div", { class: "activity", role: "img", "aria-label": label }, days.map((d) => {
-    const col = h("span", { class: "act", "data-level": level(d.n, max), title: `${d.date.toLocaleDateString(locale(), { month: "numeric", day: "numeric" })} · ${d.n}` });
-    col.style.setProperty("--v", String(max > 0 ? d.n / max : 0));
-    return col;
-  }));
+  const short = (d) => d.toLocaleDateString(locale(), { month: "numeric", day: "numeric" });
+  const last = days.length ? days[days.length - 1].date : null;
+  return h(
+    "div",
+    { class: "form" },
+    h("div", { class: "activity", role: "img", "aria-label": label }, days.map((d) => {
+      const col = h("span", { class: "act", "data-level": level(d.n, max), title: `${short(d.date)} · ${d.n}` });
+      col.style.setProperty("--v", String(max > 0 ? d.n / max : 0));
+      return col;
+    })),
+    last && h(
+      "div",
+      { class: "form-ends", "aria-hidden": "true" },
+      h("span", null, short(days[0].date)),
+      h("span", null, dayKey(last) === dayKey(/* @__PURE__ */ new Date()) ? t("오늘") : short(last))
+    ),
+    legend(max > 0 ? `${label} · ${t("가장 많은 날 {n}", { n: max })}` : label)
+  );
 }
 const openWord = () => t("열기");
 function guide(id, title2, steps, _host) {
@@ -1234,8 +1361,10 @@ export {
   bars,
   button,
   choice,
+  choicesOf,
   chrome,
   closeMenu,
+  closePeek,
   dayKey,
   dayStrip,
   dialog,
@@ -1258,6 +1387,7 @@ export {
   keysDialog,
   lang,
   launcher,
+  legend,
   link,
   load,
   locale,
@@ -1279,6 +1409,8 @@ export {
   openWord,
   ownCard,
   pageHead,
+  paramsOf,
+  peek,
   prefs,
   previewFonts,
   primaryLink,

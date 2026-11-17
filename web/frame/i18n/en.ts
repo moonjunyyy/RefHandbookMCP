@@ -27,4 +27,8 @@ export const EN: Record<string, string> = {
   '{n}개': '{n}',
   '이전 달': 'Previous month',
   '다음 달': 'Next month',
+  '적음': 'Few',
+  '많음': 'Many',
+  '오늘': 'Today',
+  '가장 많은 날 {n}': 'Busiest day {n}',
 };

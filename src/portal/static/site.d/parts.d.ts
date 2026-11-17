@@ -135,6 +135,19 @@ export declare function onMenu(el: HTMLElement, build: () => MenuSection[] | nul
 }): HTMLElement;
 /** The ⋯ button of a row or a head: the same menu, under it. */
 export declare function menuButton(build: () => MenuSection[], label?: string): HTMLButtonElement;
+export declare function closePeek(): void;
+/** A small card where a thing is: the thing at a glance, or the one line that makes a new one — between its
+ * line in a list and its dialog or page. Not modal, one at a time: Esc closes it and gives the focus back; a
+ * press, a wheel or a touch-move outside it closes it, and so does the focus going elsewhere; a menu opened
+ * from inside belongs to it. The page's keys rest while it is open. Placed as a menu is; on a narrow screen
+ * parts.css lays it across the bottom edge. */
+export declare function peek(at: MenuAt, body: Child, opts: {
+    label: string;
+    onClose?: () => void;
+}): {
+    el: HTMLElement;
+    close: () => void;
+};
 /** Go to a page of the pages app without a reload. */
 export declare function go(path: string): void;
 /** A move: a link. Inside the pages app it goes without a reload (an app's page reloads: it is another app). */

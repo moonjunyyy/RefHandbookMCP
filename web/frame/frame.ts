@@ -10,7 +10,11 @@ import type { ColorRole, ColorScheme, ThemeColors } from './colors';
 
 /** A widget's cells on the grid: one of the sizes the site declares (`frame.sizes`, from portal/site.py SIZES). */
 export interface Size { id: string; cols: number; rows: number }
-export interface Widget { id: string; title: string; description: string; href: string; size: string }
+/** A setting a widget declares ([[app.widget.param]]): one of `choices`, or one of the person's own objects read
+ * `from` a path of the site (`list` in its answer; an item's `value` and `label`) with `all`, the word for no filter. */
+export interface Param { id: string; label: string; default: string; choices?: { value: string; label: string }[];
+                         from?: { path: string; list: string; value: string; label: string }; all?: string }
+export interface Widget { id: string; title: string; description: string; href: string; size: string; params?: Param[] }
 
 /** One way to connect to an app (site.toml's `code`): its value may name the person looking as {user}. */
 export interface Address { label: string; value: string }
@@ -39,7 +43,9 @@ export interface Frame { uid: string | null; title: string; signin: string; port
 export const THEMES = ['auto', 'light', 'dark'] as const;
 export type Theme = (typeof THEMES)[number];
 
-export interface Placement { app: string; widget: string; size?: string }  // size: the person's own, else the widget's declared one
+/** A place a person gave a widget: its size and title (their own, else the widget's) and its settings (the
+ * widget's declared parameters, as they set them here). The same widget may have several places. */
+export interface Placement { app: string; widget: string; size?: string; title?: string; params?: Record<string, string> }
 export interface Prefs {
   lang: string;        // 'auto' (the browser's), or a language the site has
   theme: Theme;        // 'auto' (the OS's), 'light' or 'dark'

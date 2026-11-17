@@ -38,8 +38,11 @@
 # (its widgets: [[app.widget]], docs/frame.md §4). `optional = false` keeps an app out of the catalog and in
 # the person's own menu (the account); `default = true` has an optional app on for an account with no settings
 # kept yet (docs/frame.md §2). A widget: id, title, description (one line, for the person choosing it),
-# module, size (one of portal/site.py SIZES: 1x1 | 2x1 | 1x2 | 2x2 — the person may resize a placed one),
-# tr.en = { title, description }.
+# module, size (one of portal/site.py SIZES, columns x rows: 1x1 … 4x2 — the person may resize a placed one),
+# tr.en = { title, description }. Its settings, which a person keeps with each place they give the widget:
+# [[app.widget.param]] — id, label, and either default with choices = [{ value, label }] or
+# from = { path, list, value, label } (the person's own objects, read from a path of the site) with all (the
+# word for no filter); tr.en = { label, all, choices = { value = label } }.
 #
 # An app the site hosts needs no routes: `static = true` serves its built files at /apps/<id>/
 # (publish them with `sudo deploy/install.sh --app <id> <dist>`), and `storage = true` gives each
@@ -672,12 +675,36 @@ link = [{ label = "캘린더", href = "/calendar", tr = { en = "Calendar" } }]
   module = "/apps/site/widgets/calendar.js"
   size = "2x1"
   tr.en = { title = "Today", description = "Today's events in time order, now and next pointed out, the tasks due checked off in place — a wide cell" }
+    [[app.widget.param]]
+    id = "calendar"
+    label = "캘린더"
+    from = { path = "/calendar/api/v1/calendars", list = "calendars", value = "id", label = "name" }
+    all = "모든 캘린더"
+    tr.en = { label = "Calendar", all = "All calendars" }
   [[app.widget]]
   id = "upcoming"
   title = "다가오는 일"
   description = "앞으로 7일 — 날마다 얼마나 찼는지와 그 일정"
   module = "/apps/site/widgets/calendar.js"
   tr.en = { title = "Coming up", description = "The next seven days — how full each is, and its events" }
+    [[app.widget.param]]
+    id = "days"
+    label = "기간"
+    default = "7"
+    choices = [{ value = "3", label = "3일" }, { value = "7", label = "7일" }, { value = "14", label = "14일" }]
+    tr.en = { label = "Range", choices = { "3" = "3 days", "7" = "7 days", "14" = "14 days" } }
+    [[app.widget.param]]
+    id = "calendar"
+    label = "캘린더"
+    from = { path = "/calendar/api/v1/calendars", list = "calendars", value = "id", label = "name" }
+    all = "모든 캘린더"
+    tr.en = { label = "Calendar", all = "All calendars" }
+    [[app.widget.param]]
+    id = "form"
+    label = "모양"
+    default = "both"
+    choices = [{ value = "both", label = "띠와 목록" }, { value = "list", label = "목록만" }, { value = "strip", label = "띠만" }]
+    tr.en = { label = "Form", choices = { both = "Strip and list", list = "List only", strip = "Strip only" } }
   [[app.widget]]
   id = "month"
   title = "이번 달"
@@ -685,6 +712,12 @@ link = [{ label = "캘린더", href = "/calendar", tr = { en = "Calendar" } }]
   module = "/apps/site/widgets/calendar.js"
   size = "2x2"
   tr.en = { title = "This month", description = "The month at a glance — how full each day is, the events of the day you pick — a big cell" }
+    [[app.widget.param]]
+    id = "calendar"
+    label = "캘린더"
+    from = { path = "/calendar/api/v1/calendars", list = "calendars", value = "id", label = "name" }
+    all = "모든 캘린더"
+    tr.en = { label = "Calendar", all = "All calendars" }
   [[app.widget]]
   id = "tasks"
   title = "할 일"
@@ -738,19 +771,43 @@ link = [{ label = "노트", href = "/vault", tr = { en = "Notes" } }]
   description = "7일 동안 고친 노트 수와 2주의 흐름, 최근에 고친 노트"
   module = "/apps/site/widgets/vault.js"
   tr.en = { title = "Recent notes", description = "How many notes changed in 7 days, two weeks of it, the notes changed last" }
+    [[app.widget.param]]
+    id = "vault"
+    label = "볼트"
+    from = { path = "/vault/api/v1/vaults", list = "vaults", value = "id", label = "name" }
+    all = "첫 볼트"
+    tr.en = { label = "Vault", all = "The first vault" }
+    [[app.widget.param]]
+    id = "form"
+    label = "모양"
+    default = "both"
+    choices = [{ value = "both", label = "흐름과 목록" }, { value = "list", label = "목록만" }]
+    tr.en = { label = "Form", choices = { both = "Activity and list", list = "List only" } }
   [[app.widget]]
   id = "tags"
   title = "태그"
   description = "볼트의 태그를 노트 수만큼의 막대로 — 누르면 그 태그로 찾기"
   module = "/apps/site/widgets/vault.js"
   tr.en = { title = "Tags", description = "The vault's tags as bars by their notes — open one to search for it" }
+    [[app.widget.param]]
+    id = "vault"
+    label = "볼트"
+    from = { path = "/vault/api/v1/vaults", list = "vaults", value = "id", label = "name" }
+    all = "첫 볼트"
+    tr.en = { label = "Vault", all = "The first vault" }
   [[app.widget]]
   id = "home"
   title = "Home"
   description = "볼트의 Home 노트를 그대로 — 큰 칸"
   module = "/apps/site/widgets/vault.js"
-  tr.en = { description = "The vault's Home note as it is — a big cell" }
   size = "2x2"
+  tr.en = { description = "The vault's Home note as it is — a big cell" }
+    [[app.widget.param]]
+    id = "vault"
+    label = "볼트"
+    from = { path = "/vault/api/v1/vaults", list = "vaults", value = "id", label = "name" }
+    all = "첫 볼트"
+    tr.en = { label = "Vault", all = "The first vault" }
   [[app.route]]
   path = "/vault/api/"
   limit = "api"

@@ -209,7 +209,7 @@ async function run() {
   await page.focus('.widgets .widget:nth-child(2)');
   await page.keyboard.press('Shift+F10');
   await page.waitForSelector('.menu[role=menu]');
-  step('칸의 메뉴가 키보드로 열리고 크기 넷·앞으로·뒤로·빼기다', JSON.stringify(await menuItems(page)) === '["1×1","2×1","1×2","2×2","앞으로","뒤로","빼기"]' && (await page.evaluate(() => document.activeElement.classList.contains('menu-item'))), JSON.stringify(await menuItems(page)));
+  step('칸의 메뉴가 키보드로 열리고 설정·선언된 크기·앞으로·뒤로·빼기다', JSON.stringify(await menuItems(page)) === '["설정","1×1","2×1","1×2","2×2","3×1","3×2","4×2","앞으로","뒤로","빼기"]' && (await page.evaluate(() => document.activeElement.classList.contains('menu-item'))), JSON.stringify(await menuItems(page)));
   await page.keyboard.press('Escape');
   await sleep(100);
   step('Esc 로 닫히고 초점이 칸으로 돌아온다', !(await page.$('.menu[role=menu]')) && (await page.evaluate(() => document.activeElement.classList.contains('widget'))));
@@ -245,7 +245,7 @@ async function run() {
   await page.waitForSelector('.cal-grid .cal-day');
   await page.keyboard.press('?');
   await page.waitForSelector('dialog[open] ul.keys');
-  step('? 가 이 페이지의 키 목록을 보인다(선언 10 + 목록 1)', (await page.$$('dialog ul.keys li')).length === 11 && (await texts(page, 'dialog ul.keys li span')).includes('오늘'), JSON.stringify(await texts(page, 'dialog ul.keys li')));
+  step('? 가 이 페이지의 키 목록을 보인다(선언 12 + 목록 1)', (await page.$$('dialog ul.keys li')).length === 13 && (await texts(page, 'dialog ul.keys li span')).includes('오늘'), JSON.stringify(await texts(page, 'dialog ul.keys li')));
   await page.keyboard.press('Escape');
   await sleep(150);
   step('캘린더의 첫 요소는 달력이고 머리 한 줄이다', (await weeksOk(page)) && (await page.$$('.cal-sources .chip')).length === 2 && !(await page.$('main p.muted')));
@@ -278,8 +278,13 @@ async function run() {
   step('캘린더 칩을 끄면 그 일정이 숨는다(이 브라우저에 기억)', (await page.$$('.cal-day.selected .cal-ev')).length === 1 && (await page.evaluate(() => localStorage.getItem('cal.hidden'))) === '["g-1"]');
   await page.click('.cal-sources .chip:has-text("lab")');
   await page.click('.day-list .cal-ev:has-text("치과")');
+  await page.waitForSelector('.peek');
+  const pkFirst = await page.$eval('.peek', (e) => e.textContent);
+  const pkNoDialog = !(await page.$('dialog[open]'));
+  await page.click('.peek button:text-is("편집")');
   await page.waitForSelector('dialog[open]');
-  step('일정을 누르면 같은 대화상자에 그 값이 있다', (await page.inputValue('dialog input[name=summary]')) === '치과');
+  step('일정을 누르면 그 카드가 뜨고(대화상자가 아니다), 편집이 같은 대화상자를 그 값으로 연다 (C51)', pkNoDialog && pkFirst.includes('치과') && !(await page.$('.peek'))
+    && (await page.inputValue('dialog input[name=summary]')) === '치과', pkFirst);
   await page.click('dialog p.actions button:text-is("지우기")');
   await page.waitForSelector('dialog[open] h2:text-is("일정 지우기")');
   await page.click('dialog[open] button[type=submit].danger');
@@ -404,40 +409,50 @@ async function run() {
   await page.waitForSelector('.wk-body');
   step('주 보기: 일곱 날의 머리·종일 줄·시간 격자, 달력은 비고 주소가 기억한다', (await page.$$('.wk-head .wk-day')).length === 7 && (await page.$$('.wk-allcol')).length === 7 && (await page.$$('.wk-col')).length === 7
     && (await page.$$('.wk-hours .wk-hour')).length === 24 && (await page.$$('.cal-grid .cal-day')).length === 0 && page.url().includes('v=week')
-    && (await page.$eval('.wk-body', (e) => e.scrollTop)) > 0, page.url());
+    && (await page.$eval('.wk-body', (e) => e.scrollHeight <= e.clientHeight + 1)), page.url());  // the whole day shows: nothing to scroll
+  const H = await page.$eval('.wk-body .wk-hour', (e) => e.getBoundingClientRect().height);  // an hour's height: the room over the 24 hours shown
   const allWk = await page.$(`.wk-allcol[data-day="${nextKey}"] .cal-ev`);
   const wkHasIt = !!allWk && (await allWk.textContent()).includes('랩 미팅');
   // the day it was moved to may be in the next week (moved on a Sunday: the weeks start on Monday) — then this week shows none
   const shownWeek = await page.$$eval('.wk-allcol', (els) => els.map((e) => e.dataset.day));
   step('종일 일정은 종일 줄의 그 날에 있다', wkHasIt || !shownWeek.includes(nextKey) && !(await page.$('.wk-allcol .cal-ev')) && (await page.$$('.wk-col')).length === 7, `${wkHasIt} ${nextKey} ${shownWeek.join()}`);
-  // a slot pressed: 10:00 of today (the column is 24 hours tall; the body is scrolled to the morning)
-  await page.click(`.wk-col[data-day="${todayKey}"]`, { position: { x: 10, y: 10 * 44 + 5 } });
-  await page.waitForSelector('dialog[open]');
-  step('빈 칸을 누르면 그 시각의 새 일정이다', (await page.inputValue('dialog input[type=datetime-local] >> nth=0')) === `${todayKey}T10:00`
-    && (await page.inputValue('dialog input[type=datetime-local] >> nth=1')) === `${todayKey}T11:00`, await page.inputValue('dialog input[type=datetime-local] >> nth=0'));
-  await page.fill('dialog input[name=summary]', '세미나');
-  await page.click('dialog button:text-is("저장")');
+  // a slot pressed: 10:00 of today (the column is 24 hours tall, all of it in view)
+  await page.click(`.wk-col[data-day="${todayKey}"]`, { position: { x: 10, y: 10 * H + H / 9 } });
+  await page.waitForSelector('.peek input[name=summary]');
+  const qGhostTop = await page.$eval(`.wk-col[data-day="${todayKey}"] .wk-ghost`, (e) => Math.round(parseFloat(e.style.top)));
+  const qCount = mock.events().length;
+  await page.keyboard.press('Enter');  // no title: nothing is written
+  await sleep(150);
+  step('빈 칸을 누르면 그 자리에 작은 카드다: 제목에 초점, 그 시각의 자리 표시, 대화상자는 아니다; 제목 없이는 쓰지 않는다 (C49)', qGhostTop === Math.round(10 * H) && !(await page.$('dialog[open]'))
+    && (await page.evaluate(() => document.activeElement?.getAttribute('name'))) === 'summary' && mock.events().length === qCount && !!(await page.$('.peek')), `${qGhostTop}`);
+  await page.keyboard.type('세미나');
+  await page.keyboard.press('Enter');
   await page.waitForSelector(`.wk-col[data-day="${todayKey}"] .wk-ev`);
   const ev1 = mock.events()[1];
-  step('주 보기의 일정은 그 시각 높이의 블록이다', (await page.$eval(`.wk-col[data-day="${todayKey}"] .wk-ev`, (e) => Math.round(parseFloat(e.style.top)))) === 440
-    && (await page.$eval(`.wk-col[data-day="${todayKey}"] .wk-ev`, (e) => Math.round(parseFloat(e.style.height)))) === 42
+  step('주 보기의 일정은 그 시각 높이의 블록이다', (await page.$eval(`.wk-col[data-day="${todayKey}"] .wk-ev`, (e) => Math.round(parseFloat(e.style.top)))) === Math.round(10 * H)
+    && (await page.$eval(`.wk-col[data-day="${todayKey}"] .wk-ev`, (e) => Math.round(parseFloat(e.style.height)))) === Math.round(Math.max(H - 2, 18))
     && new Date(ev1.start).getTime() === new Date(`${todayKey}T10:00`).getTime(), JSON.stringify(ev1));
   // dragged to 14:00 of the same day
   const col = await (await page.$(`.wk-col[data-day="${todayKey}"]`)).boundingBox();
   const blk = await (await page.$(`.wk-col[data-day="${todayKey}"] .wk-ev`)).boundingBox();
   await page.mouse.move(blk.x + blk.width / 2, blk.y + blk.height / 2);
   await page.mouse.down();
-  await page.mouse.move(col.x + col.width / 2, col.y + 14 * 44 + 8, { steps: 8 });
-  await page.mouse.move(col.x + col.width / 2, col.y + 14 * 44 + 10, { steps: 4 });
+  await page.mouse.move(col.x + col.width / 2, col.y + 14 * H + H / 6, { steps: 8 });
+  await page.mouse.move(col.x + col.width / 2, col.y + 14 * H + H / 5, { steps: 4 });
   await page.mouse.up();
   await sleep(400);
   const ev2 = mock.events()[1];
   step('주 보기에서 다른 시각으로 끌면 그 시각으로 옮겨 길이를 지킨다', new Date(ev2.start).getTime() === new Date(`${todayKey}T14:00`).getTime() && new Date(ev2.end) - new Date(ev2.start) === 3600e3
-    && (await page.$eval(`.wk-col[data-day="${todayKey}"] .wk-ev`, (e) => Math.round(parseFloat(e.style.top)))) === 14 * 44, JSON.stringify(ev2));
+    && (await page.$eval(`.wk-col[data-day="${todayKey}"] .wk-ev`, (e) => Math.round(parseFloat(e.style.top)))) === Math.round(14 * H), JSON.stringify(ev2));
   // a repeating event is not dragged: its series is changed in the dialog
-  await page.click(`.wk-col[data-day="${todayKey}"]`, { position: { x: 10, y: 16 * 44 + 5 } });
+  await page.click(`.wk-col[data-day="${todayKey}"]`, { position: { x: 10, y: 16 * H + H / 9 } });
+  await page.waitForSelector('.peek input[name=summary]');
+  await page.fill('.peek input[name=summary]', '주간 회의');
+  await page.click('.peek button:text-is("자세히")');
   await page.waitForSelector('dialog[open]');
-  await page.fill('dialog input[name=summary]', '주간 회의');
+  step('자세히는 적은 제목과 그 칸의 시각을 대화상자로 가져간다 (C50)', (await page.inputValue('dialog input[name=summary]')) === '주간 회의'
+    && (await page.inputValue('dialog input[type=datetime-local] >> nth=0')) === `${todayKey}T16:00` && (await page.inputValue('dialog input[type=datetime-local] >> nth=1')) === `${todayKey}T17:00`
+    && !(await page.$('.peek')) && !(await page.$('.wk-ghost')));
   await page.selectOption('dialog select[name=rrule]', 'FREQ=WEEKLY');
   await page.click('dialog button:text-is("저장")');
   await page.waitForSelector('.wk-ev.repeats');
@@ -511,12 +526,65 @@ async function run() {
   step('달에서 고른 날의 제목을 누르면 그 날의 일 보기다: 한 열, 24시간, 종일 줄 (C43, C45)', (await page.$$('.wk-col')).length === 1 && (await page.$$('.wk-hours .wk-hour')).length === 24 && (await page.$$('.wk-allcol')).length === 1
     && page.url().includes(`v=day&d=${todayKey}`) && (await page.$eval('.wk-col', (e) => e.dataset.day)) === todayKey, page.url());
   await page.$eval('.wk-body', (e) => { e.scrollTop = 0; });
-  await page.click('.wk-col', { position: { x: 40, y: 44 * 5 + 4 } });
-  await page.waitForSelector('dialog[open]');
-  const slot = await page.inputValue('dialog input[type=datetime-local] >> nth=0');
+  await page.click('.wk-col', { position: { x: 40, y: H * 5 + H / 11 } });
+  await page.waitForSelector('.peek input[name=summary]');
+  const slot = await page.$eval('.wk-col .wk-ghost', (e) => Math.round(parseFloat(e.style.top)));
+  const qSlotDay = await page.$eval('.wk-col', (e) => e.dataset.day);
+  const qCount2 = mock.events().length;
   await page.keyboard.press('Escape');
   await sleep(150);
-  step('일 보기의 빈 칸은 그 시각의 새 일정이다 (C45)', slot === `${todayKey}T05:00`, slot);
+  step('일 보기의 빈 칸은 그 시각의 새 일정 카드이고, Esc 는 아무것도 쓰지 않고 닫는다 (C45, C49)', slot === Math.round(5 * H) && qSlotDay === todayKey && !(await page.$('.peek')) && !(await page.$('.wk-ghost'))
+    && mock.events().length === qCount2, `${slot}`);
+  // (e3) the quick card and the event's card (C49–C52), in the day view
+  for (const [hour, name] of [[5, '피크 하나'], [3, '피크 둘']]) {
+    await page.$eval('.wk-body', (e) => { e.scrollTop = 0; });
+    await page.click('.wk-col', { position: { x: 40, y: H * hour + H / 11 } });
+    await page.waitForSelector('.peek input[name=summary]');
+    await page.keyboard.type(name);
+    await page.keyboard.press('Enter');
+    await page.waitForSelector(`.wk-col .wk-ev:has-text("${name}")`);
+  }
+  const pkMade = mock.events().filter((e) => e.summary.startsWith('피크 '));
+  step('빠른 만들기: 제목과 Enter 가 그 시각의 한 시간짜리 일정을 쓴다 (C49)', pkMade.length === 2 && pkMade.every((e) => !e.allday && new Date(e.end) - new Date(e.start) === 3600000)
+    && (await page.$eval('.wk-col .wk-ev:has-text("피크 하나")', (e) => Math.round(parseFloat(e.style.top)))) === Math.round(5 * H)
+    && (await page.$eval('.wk-col .wk-ev:has-text("피크 둘")', (e) => Math.round(parseFloat(e.style.top)))) === Math.round(3 * H) && !(await page.$('.peek')), JSON.stringify(pkMade));
+  await page.click('.wk-col .wk-ev:has-text("피크 하나")');
+  await page.waitForSelector('.peek h2:text-is("피크 하나")');
+  const pkWhen = await page.$eval('.peek .peek-when', (e) => e.textContent);
+  const pkCal = await page.$eval('.peek .peek-cal', (e) => e.textContent.trim());
+  await page.click('.wk-col .wk-ev:has-text("피크 둘")');
+  await page.waitForSelector('.peek h2:text-is("피크 둘")');
+  step('일정을 누르면 그 카드가 제목·시각·캘린더를 보이고, 다른 일정을 누르면 그 일정의 카드 하나로 바뀐다 (C51)', pkWhen.includes('5:00') && pkWhen.includes('6:00') && pkCal.length > 0
+    && (await page.$$('.peek')).length === 1 && !(await page.$('dialog[open]')), `${pkWhen} / ${pkCal}`);
+  await page.keyboard.press('Escape');
+  await sleep(100);
+  const pkBack = await page.evaluate(() => document.activeElement?.textContent ?? '');
+  const pkClosed = !(await page.$('.peek'));
+  await page.click('.wk-col .wk-ev:has-text("피크 둘")');
+  await page.waitForSelector('.peek');
+  await page.click('.peek button.more');
+  await page.waitForSelector('.menu[role=menu]');
+  const pkMenu = await texts(page, '.menu[role=menu] .menu-item strong');
+  await page.keyboard.press('Escape');
+  await sleep(100);
+  step('Esc 는 카드를 닫고 초점을 그 일정에 돌려준다; ⋯ 는 그 일정의 메뉴이고 메뉴를 닫아도 카드는 남는다 (C51)', pkClosed && pkBack.includes('피크 둘') && pkMenu.includes('복제') && pkMenu.includes('지우기')
+    && !(await page.$('.menu[role=menu]')) && !!(await page.$('.peek')), `${pkBack} / ${pkMenu.join()}`);
+  const pkWide = page.viewportSize();
+  await page.setViewportSize({ width: 390, height: 780 });
+  await sleep(200);
+  const pkSheet = await page.$eval('.peek', (e) => { const r = e.getBoundingClientRect(); return [Math.round(r.left), Math.round(r.right), Math.round(r.bottom), innerWidth, innerHeight]; }).catch(() => null);
+  await page.setViewportSize(pkWide);
+  await sleep(200);
+  const pkExported = await page.evaluate(async () => { const m = await import('/auth/static/site.js'); return typeof m.peek === 'function' && typeof m.closePeek === 'function'; });
+  step('좁은 화면에서 카드는 아래 가장자리의 시트다; 프레임이 peek 과 closePeek 을 내보낸다 (C52)', !!pkSheet && pkSheet[0] === 0 && pkSheet[1] === pkSheet[3] && pkSheet[2] === pkSheet[4] && pkExported, JSON.stringify(pkSheet));
+  for (const name of ['피크 둘', '피크 하나']) {
+    if (!(await page.$(`.peek h2:text-is("${name}")`))) { await page.click(`.wk-col .wk-ev:has-text("${name}")`); await page.waitForSelector(`.peek h2:text-is("${name}")`); }
+    await page.click('.peek button:text-is("지우기")');
+    await page.waitForSelector('dialog[open] h2:text-is("일정 지우기")');
+    await page.click('dialog[open] button[type=submit].danger');
+    await page.waitForFunction((n) => ![...document.querySelectorAll('.wk-col .wk-ev')].some((e) => e.textContent.includes(n)), name);
+  }
+  step('카드의 지우기는 한 번 묻고 지운다 (C51)', !mock.events().some((e) => e.summary.startsWith('피크 ')) && !(await page.$('.peek')) && !(await page.$('dialog[open]')));
   await page.click('.cal-nav h1 button');
   await page.waitForFunction(() => document.querySelectorAll('.wk-col').length === 7);
   const upWeek = page.url().includes('v=week');
@@ -773,6 +841,123 @@ async function run() {
     JSON.stringify([await texts(page, '.widget[data-widget=tags] .bar-label'), await page.$eval('.widget[data-widget=tags] .bars a', (a) => a.getAttribute('href'))]));
   step('할 일: 마감별 묶음과 끝낸 정도', (await texts(page, '.widget[data-widget=tasks] .items-group')).length >= 1 && !!(await page.$('.widget[data-widget=tasks] .meter')));
   await shot(page, 'g-home');
+
+  // (w9) a place's own settings (C56–C58): what a widget declares, kept with the place; the same widget twice
+  const w9Prefs = mock.get('site', 'prefs');
+  const [w9c1, w9c2] = mock.calendars();
+  const w9d = new Date();  // today, all day: the first rows of the list
+  const w9k = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const w9a = w9k(w9d); w9d.setDate(w9d.getDate() + 1); const w9b = w9k(w9d);
+  const w9cell = '.widgets .widget[data-app=calendar][data-widget=upcoming]';
+  const w9cells = () => page.$$eval(w9cell, (els) => els.map((e) => ({ days: e.querySelectorAll('.day-strip .day').length, text: e.textContent, head: e.querySelector('.widget-head').textContent })));
+  const w9home = () => mock.get('site', 'prefs').home.filter((p) => p.widget === 'upcoming');
+  const w9menu = async (n, label) => { await page.hover(`${w9cell} >> nth=${n}`); await page.click(`${w9cell} >> nth=${n} >> .widget-tools button.more`); await page.waitForSelector('.menu[role=menu]'); await pickItem(page, label); };
+  mock.put('site', 'prefs', { ...w9Prefs, apps: ['calendar', 'vault'], home: [{ app: 'calendar', widget: 'upcoming', size: '2x2' }], homeCustomized: true });
+  await open(page, `${BASE}/`, `${w9cell} .day-strip`);
+  await page.evaluate(async (list) => { const { api } = await import('/auth/static/site.js'); for (const e of list) await api('/calendar/api/v1').post('/events', e); },
+    [{ cal: w9c1.id, summary: '설정 하나', allday: true, start: w9a, end: w9b, location: '', description: '', rrule: '' },
+     { cal: w9c2.id, summary: '설정 둘', allday: true, start: w9a, end: w9b, location: '', description: '', rrule: '' }]);
+  await open(page, `${BASE}/`, `${w9cell} .day-strip`);
+  await page.waitForFunction((sel) => document.querySelector(sel)?.textContent.includes('설정 둘'), w9cell);
+  let w9 = await w9cells();
+  step('설정을 둔 적 없는 칸은 전과 같다: 7일, 모든 캘린더, 머리는 위젯의 이름 (C58)', w9.length === 1 && w9[0].days === 7 && w9[0].text.includes('설정 하나') && w9[0].text.includes('설정 둘')
+    && w9[0].head.endsWith('다가오는 일'), JSON.stringify(w9));
+  await w9menu(0, '설정');
+  await page.waitForSelector('dialog[open] select[name=days]');
+  const w9form = await page.$eval('dialog[open]', (d) => ({ title: d.querySelector('input[name=title]').placeholder, size: !!d.querySelector('select[name=size]'),
+    days: [...d.querySelectorAll('select[name=days] option')].map((o) => o.value), day: d.querySelector('select[name=days]').value,
+    cals: [...d.querySelectorAll('select[name=calendar] option')].map((o) => o.textContent) }));
+  step('⋯ 의 설정: 제목·크기와 위젯이 선언한 설정마다 고를 것 — 내 캘린더는 열 때 읽는다 (C56)', w9form.title === '다가오는 일' && w9form.size && w9form.days.join() === '3,7,14' && w9form.day === '7'
+    && w9form.cals.join() === ['모든 캘린더', ...mock.calendars().map((c) => c.name)].join(), JSON.stringify(w9form));
+  await page.selectOption('dialog[open] select[name=days]', '3');
+  await page.selectOption('dialog[open] select[name=calendar]', w9c2.id);
+  await page.click('dialog[open] button:text-is("저장")');
+  await page.waitForFunction((sel) => document.querySelectorAll(sel).length === 3, `${w9cell} .day-strip .day`);
+  await page.waitForFunction(([sel, name]) => document.querySelector(sel)?.textContent.includes(name), [`${w9cell} .widget-head`, w9c2.name]);
+  w9 = await w9cells();
+  step('저장하면 그 칸에 남고 그대로 다시 그린다: 3일, 그 캘린더의 일정만, 머리에 고른 설정의 말 (C56)', w9[0].days === 3 && w9[0].text.includes('설정 둘') && !w9[0].text.includes('설정 하나')
+    && w9[0].head.includes('3일') && w9[0].head.includes(w9c2.name) && JSON.stringify(w9home()[0].params) === JSON.stringify({ days: '3', calendar: w9c2.id }), JSON.stringify([w9, w9home()]));
+  await page.keyboard.press('w');
+  await page.waitForSelector('dialog[open] .pick-row[data-app=calendar][data-widget=upcoming]');
+  await page.click('dialog[open] .pick-row[data-app=calendar][data-widget=upcoming] button:text-is("하나 더")');
+  await page.waitForSelector('dialog[open] .pick-row[data-app=calendar][data-widget=upcoming] .tag:text-is("×2")');
+  const w9plain = !(await page.$('dialog[open] .pick-row[data-app=calendar][data-widget=tasks] button:text-is("하나 더")'));
+  await page.keyboard.press('Escape');
+  await page.waitForFunction((sel) => document.querySelectorAll(sel).length === 2 && [...document.querySelectorAll(sel)].every((e) => e.querySelector('.day-strip')), w9cell);
+  await w9menu(1, '설정');
+  await page.waitForSelector('dialog[open] input[name=title]');
+  await page.fill('dialog[open] input[name=title]', '이번 주 전체');
+  await page.click('dialog[open] button:text-is("저장")');
+  await page.waitForFunction(([sel, name]) => [...document.querySelectorAll(sel)].some((e) => e.textContent.includes(name)), [`${w9cell} .widget-head`, '이번 주 전체']);
+  w9 = await w9cells();
+  step('하나 더: 같은 위젯이 두 칸에 서고 칸마다 제 설정이다; 설정이 없는 위젯에는 하나 더가 없다 (C57)', w9.length === 2 && w9[0].days === 3 && !w9[0].text.includes('설정 하나')
+    && w9[1].days === 7 && w9[1].text.includes('설정 하나') && w9[1].head.endsWith('이번 주 전체') && w9home()[1].title === '이번 주 전체' && !w9home()[1].params && w9plain, JSON.stringify([w9, w9home()]));
+  await w9menu(0, '빼기');
+  await page.waitForFunction((sel) => document.querySelectorAll(sel).length === 1, w9cell);
+  w9 = await w9cells();
+  const w9left = w9.length === 1 && w9[0].days === 7 && w9[0].head.endsWith('이번 주 전체');
+  await page.keyboard.press('w');
+  await page.waitForSelector('dialog[open] .pick-row[data-app=calendar][data-widget=upcoming]');
+  await page.click('dialog[open] .pick-row[data-app=calendar][data-widget=upcoming] input');
+  await sleep(300);
+  await page.keyboard.press('Escape');
+  await sleep(200);
+  step('한 칸을 빼면 다른 칸은 남고, 스위치를 끄면 그 위젯의 칸이 모두 빠진다 (C57)', w9left && (await page.$$(w9cell)).length === 0 && w9home().length === 0, JSON.stringify([w9, w9home()]));
+  mock.put('site', 'prefs', { ...w9Prefs, apps: ['calendar', 'vault'], home: [{ app: 'calendar', widget: 'upcoming', size: '2x2', params: { days: '99', calendar: 'gone' } }], homeCustomized: true });
+  await open(page, `${BASE}/`, `${w9cell} .day-strip`);
+  await page.waitForFunction((sel) => document.querySelector(sel)?.textContent.includes('설정 둘'), w9cell);
+  w9 = await w9cells();
+  step('선언에 없는 값은 기본값으로, 없어진 캘린더는 전부로 그린다 (C58)', w9[0].days === 7 && w9[0].text.includes('설정 하나') && w9[0].text.includes('설정 둘') && w9[0].head.endsWith('다가오는 일'), JSON.stringify(w9));
+  await page.evaluate(async (ids) => { const { api } = await import('/auth/static/site.js'); for (const id of ids) await api('/calendar/api/v1').del(`/events/${id}`); },
+    mock.events().filter((e) => e.summary.startsWith('설정 ')).map((e) => e.id));
+  mock.put('site', 'prefs', w9Prefs);
+
+  // (w10) the forms say what they show; a form as a setting; an empty list's way in; larger sizes (C61–C64)
+  mock.put('site', 'prefs', { ...w9Prefs, apps: ['calendar', 'vault'], homeCustomized: true,
+                              home: [{ app: 'calendar', widget: 'upcoming', size: '4x2' }, { app: 'vault', widget: 'recent' }, { app: 'calendar', widget: 'month' }] });
+  await open(page, `${BASE}/`, `${w9cell} .day-strip`);
+  await page.waitForSelector('.widget[data-widget=recent] .activity');
+  await page.waitForSelector('.widget[data-widget=month] .month-grid');
+  const w10 = await page.evaluate(async () => {
+    const said = (s) => document.querySelector(`${s} .form-said`)?.textContent ?? '';
+    const scale = (s) => [...document.querySelectorAll(`${s} .form-scale i`)].map((i) => getComputedStyle(i).backgroundColor);
+    const site = await import('/auth/static/site.js');
+    const part = site.activity([{ date: new Date(Date.now() - 864e5), n: 2 }, { date: new Date(), n: 5 }], '말');  // the part itself: the mock's notes are older than the run
+    return { busiest: part.querySelector('.form-said').textContent, levels: [...part.querySelectorAll('.act')].map((a) => a.dataset.level).join(),
+             act: said('.widget[data-widget=recent] .form'), ends: [...document.querySelectorAll('.widget[data-widget=recent] .form-ends span')].map((e) => e.textContent),
+             strip: said('.widget[data-widget=upcoming]'), days: scale('.widget[data-widget=upcoming]'), month: said('.widget[data-widget=month]'), shades: scale('.widget[data-widget=month]'),
+             legend: typeof site.legend === 'function', sizes: site.frame.sizes.length };
+  });
+  step('형식이 무엇을 보이는지 제 밑에 적는다: 흐름의 처음·오늘과 말(가장 많은 날의 수), 띠와 달의 농도 범례 (C61)', w10.act.includes('고친 노트') && w10.ends.length === 2 && w10.ends[1] === '오늘'
+    && w10.busiest === '말 · 가장 많은 날 5' && w10.levels === '2,3'
+    && w10.strip.includes('적음') && w10.strip.includes('많음') && w10.days.length === 3 && new Set(w10.days).size === 3
+    && w10.month.includes('많은 날') && w10.shades.length === 3 && new Set(w10.shades).size === 3 && w10.legend, JSON.stringify(w10));
+  const w10span = () => page.$eval(w9cell, (e) => [e.style.gridColumn, getComputedStyle(e.parentElement).gridTemplateColumns.split(' ').length, document.documentElement.scrollWidth <= document.documentElement.clientWidth]);
+  const w10wide = await w10span();
+  const w10view = page.viewportSize();
+  await page.setViewportSize({ width: 700, height: w10view.height });
+  await sleep(400);
+  const w10narrow = await w10span();
+  await page.setViewportSize(w10view);
+  await sleep(400);
+  const w10back = await w10span();
+  step('큰 크기: 칸은 격자의 열 수를 넘지 않는다 — 좁아지면 있는 열을 다 쓰고 옆으로 넘치지 않으며, 넓어지면 제 크기다 (C64)', w10.sizes === 7 && w10wide[0] === `span ${Math.min(4, w10wide[1])}` && w10wide[2]
+    && w10narrow[1] < 4 && w10narrow[0] === `span ${w10narrow[1]}` && w10narrow[2] && w10back[0] === w10wide[0], JSON.stringify([w10wide, w10narrow, w10back]));
+  await w9menu(0, '설정');
+  await page.waitForSelector('dialog[open] select[name=form]');
+  const w10forms = await page.$$eval('dialog[open] select[name=form] option', (os) => os.map((o) => o.textContent));
+  await page.selectOption('dialog[open] select[name=form]', 'list');
+  await page.click('dialog[open] button:text-is("저장")');
+  await page.waitForFunction((sel) => document.querySelector(sel) && !document.querySelector(`${sel} .day-strip`) && document.querySelector(`${sel} .widget-head`).textContent.includes('목록만'), w9cell);
+  step('모양을 설정으로 고른다: 목록만 고르면 띠와 그 범례가 빠지고 머리에 그 말이 선다 (C63)', w10forms.join() === '띠와 목록,목록만,띠만' && w9home()[0].params.form === 'list'
+    && !(await page.$(`${w9cell} .form-scale`)), JSON.stringify([w10forms, w9home()]));
+  const w10cal = await page.evaluate(async () => { const { api } = await import('/auth/static/site.js'); return api('/calendar/api/v1').post('/calendars', { name: '빈 캘린더' }); });
+  mock.put('site', 'prefs', { ...w9Prefs, apps: ['calendar', 'vault'], homeCustomized: true, home: [{ app: 'calendar', widget: 'upcoming', params: { calendar: w10cal.id } }] });
+  await open(page, `${BASE}/`, `${w9cell} .items-none`);
+  const w10none = await page.$eval(`${w9cell} .items-none`, (e) => [e.textContent, e.querySelector('a')?.getAttribute('href'), e.querySelector('a')?.textContent]);
+  step('빈 목록은 첫 항목으로 가는 길을 함께 적는다 (C62)', w10none[0].includes('일정이 없습니다') && w10none[1] === '/calendar' && w10none[2] === '일정 만들기', JSON.stringify(w10none));
+  await page.evaluate(async (id) => { const { api } = await import('/auth/static/site.js'); await api('/calendar/api/v1').del(`/calendars/${id}`); }, w10cal.id);
+  mock.put('site', 'prefs', w9Prefs);
 
   // (h) the theme: chosen in the settings, applied at once, kept as the cookie and in the account, survives a reload
   await open(page, `${BASE}/settings`, '.value');

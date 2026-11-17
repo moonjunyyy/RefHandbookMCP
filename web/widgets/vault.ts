@@ -29,11 +29,11 @@ async function recent(host: HTMLElement, ctx: WidgetContext, vid: string): Promi
   const room = fit(ctx);
   replace(host,
     h('div', { class: 'widget-top' }, stats([{ n: thisWeek >= RECENT ? `${RECENT}+` : thisWeek, label: t('7일 동안 고친 노트') }]),
-      activity(days.map(d => ({ date: d, n: perDay.get(dayKey(d)) ?? 0 })), t('최근 {n}일 동안 날마다 고친 노트 수', { n: DAYS }))),
+      ctx.params?.form !== 'list' && activity(days.map(d => ({ date: d, n: perDay.get(dayKey(d)) ?? 0 })), t('최근 {n}일 동안 날마다 고친 노트 수', { n: DAYS }))),
     items(notes.slice(0, room).map(n => {
       const folder = n.path.includes('/') ? n.path.slice(0, n.path.lastIndexOf('/')) : '';
       return { href: href(vid, n.path), text: n.title, title: n.path, sub: folder, aside: ago(n.mtime * 1000) };
-    }), t('노트가 없습니다.'), notes.length > room ? { href: `/vault/${vid}`, n: notes.length - room } : undefined));
+    }), { text: t('노트가 없습니다.'), href: `/vault/${vid}`, label: t('노트 쓰기') }, notes.length > room ? { href: `/vault/${vid}`, n: notes.length - room } : undefined));
 }
 
 async function tags(host: HTMLElement, ctx: WidgetContext, vid: string): Promise<void> {
@@ -43,7 +43,7 @@ async function tags(host: HTMLElement, ctx: WidgetContext, vid: string): Promise
   const room = fit(ctx);
   replace(host,
     h('div', { class: 'widget-top' }, stats([{ n: all.length, label: t('태그') }])),
-    bars(all.slice(0, room).map(x => ({ label: `#${x.tag}`, n: x.notes, href: `/vault/${vid}?q=${encodeURIComponent(x.tag)}` })), t('태그가 없습니다.')),
+    bars(all.slice(0, room).map(x => ({ label: `#${x.tag}`, n: x.notes, href: `/vault/${vid}?q=${encodeURIComponent(x.tag)}` })), t('태그가 없습니다. 노트에 #태그 를 적으면 여기에 모입니다.')),
     all.length > room && h('a', { class: 'items-more small', href: `/vault/${vid}` }, t('{n}개 더', { n: all.length - room })));
 }
 
@@ -64,7 +64,8 @@ async function home(host: HTMLElement, vid: string): Promise<void> {
 export default async function widget(host: HTMLElement, ctx: WidgetContext): Promise<void> {
   replace(host, h('p', { class: 'muted small' }, '…'));
   const listed = await vaults.get('/vaults');
-  const v = (listed.vaults as { id: string; name: string; status: string }[]).find(x => x.status === 'ok');
+  const usable = (listed.vaults as { id: string; name: string; status: string }[]).filter(x => x.status === 'ok');
+  const v = usable.find(x => x.id === ctx.params?.vault) ?? usable[0];  // the place's vault when it is usable, else the first
   if (!v) { replace(host, h('p', { class: 'muted small' }, h('a', { href: '/vault' }, t('볼트 추가')))); return; }
   if (ctx.widget.id === 'home') { await home(host, v.id); return; }
   if (ctx.widget.id === 'tags') { await tags(host, ctx, v.id); return; }

@@ -30,5 +30,9 @@ grep '^BAD' layout.log | head -20
 case "$line" in *"violations: 0"*) ok=$((ok + 1));; *) bad=$((bad + 1));; esac
 if node appearance.js; then ok=$((ok + 1)); else bad=$((bad + 1)); fi
 if node procedure.js; then ok=$((ok + 1)); else bad=$((bad + 1)); fi
+# the calendar's head, scale and room (calendar-scale.js)
+if node calendar-scale.js > scale.log 2>&1; then ok=$((ok + 1)); else bad=$((bad + 1)); fi
+head -1 scale.log
+grep '^FAIL' scale.log
 echo "steps: $ok ok, $bad failed"
 test "$bad" -eq 0
