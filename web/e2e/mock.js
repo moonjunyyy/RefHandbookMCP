@@ -59,9 +59,10 @@ const GRAPH = {
     links: [{ s: 'n:e2', t: 'n:e1', kind: 'basis' }, { s: 'n:h1', t: 'n:e2', kind: 'basis' }, { s: 'n:e2', t: 'tag:charts', kind: 'tag' }],
   } },
 };
-// the sizes a cell may have (portal/site.py SIZES, as /me carries them)
-const SIZES = [{ id: '1x1', cols: 1, rows: 1 }, { id: '2x1', cols: 2, rows: 1 }, { id: '1x2', cols: 1, rows: 2 }, { id: '2x2', cols: 2, rows: 2 },
-               { id: '3x1', cols: 3, rows: 1 }, { id: '3x2', cols: 3, rows: 2 }, { id: '4x2', cols: 4, rows: 2 }];
+// the sizes a cell may have, in the grid's units — GRID of them make a cell's side (portal/site.py SIZES and GRID, as /me carries them)
+const GRID = 2;
+const SIZES = [{ id: 'icon', cols: 1, rows: 1 }, { id: '1x1', cols: 2, rows: 2 }, { id: '2x1', cols: 4, rows: 2 }, { id: '1x2', cols: 2, rows: 4 }, { id: '2x2', cols: 4, rows: 4 },
+               { id: '3x1', cols: 6, rows: 2 }, { id: '3x2', cols: 6, rows: 4 }, { id: '4x2', cols: 8, rows: 4 }];
 // the look's choices (the site file's [look], as /me carries them — run.sh reads them with portal/site.py)
 const GUIDES = ['home', 'apps', 'calendar', 'vault', 'projects', 'agents', 'settings', 'account', 'wordgen'].map(id => id + ':1');
 const LOOK = JSON.parse(process.env.LOOK_JSON || 'null') || { palette: [], corner: [], type: [], size: [], columns: [] };
@@ -180,7 +181,7 @@ async function handle(route) {
   }
   if (p === '/auth/api/v1/me') {
     const theme = ['light', 'dark'].includes(cookie(req, 'theme')) ? cookie(req, 'theme') : 'auto';
-    return json(route, 200, { uid, title: '모의 사이트', signin: '/auth', portal: '/account', lang: 'ko', theme, frame: 1, cards: [...CARDS, ...extraCards], menu: [], sizes: SIZES, look: LOOK });
+    return json(route, 200, { uid, title: '모의 사이트', signin: '/auth', portal: '/account', lang: 'ko', theme, frame: 1, cards: [...CARDS, ...extraCards], menu: [], sizes: SIZES, grid: GRID, look: LOOK });
   }
   if (p === '/apps/wordgen/api/me') return json(route, 200, { uid });
   if (p.startsWith('/auth/static/')) return file(route, STATIC, p.slice('/auth/static/'.length));
@@ -476,6 +477,8 @@ module.exports = {
   install: (context) => context.route(`${ORIGIN}/**`, handle),
   reset,
   signOut: () => { uid = null; },
+  sizes: () => SIZES,
+  grid: () => GRID,
   put: (app, key, value) => { store[app].set(key, JSON.stringify(app === 'site' && key === 'prefs' ? { guides: GUIDES, ...value } : value)); },
   get: (app, key) => { const v = store[app].get(key); return v === undefined ? undefined : JSON.parse(v); },
   events: () => events.slice(),

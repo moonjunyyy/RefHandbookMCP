@@ -27,7 +27,7 @@ async function checkAppearance(page) {
             && !el.closest('.table-wrap,pre,svg,.wk-body'));
           bad.push('horizontal overflow ' + overflow + 'px (' + nodes.slice(0, 4).map(el => el.tagName + '.' + el.className).join(', ') + ')');
         }
-        const grid = document.querySelector('.widgets');
+        const grid = document.querySelector('.widgets-ruler');  // the window's columns, a cell wide each (the grid itself counts units, parts of a cell)
         if (grid && innerWidth > 560) {
           const tracks = getComputedStyle(grid).gridTemplateColumns.split(' ').map(parseFloat);
           if (tracks.some(px => px < Math.min(grid.clientWidth, parseFloat(getComputedStyle(root).fontSize) * 12) - 1)) {

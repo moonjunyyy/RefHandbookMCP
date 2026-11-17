@@ -10,7 +10,7 @@
 // holds is theme.css's (--cell-items beside --cell).
 
 import { Child, h, replace } from './dom';
-import { Card, Param, Placement, Size, Widget, frame, prefs, sizeOf } from './frame';
+import { Card, Param, Placement, Size, Widget, cellsOf, frame, isUnit, prefs, sizeOf } from './frame';
 import { lang, locale, t } from './i18n';
 import { api, go } from './parts';
 
@@ -27,6 +27,12 @@ export function launcher(c: Card): HTMLElement {
     h('h2', null, c.icon && h('span', { class: 'app-icon big', 'aria-hidden': 'true' }, c.icon),
       c.href ? h('a', { href: c.href }, c.title) : c.title),
     more && h('div', { class: 'links' }, pages.map(l => h('a', { href: l.href }, l.label))));
+}
+
+/** A cell of one unit: the app's mark with a name under it — the way in, as a phone's home shows an app. */
+export function tile(c: Card, name: string): HTMLElement {
+  return h('div', { class: 'launcher tile' }, h('a', { href: c.href || null },
+    h('span', { class: 'app-icon big', 'aria-hidden': 'true' }, c.icon || name.slice(0, 1)), h('span', { class: 'tile-name' }, name)));
 }
 
 export const LAUNCHER = 'launcher';
@@ -85,6 +91,9 @@ async function said(w: Widget, params: Record<string, string>): Promise<string[]
 /** Draw a widget into its cell: the module when there is one, the launcher otherwise or on failure. `size`: the
  * cell's (the person's own, else the widget's declared one); `p`: the place, for its title and its settings. */
 export async function mount(cell: HTMLElement, c: Card, w: Widget, size: Size = sizeOf(w.size), p?: Placement): Promise<void> {
+  const unit = isUnit(size);  // one unit: the mark and the name — no head, and the module is not asked
+  cell.classList.toggle('unit', unit);
+  if (unit) { replace(cell, tile(c, w.id === LAUNCHER ? c.title : p?.title || w.title)); return; }
   const body = h('div', { class: 'widget-body' });
   const params = paramsOf(w, p);
   const words = h('span', { class: 'widget-said' });
@@ -95,7 +104,7 @@ export async function mount(cell: HTMLElement, c: Card, w: Widget, size: Size = 
   try {
     const mod = (await import(/* @vite-ignore */ w.href)) as WidgetModule;
     if (typeof mod.default !== 'function') throw new Error(`${w.href}: no default export`);
-    await mod.default(body, { frame, prefs, t, lang: lang(), theme: frame.theme, go, api, card: c, widget: w, size, params });
+    await mod.default(body, { frame, prefs, t, lang: lang(), theme: frame.theme, go, api, card: c, widget: w, size: cellsOf(size), params });
   } catch (e) {
     console.warn('widget', c.id, w.id, e);  // the person sees the launcher; the console says why
     replace(body, launcher(c));

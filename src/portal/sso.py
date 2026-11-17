@@ -278,7 +278,7 @@ def create_app(settings: Settings | None = None, kerberos=None, signing_key=None
                                 for w in a.widgets]}
         return JSONResponse({"uid": uid, "title": s.site_title, "signin": SIGNIN, "portal": facts().portal_root,
                              "lang": lang, "theme": theme, "frame": site_mod.FRAME,
-                             "sizes": [{"id": k, "cols": c, "rows": r} for k, (c, r) in site_mod.SIZES.items()],
+                             "sizes": [{"id": k, "cols": c, "rows": r} for k, (c, r) in site_mod.SIZES.items()], "grid": site_mod.GRID,
                              "look": site.look_in(lang),
                              # signed out: nothing of the site's apps (their names, abouts, addresses) — the sign-in only
                              "cards": [card(a) for a in site.cards(groups)] if uid else [],

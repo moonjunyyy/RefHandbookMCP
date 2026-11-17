@@ -184,6 +184,7 @@ const frame = {
   cards: [],
   menu: [],
   sizes: [],
+  grid: 1,
   look: { palette: [], corner: [], type: [], heading: [], mono: [], size: [], columns: [], fonts: "", groups: {} }
 };
 const IMAGE = /^(https:\/\/|\/(?!\/))[^\s"'()\\<>;{}]{1,500}$/;
@@ -274,6 +275,10 @@ function putLook(t2) {
   }
 }
 let schemeWatched = false;
+function cellsOf(s) {
+  return { id: s.id, cols: s.cols / frame.grid, rows: s.rows / frame.grid };
+}
+const isUnit = (s) => frame.grid > 1 && s.cols === 1 && s.rows === 1;
 function sizeOf(id) {
   return frame.sizes.find((s) => s.id === id) ?? frame.sizes[0] ?? { id: "1x1", cols: 1, rows: 1 };
 }
@@ -329,6 +334,7 @@ async function load() {
   frame.cards = (frame.cards ?? []).map((c) => ({ description: "", about: "", tags: [], code: [], icon: "", href: "", optional: true, default: false, links: [], widgets: [], ...c })).map((c) => typeof c.code === "string" ? { ...c, code: c.code ? [{ label: "", value: c.code }] : [] } : c);
   frame.menu ??= [];
   frame.sizes = Array.isArray(frame.sizes) && frame.sizes.length ? frame.sizes : [{ id: "1x1", cols: 1, rows: 1 }];
+  frame.grid = Number(frame.grid) > 0 ? Number(frame.grid) : 1;
   const given = frame.look ?? {};
   frame.look = {
     palette: given.palette ?? [],
@@ -984,6 +990,14 @@ function launcher(c) {
     more && h("div", { class: "links" }, pages.map((l) => h("a", { href: l.href }, l.label)))
   );
 }
+function tile(c, name) {
+  return h("div", { class: "launcher tile" }, h(
+    "a",
+    { href: c.href || null },
+    h("span", { class: "app-icon big", "aria-hidden": "true" }, c.icon || name.slice(0, 1)),
+    h("span", { class: "tile-name" }, name)
+  ));
+}
 const LAUNCHER = "launcher";
 function widgetsOf(c) {
   return [{ id: LAUNCHER, title: c.title, description: c.description, href: "", size: sizeOf(void 0).id }, ...c.widgets];
@@ -1022,6 +1036,12 @@ async function said(w, params) {
   return out;
 }
 async function mount(cell, c, w, size = sizeOf(w.size), p) {
+  const unit = isUnit(size);
+  cell.classList.toggle("unit", unit);
+  if (unit) {
+    replace(cell, tile(c, w.id === LAUNCHER ? c.title : p?.title || w.title));
+    return;
+  }
   const body = h("div", { class: "widget-body" });
   const params = paramsOf(w, p);
   const words = h("span", { class: "widget-said" });
@@ -1047,7 +1067,7 @@ async function mount(cell, c, w, size = sizeOf(w.size), p) {
       w.href
     );
     if (typeof mod.default !== "function") throw new Error(`${w.href}: no default export`);
-    await mod.default(body, { frame, prefs, t, lang: lang(), theme: frame.theme, go, api, card: c, widget: w, size, params });
+    await mod.default(body, { frame, prefs, t, lang: lang(), theme: frame.theme, go, api, card: c, widget: w, size: cellsOf(size), params });
   } catch (e) {
     console.warn("widget", c.id, w.id, e);
     replace(body, launcher(c));
@@ -1360,6 +1380,7 @@ export {
   applyTheme,
   bars,
   button,
+  cellsOf,
   choice,
   choicesOf,
   chrome,
@@ -1382,6 +1403,7 @@ export {
   h,
   header,
   help,
+  isUnit,
   items,
   keys,
   keysDialog,
@@ -1428,6 +1450,7 @@ export {
   svg,
   t,
   tag,
+  tile,
   title,
   toggle,
   values,

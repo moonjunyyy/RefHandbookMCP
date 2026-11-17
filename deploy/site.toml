@@ -38,7 +38,7 @@
 # (its widgets: [[app.widget]], docs/frame.md §4). `optional = false` keeps an app out of the catalog and in
 # the person's own menu (the account); `default = true` has an optional app on for an account with no settings
 # kept yet (docs/frame.md §2). A widget: id, title, description (one line, for the person choosing it),
-# module, size (one of portal/site.py SIZES, columns x rows: 1x1 … 4x2 — the person may resize a placed one),
+# module, size (one of portal/site.py SIZES: columns x rows of cells, 1x1 … 4x2, or icon — the person may resize a placed one),
 # tr.en = { title, description }. Its settings, which a person keeps with each place they give the widget:
 # [[app.widget.param]] — id, label, and either default with choices = [{ value, label }] or
 # from = { path, list, value, label } (the person's own objects, read from a path of the site) with all (the

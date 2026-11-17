@@ -6,7 +6,7 @@
 // added. The app's page says more — what it does, the widgets it offers the main page, its links — and its one
 // action is 추가, or 열기 with 빼기 beside it. Seeing the store marks every app seen (its "new" tag goes).
 
-import { button, choice, frame, go, h, link, main, menuButton, onApps, onMenu, pageHead, prefs, primaryLink, replace, savePrefs, section, sizeOf, tag, title, widgetsOf } from '/auth/static/site.js';
+import { button, cellsOf, choice, frame, go, h, link, main, menuButton, onApps, onMenu, pageHead, prefs, primaryLink, replace, savePrefs, section, sizeOf, tag, title, widgetsOf } from '/auth/static/site.js';
 import type { Address, Card, MenuSection } from '/auth/static/site.js';
 import { t } from '../lib/i18n';
 import { copyText } from '../lib/clipboard';
@@ -136,7 +136,7 @@ export async function app(id: string): Promise<void> {
   const widgets = widgetsOf(c);
   replace(main(), head, acts,
     c.about && h('p', { class: 'about' }, c.about),
-    section(t('홈에 올릴 수 있는 위젯'), h('ul', { class: 'plain' }, widgets.map(w => h('li', null, w.title, ' ', h('span', { class: 'muted small' }, `${sizeOf(w.size).cols}×${sizeOf(w.size).rows}`))))),
+    section(t('홈에 올릴 수 있는 위젯'), h('ul', { class: 'plain' }, widgets.map(w => h('li', null, w.title, ' ', h('span', { class: 'muted small' }, `${cellsOf(sizeOf(w.size)).cols}×${cellsOf(sizeOf(w.size)).rows}`))))),
     c.links.length > 0 && section(t('링크'), h('ul', { class: 'plain' }, c.links.map(l => h('li', null, link(l.href, l.label))))),
     c.code.length > 0 && section(t('연결 주소'), h('ul', { class: 'plain addresses' }, c.code.map(address))));
   markSeen();

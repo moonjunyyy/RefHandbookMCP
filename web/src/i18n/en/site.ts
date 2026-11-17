@@ -302,6 +302,7 @@ export const SITE: Record<string, string> = {
   '지금': 'now',
   '크기': 'Size',
   '하나 더': 'One more',
+  '아이콘': 'Icon',
   '일정 만들기': 'Make an event',
   '노트 쓰기': 'Write a note',
   '점은 그 날의 일정 · 진할수록 일정이 많은 날': 'A dot is an event of that day · the darker, the fuller the day',

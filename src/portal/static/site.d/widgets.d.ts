@@ -21,6 +21,8 @@ export type WidgetModule = {
 /** The widget every app has: a launcher — its mark and name, the way in; an app with more than one page lists
  * them. What the app is and its address are the store's to say (/app/<id>), not the main page's. */
 export declare function launcher(c: Card): HTMLElement;
+/** A cell of one unit: the app's mark with a name under it — the way in, as a phone's home shows an app. */
+export declare function tile(c: Card, name: string): HTMLElement;
 export declare const LAUNCHER = "launcher";
 /** The widgets an app offers: the launcher first, then the ones it declared. */
 export declare function widgetsOf(c: Card): Widget[];

@@ -8,7 +8,8 @@ import { setLang } from './i18n';
 import { COLOR_ROLES, normalizeHex, paletteTokens } from './colors';
 import type { ColorRole, ColorScheme, ThemeColors } from './colors';
 
-/** A widget's cells on the grid: one of the sizes the site declares (`frame.sizes`, from portal/site.py SIZES). */
+/** A widget's room on the grid, in the grid's units: one of the sizes the site declares (`frame.sizes`, from
+ * portal/site.py SIZES); `frame.grid` units make a cell's side. */
 export interface Size { id: string; cols: number; rows: number }
 /** A setting a widget declares ([[app.widget.param]]): one of `choices`, or one of the person's own objects read
  * `from` a path of the site (`list` in its answer; an item's `value` and `label`) with `all`, the word for no filter. */
@@ -38,7 +39,7 @@ export interface LookPrefs { palette?: string; corner?: string; type?: string; h
   accent?: string; colors?: Partial<Record<ColorScheme, ThemeColors>>; radius?: number; imageBlur?: number; imageDim?: number;
 }
 export interface Frame { uid: string | null; title: string; signin: string; portal: string; lang: string;
-                         theme: string; frame: number; cards: Card[]; menu: { label: string; href: string }[]; sizes: Size[]; look: Look }
+                         theme: string; frame: number; cards: Card[]; menu: { label: string; href: string }[]; sizes: Size[]; grid: number; look: Look }
 
 export const THEMES = ['auto', 'light', 'dark'] as const;
 export type Theme = (typeof THEMES)[number];
@@ -62,7 +63,7 @@ export interface Prefs {
  * R13) — filled from the frame once it is loaded; a kept `apps`, an empty one too, is the person's own choice. */
 export const DEFAULTS: Prefs = { lang: 'auto', theme: 'auto', start: '/', apps: [], home: [], seen: [], look: {} };
 export const frame: Frame = { uid: null, title: '', signin: '/auth', portal: '/account', lang: 'ko', theme: 'auto', frame: 0,
-                              cards: [], menu: [], sizes: [], look: { palette: [], corner: [], type: [], heading: [], mono: [], size: [], columns: [], fonts: '', groups: {} } };
+                              cards: [], menu: [], sizes: [], grid: 1, look: { palette: [], corner: [], type: [], heading: [], mono: [], size: [], columns: [], fonts: '', groups: {} } };
 
 /** An image under the page: an address of this site or an https one, nothing that could leave the url("…"). */
 export const IMAGE = /^(https:\/\/|\/(?!\/))[^\s"'()\\<>;{}]{1,500}$/;
@@ -165,6 +166,13 @@ function putLook(t: LookTokens): void {
 }
 let schemeWatched = false;
 /** The size a placement has: its own, else its widget's; unknown ids fall back to the first declared size. */
+/** A size in whole cells — what a widget's module is told and what a person reads (2×1). */
+export function cellsOf(s: Size): Size {
+  return { id: s.id, cols: s.cols / frame.grid, rows: s.rows / frame.grid };
+}
+/** Whether a size is one unit of the grid: room for an app's mark and a name under it, nothing else. */
+export const isUnit = (s: Size): boolean => frame.grid > 1 && s.cols === 1 && s.rows === 1;
+
 export function sizeOf(id: string | undefined): Size {
   return frame.sizes.find(s => s.id === id) ?? frame.sizes[0] ?? { id: '1x1', cols: 1, rows: 1 };
 }
@@ -223,6 +231,7 @@ export async function load(): Promise<Frame> {
     .map(c => typeof (c.code as unknown) === 'string' ? { ...c, code: (c.code as unknown as string) ? [{ label: '', value: c.code as unknown as string }] : [] } : c);
   frame.menu ??= [];
   frame.sizes = Array.isArray(frame.sizes) && frame.sizes.length ? frame.sizes : [{ id: '1x1', cols: 1, rows: 1 }];
+  frame.grid = Number(frame.grid) > 0 ? Number(frame.grid) : 1;
   const given: Partial<Look> = frame.look ?? {};  // an older sign-in's answer has no look: theme.css as it is
   frame.look = { palette: given.palette ?? [], corner: given.corner ?? [], type: given.type ?? [], heading: given.heading ?? [], mono: given.mono ?? [],
                  size: given.size ?? [], columns: given.columns ?? [], fonts: given.fonts ?? '', groups: given.groups ?? {} };

@@ -209,7 +209,7 @@ async function run() {
   await page.focus('.widgets .widget:nth-child(2)');
   await page.keyboard.press('Shift+F10');
   await page.waitForSelector('.menu[role=menu]');
-  step('칸의 메뉴가 키보드로 열리고 설정·선언된 크기·앞으로·뒤로·빼기다', JSON.stringify(await menuItems(page)) === '["설정","1×1","2×1","1×2","2×2","3×1","3×2","4×2","앞으로","뒤로","빼기"]' && (await page.evaluate(() => document.activeElement.classList.contains('menu-item'))), JSON.stringify(await menuItems(page)));
+  step('칸의 메뉴가 키보드로 열리고 설정·선언된 크기·앞으로·뒤로·빼기다', JSON.stringify(await menuItems(page)) === '["설정","아이콘","1×1","2×1","1×2","2×2","3×1","3×2","4×2","앞으로","뒤로","빼기"]' && (await page.evaluate(() => document.activeElement.classList.contains('menu-item'))), JSON.stringify(await menuItems(page)));
   await page.keyboard.press('Escape');
   await sleep(100);
   step('Esc 로 닫히고 초점이 칸으로 돌아온다', !(await page.$('.menu[role=menu]')) && (await page.evaluate(() => document.activeElement.classList.contains('widget'))));
@@ -217,7 +217,7 @@ async function run() {
   await page.click('.widgets .widget:nth-child(2) .widget-tools button.more');
   await page.waitForSelector('.menu[role=menu]');
   await pickItem(page, '1×2');
-  step('메뉴의 크기로 칸이 커지고 배치에 남는다', mock.get('site', 'prefs').home[1].size === '1x2' && (await page.$eval('.widgets .widget:nth-child(2)', (e) => e.style.gridRow)) === 'span 2', JSON.stringify(mock.get('site', 'prefs').home));
+  step('메뉴의 크기로 칸이 커지고 배치에 남는다', mock.get('site', 'prefs').home[1].size === '1x2' && (await page.$eval('.widgets .widget:nth-child(2)', (e) => e.style.gridRow)) === `span ${mock.sizes().find((s) => s.id === '1x2').rows}`, JSON.stringify(mock.get('site', 'prefs').home));
   // the grip: dragged one column to the right, the cell snaps to 2×2 (the nearest declared size with its 2 rows)
   await page.hover('.widgets .widget:nth-child(2)');
   const g = await (await page.$('.widgets .widget:nth-child(2) .widget-grip')).boundingBox();
@@ -227,7 +227,7 @@ async function run() {
   await page.mouse.move(g.x + c2.width + 20, g.y, { steps: 6 });
   await page.mouse.up();
   await sleep(400);
-  step('모서리를 끌면 가장 가까운 선언 크기로 스냅되어 저장된다 (C29)', mock.get('site', 'prefs').home[1].size === '2x2' && (await page.$eval('.widgets .widget:nth-child(2)', (e) => e.style.gridColumn)) === 'span 2', JSON.stringify(mock.get('site', 'prefs').home[1]));
+  step('모서리를 끌면 가장 가까운 선언 크기로 스냅되어 저장된다 (C29)', mock.get('site', 'prefs').home[1].size === '2x2' && (await page.$eval('.widgets .widget:nth-child(2)', (e) => e.style.gridColumn)) === `span ${mock.sizes().find((s) => s.id === '2x2').cols}`, JSON.stringify(mock.get('site', 'prefs').home[1]));
   await page.hover('.widgets .widget:nth-child(3)');
   await page.click('.widgets .widget:nth-child(3) .widget-tools button.more');
   await page.waitForSelector('.menu[role=menu]');
@@ -941,8 +941,8 @@ async function run() {
   await page.setViewportSize(w10view);
   await sleep(400);
   const w10back = await w10span();
-  step('큰 크기: 칸은 격자의 열 수를 넘지 않는다 — 좁아지면 있는 열을 다 쓰고 옆으로 넘치지 않으며, 넓어지면 제 크기다 (C64)', w10.sizes === 7 && w10wide[0] === `span ${Math.min(4, w10wide[1])}` && w10wide[2]
-    && w10narrow[1] < 4 && w10narrow[0] === `span ${w10narrow[1]}` && w10narrow[2] && w10back[0] === w10wide[0], JSON.stringify([w10wide, w10narrow, w10back]));
+  step('큰 크기: 칸은 격자의 열 수를 넘지 않는다 — 좁아지면 있는 열을 다 쓰고 옆으로 넘치지 않으며, 넓어지면 제 크기다 (C64)', w10.sizes === 8 && w10wide[0] === `span ${Math.min(8, w10wide[1])}` && w10wide[2]
+    && w10narrow[1] < 8 && w10narrow[0] === `span ${w10narrow[1]}` && w10narrow[2] && w10back[0] === w10wide[0], JSON.stringify([w10wide, w10narrow, w10back]));
   await w9menu(0, '설정');
   await page.waitForSelector('dialog[open] select[name=form]');
   const w10forms = await page.$$eval('dialog[open] select[name=form] option', (os) => os.map((o) => o.textContent));
@@ -957,6 +957,39 @@ async function run() {
   const w10none = await page.$eval(`${w9cell} .items-none`, (e) => [e.textContent, e.querySelector('a')?.getAttribute('href'), e.querySelector('a')?.textContent]);
   step('빈 목록은 첫 항목으로 가는 길을 함께 적는다 (C62)', w10none[0].includes('일정이 없습니다') && w10none[1] === '/calendar' && w10none[2] === '일정 만들기', JSON.stringify(w10none));
   await page.evaluate(async (id) => { const { api } = await import('/auth/static/site.js'); await api('/calendar/api/v1').del(`/calendars/${id}`); }, w10cal.id);
+  mock.put('site', 'prefs', w9Prefs);
+
+  // (w11) the grid's unit and the icon tile (U23-3)
+  const w11sel = '.widgets .widget[data-widget=recent]';
+  mock.put('site', 'prefs', { ...w9Prefs, apps: ['calendar', 'vault'], homeCustomized: true,
+                              home: [{ app: 'calendar', widget: 'launcher' }, { app: 'vault', widget: 'recent', size: mock.sizes()[0].id }, { app: 'calendar', widget: 'today', size: mock.sizes()[1].id }] });
+  await open(page, `${BASE}/`, '.widgets .widget.unit');
+  await page.waitForSelector('.widgets .widget[data-widget=today] .widget-head');
+  const w11 = await page.evaluate(async () => {
+    const site = await import('/auth/static/site.js');
+    const box = (e) => { const r = e.getBoundingClientRect(); return [Math.round(r.width), Math.round(r.height)]; };
+    const cells = [...document.querySelectorAll('.widgets > .widget')];
+    return { grid: site.frame.grid, boxes: cells.map(box), unit: cells.map((c) => c.classList.contains('unit')),
+             tiles: cells.filter((c) => c.classList.contains('unit')).map((c) => [c.querySelector('.launcher.tile a')?.getAttribute('href'), c.querySelector('.tile-name')?.textContent, !!c.querySelector('.widget-head'), !!c.querySelector('.app-icon')]),
+             least: parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--cell')), columns: getComputedStyle(document.querySelector('.widgets')).gridTemplateColumns.split(' ').length, fits: document.documentElement.scrollWidth <= document.documentElement.clientWidth };
+  });
+  const w11share = (w11.boxes[0][0] * w11.boxes[0][1]) / (w11.boxes[2][0] * w11.least);  // against a 1×1 cell's least room: its width by the cell's height (theme.css --cell); a cell with much in it grows taller
+  step('격자의 단위는 칸의 반이고, 한 단위짜리는 앱의 표식과 그 아래 이름뿐이다 — 1×1 칸의 약 1/4 (U23-3)', w11.grid === 2 && w11.columns === 8 && w11.unit.join() === 'true,true,false'
+    && JSON.stringify(w11.tiles) === JSON.stringify([['/calendar', '캘린더', false, true], ['/vault', '최근 노트', false, true]]) && w11share > .2 && w11share < .32 && w11.fits, JSON.stringify({ ...w11, share: w11share }));
+  await page.hover(w11sel);
+  await page.click(`${w11sel} .widget-tools button.more`);
+  await page.waitForSelector('.menu[role=menu]');
+  await pickItem(page, '1×1');
+  await page.waitForSelector(`${w11sel} .widget-head`);
+  step('아이콘은 칸의 메뉴에서 1×1 위젯이 된다', mock.get('site', 'prefs').home[1].size === mock.sizes()[1].id && !(await page.$(`${w11sel}.unit`)) && !!(await page.$(`${w11sel} .items, ${w11sel} .items-none`)), JSON.stringify(mock.get('site', 'prefs').home));
+  await page.setViewportSize({ width: 390, height: w10view.height });
+  await sleep(400);
+  const w11phone = await page.$$eval('.widgets > .widget', (cs) => cs.map((c) => [c.style.gridColumn, Math.round(c.getBoundingClientRect().width)]));
+  const w11row = await page.$eval('.widgets', (g) => [g.clientWidth, getComputedStyle(g).gridTemplateColumns.split(' ').length, document.documentElement.scrollWidth <= document.documentElement.clientWidth]);
+  await page.setViewportSize(w10view);
+  await sleep(400);
+  step('좁은 창에서는 단위 둘이 한 줄이다 — 아이콘은 반 줄, 칸은 한 줄 전체, 옆으로 넘치지 않는다', w11row[1] === 2 && w11phone[0][0] === 'span 1' && w11phone[1][0] === 'span 2' && w11phone[2][0] === 'span 2'
+    && Math.abs(w11phone[2][1] - w11row[0]) <= 1 && w11phone[0][1] < w11row[0] / 2 && w11row[2], JSON.stringify([w11phone, w11row]));
   mock.put('site', 'prefs', w9Prefs);
 
   // (h) the theme: chosen in the settings, applied at once, kept as the cookie and in the account, survives a reload
@@ -1050,7 +1083,8 @@ async function run() {
     && (await page.evaluate(() => getComputedStyle(document.body, '::before').backgroundImage)).includes('/e2e/look.png'), await page.evaluate(() => getComputedStyle(document.body, '::before').backgroundImage));
   await shot(page, 'h-look');
   await open(page, `${BASE}/`, '.widgets');
-  step('홈은 고른 칸 수로 나뉜다', (await page.$eval('.widgets', (g) => getComputedStyle(g).gridTemplateColumns.split(' ').length)) === n, await page.$eval('.widgets', (g) => getComputedStyle(g).gridTemplateColumns));
+  step('홈은 고른 칸 수로 나뉜다 (격자는 그 칸마다 단위 둘)', (await page.$eval('.widgets-ruler', (g) => getComputedStyle(g).gridTemplateColumns.split(' ').length)) === n
+    && (await page.$eval('.widgets', (g) => getComputedStyle(g).gridTemplateColumns.split(' ').length)) === n * mock.grid(), await page.$eval('.widgets', (g) => getComputedStyle(g).gridTemplateColumns));
   await shot(page, 'h-look-home');
   // before the first paint: a page with theme.js alone (no site.js, no pages) already wears the kept look
   await page.route(`${BASE}/prepaint`, (r) => r.fulfill({ status: 200, contentType: 'text/html; charset=utf-8',

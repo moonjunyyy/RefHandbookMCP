@@ -374,12 +374,13 @@ a.primary { display: inline-block; font: 600 .9rem/1.2 var(--sans); padding: var
 a.primary:hover { background: var(--accent-fill-hover, var(--accent-hover)); color: var(--accent-fill-text, var(--accent-text)); }
 /* the main page: a grid of widgets, each an app's piece, handled in place (§8.1): a cell's spans are inline
    (from the sizes the site declares), its head is the drag handle, its corner grip resizes it, its ⋯ shows on hover */
-.widgets { display: grid; gap: var(--gap); grid-template-columns: var(--home-grid); grid-auto-rows: minmax(var(--cell), auto);
+.widgets { display: grid; gap: var(--gap); grid-template-columns: var(--home-grid); grid-auto-rows: minmax(calc((var(--cell) - (var(--units, 1) - 1) * var(--gap)) / var(--units, 1)), auto);
            grid-auto-flow: dense; margin-top: var(--s2); }
-/* the grid's columns with nothing in them: the main page asks it how many columns the window gives (pages/home.ts) */
+/* the grid's columns with nothing in them: the main page asks it how many columns the window gives and gives the grid
+   that many times --units (pages/home.ts fitColumns): a unit is a part of a cell's side, the room of an icon tile */
 .widgets-ruler { display: grid; gap: var(--gap); grid-template-columns: var(--home-grid); height: 0; visibility: hidden; }
 .widget { position: relative; min-width: 0; display: flex; flex-direction: column; }
-@media (max-width: 560px) { .widgets, .widgets-ruler { grid-template-columns: 1fr; } .widget { grid-column: span 1 !important; } }
+@media (max-width: 560px) { .widgets-ruler { grid-template-columns: 1fr; } }
 .widget > .widget-head { display: flex; align-items: center; gap: var(--s1); margin-bottom: var(--s2); font-size: .82rem; color: var(--muted); }
 .widget > .widget-head a { color: inherit; text-decoration: none; }
 .widget > .widget-head a:hover { color: var(--accent); }
@@ -397,9 +398,15 @@ a.primary:hover { background: var(--accent-fill-hover, var(--accent-hover)); col
 .launcher h2 { display: flex; align-items: center; gap: var(--s2); font-size: 1.1rem; margin: 0; }
 .launcher p { margin: 0; font-size: .9em; }
 .launcher .links { display: flex; gap: var(--s3); flex-wrap: wrap; font-size: .88rem; font-weight: 600; }
+/* a cell of one unit: the app's mark with a name under it, as a phone's home shows an app */
+.widget.unit { padding: var(--s1); }
+.launcher.tile { flex: 1; align-items: stretch; }
+.launcher.tile > a { display: flex; flex-direction: column; align-items: center; gap: var(--s1); min-width: 0; text-align: center; color: inherit; text-decoration: none; }
+.launcher.tile > a:hover, .launcher.tile > a:focus-visible { color: var(--accent); }
+.tile-name { font-size: .82rem; font-weight: 600; line-height: 1.25; overflow-wrap: anywhere; }
 /* the grid's last cell: the way to more widgets (the sheet) — a button that looks like an empty cell */
 .widgets > button.add-widget { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--s1);
-                               min-height: var(--cell); background: transparent; border: 1px dashed var(--line); border-radius: var(--panel-radius);
+                               background: transparent; border: 1px dashed var(--line); border-radius: var(--panel-radius);
                                color: var(--muted); font: 600 .9rem/1.2 var(--sans); box-shadow: none; }
 .widgets > button.add-widget:hover, .widgets > button.add-widget:focus-visible { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
 .add-mark { font: 400 1.6rem/1 var(--sans); }

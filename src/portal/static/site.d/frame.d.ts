@@ -1,5 +1,6 @@
 import type { ColorRole, ColorScheme, ThemeColors } from './colors';
-/** A widget's cells on the grid: one of the sizes the site declares (`frame.sizes`, from portal/site.py SIZES). */
+/** A widget's room on the grid, in the grid's units: one of the sizes the site declares (`frame.sizes`, from
+ * portal/site.py SIZES); `frame.grid` units make a cell's side. */
 export interface Size {
     id: string;
     cols: number;
@@ -112,6 +113,7 @@ export interface Frame {
         href: string;
     }[];
     sizes: Size[];
+    grid: number;
     look: Look;
 }
 export declare const THEMES: readonly ["auto", "light", "dark"];
@@ -165,6 +167,10 @@ export declare function lookTokens(look: Look, p: LookPrefs): LookTokens;
  * theme's selectors), the palette of the theme in force; and into this browser for the next first paint. */
 export declare function applyLook(): void;
 /** The size a placement has: its own, else its widget's; unknown ids fall back to the first declared size. */
+/** A size in whole cells — what a widget's module is told and what a person reads (2×1). */
+export declare function cellsOf(s: Size): Size;
+/** Whether a size is one unit of the grid: room for an app's mark and a name under it, nothing else. */
+export declare const isUnit: (s: Size) => boolean;
 export declare function sizeOf(id: string | undefined): Size;
 export declare const prefs: Prefs;
 /** The person's theme onto the document, and into the site cookie theme.js reads before the first paint. */

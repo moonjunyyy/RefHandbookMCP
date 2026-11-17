@@ -24,3 +24,5 @@ export type { ColorRole, ColorScheme, ThemeColors } from './colors';
 
 export { guide } from './guide';
 export type { GuideStep } from './guide';
+export { cellsOf, isUnit } from './frame';
+export { tile } from './widgets';

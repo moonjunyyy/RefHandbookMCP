@@ -221,6 +221,9 @@ def test_the_frame_declares_the_sizes_and_the_default_apps(app):
     assert [c["id"] for c in me["cards"] if c["default"]] == ["projects", "calendar", "vault", "board"]  # the board: the notices reach everyone
     assert all(c["optional"] for c in me["cards"] if c["default"])
     assert me["sizes"] == [{"id": k, "cols": c, "rows": r} for k, (c, r) in site.SIZES.items()]
+    # the grid's unit: one size is one unit (the icon tile, the first — the default), the others are whole cells
+    assert me["grid"] == site.GRID and next(iter(site.SIZES.values())) == (1, 1)
+    assert all(c % site.GRID == 0 and r % site.GRID == 0 for c, r in list(site.SIZES.values())[1:])
     assert all(w["size"] in site.SIZES for c in me["cards"] for w in c["widgets"])
 
 

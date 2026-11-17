@@ -9,7 +9,7 @@
 // app on, the page is one action — add apps — which goes to the store (/apps); the main page itself is never
 // the store. Right after signing in it opens the person's start page.
 
-import { act, button, choicesOf, dialog, frame, h, keys, main, menuButton, mount, onApps, onMenu, paramsOf, prefs, primaryLink, replace, savePrefs, sizeOf, spanStyle,
+import { act, button, cellsOf, choicesOf, dialog, frame, h, keys, isUnit, main, menuButton, mount, onApps, onMenu, paramsOf, prefs, primaryLink, replace, savePrefs, sizeOf, spanStyle,
          tag, title, toggle, widgetsOf, LAUNCHER } from '/auth/static/site.js';
 import type { Card, MenuSection, Placement, Size, Widget } from '/auth/static/site.js';
 import { t } from '../lib/i18n';
@@ -27,7 +27,7 @@ function resolve(p: Placement): [Card, Widget] | null {
   return c && w ? [c, w] : null;
 }
 
-const sizeWord = (s: Size) => `${s.cols}×${s.rows}`;
+const sizeWord = (s: Size) => isUnit(s) ? t('아이콘') : `${cellsOf(s).cols}×${cellsOf(s).rows}`;
 
 /** The declared size nearest to a wanted (cols, rows) — what a dragged corner snaps to. */
 function nearest(cols: number, rows: number): Size {
@@ -105,9 +105,10 @@ export async function home(): Promise<void> {
       grip.setPointerCapture(ev.pointerId);
       const r0 = el.getBoundingClientRect();
       const gap = parseFloat(getComputedStyle(grid).gap) || 0;
-      const shown = Math.min(size.cols, columns());  // a cell wider than the grid is drawn as wide as the grid
+      const shown = Math.min(size.cols, columns() * frame.grid);  // a cell wider than the grid is drawn as wide as the grid
       const unitW = (r0.width - gap * (shown - 1)) / shown;
-      const unitH = Math.max(80, (r0.height - gap * (size.rows - 1)) / size.rows);
+      const least = (parseFloat(getComputedStyle(grid).getPropertyValue('--cell')) - gap * (frame.grid - 1)) / frame.grid || 1;  // a unit row's least height (parts.css .widgets)
+      const unitH = Math.max(least, (r0.height - gap * (size.rows - 1)) / size.rows);
       const maxCols = Math.max(1, Math.round((grid.clientWidth + gap) / (unitW + gap)));
       let want: Size = size;
       const at = (e: PointerEvent) => {
@@ -190,8 +191,8 @@ export async function home(): Promise<void> {
         const s = sizeOf(w.size);
         replace(preview, h('p', { class: 'pick-preview-title small muted' }, w.id === LAUNCHER ? c.title : `${c.title} · ${w.title}`, ' ', sizeWord(s)),
           cell(c, w));
-        (preview.lastElementChild as HTMLElement).style.minHeight = `${s.rows * 120}px`;
-        (preview.lastElementChild as HTMLElement).classList.add(s.cols > 1 ? 'wide' : 'narrow');
+        (preview.lastElementChild as HTMLElement).style.minHeight = `${cellsOf(s).rows * 120}px`;
+        (preview.lastElementChild as HTMLElement).classList.add(cellsOf(s).cols > 1 ? 'wide' : 'narrow');
       }, 150);
     };
     const rows = onApps().map(c => h('div', { class: 'pick-group' },
@@ -224,9 +225,12 @@ export async function home(): Promise<void> {
   const more = h('button', { type: 'button', class: 'add-widget', 'aria-keyshortcuts': 'w', onclick: () => void pick() },
     h('span', { class: 'add-mark', 'aria-hidden': 'true' }, '+'), t('위젯 고르기'));
 
-  /** A cell never asks for more columns than the grid has: the sizes are the site's, the columns the window's. */
+  /** The grid has the window's columns (the ruler's), each of them frame.grid units wide; a cell never asks for more
+   * units than that: the sizes are the site's, the columns the window's. */
   function fitColumns(): void {
-    const n = columns();
+    const n = columns() * frame.grid;
+    grid.style.gridTemplateColumns = `repeat(${n}, minmax(0, 1fr))`;
+    grid.style.setProperty('--units', String(frame.grid));
     for (const el of grid.querySelectorAll<HTMLElement>(':scope > .widget')) {
       if (!el.classList.contains('resizing')) el.style.gridColumn = `span ${Math.min(sizeOf(el.dataset.size).cols, n)}`;
     }

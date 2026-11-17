@@ -27,9 +27,12 @@ from pathlib import Path
 from .i18n import N_, catalog, t
 
 NAME = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
-# A widget's cells on the main page's grid, columns x rows (docs/frame.md §4): the one declaration — the
-# frame receives it (/auth/api/v1/me `sizes`) and draws, snaps and names sizes from it, nowhere else.
-SIZES: dict[str, tuple[int, int]] = {"1x1": (1, 1), "2x1": (2, 1), "1x2": (1, 2), "2x2": (2, 2), "3x1": (3, 1), "3x2": (3, 2), "4x2": (4, 2)}
+# A widget's room on the main page's grid (docs/frame.md §4): the one declaration — the frame receives it
+# (/auth/api/v1/me `sizes`, `grid`) and draws, snaps and names sizes from it, nowhere else. The grid's unit is a
+# GRID-th of a cell's side: the room of an app's mark with its name under it. A size counts units (columns, rows):
+# "icon" is one unit — what a launcher takes, and the first, so the default; the ones named NxM are N by M cells.
+GRID = 2
+SIZES: dict[str, tuple[int, int]] = {"icon": (1, 1), "1x1": (2, 2), "2x1": (4, 2), "1x2": (2, 4), "2x2": (4, 4), "3x1": (6, 2), "3x2": (6, 4), "4x2": (8, 4)}
 THEMES = ("auto", "light", "dark")  # the values of a person's theme (docs/frame.md §1)
 FRAME = 1  # the version of the frame the sign-in serves (/auth/static/site.js, theme.css, parts.css)
 # The catalog's tags (docs/apps-vault-calendar.md §1.1): a fixed vocabulary an app picks from, so the catalog
