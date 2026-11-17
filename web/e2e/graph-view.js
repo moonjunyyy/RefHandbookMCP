@@ -1,7 +1,7 @@
 // The knowledge graph's page (/handbook, web/src/pages/graph.ts), in Chromium against the mock site (run.sh sets the
 // roots): the overview is drawn (two topics and what joins them); a topic pressed opens into its rows and says itself
 // beside the drawing, and pressed again closes; a node dragged moves and is not taken for a press; the scale changes;
-// the drawing takes the room of the window. First line of the output: "graph view: N steps, failed: M".
+// the drawing takes the room of the window; a larger scale moves the nodes apart and keeps the letters' size. First line of the output: "graph view: N steps, failed: M".
 const { chromium } = require('playwright');
 const mock = require('./mock');
 
@@ -49,15 +49,35 @@ const press = async (page, id) => { const [x, y] = await point(page, id); await 
   step('다시 누르면 접힌다', (await nodes(page)).length === 5, String((await nodes(page)).length));
 
   const [x, y] = await point(page, 'n:num');
-  await page.mouse.move(x, y); await page.mouse.down(); await page.mouse.move(x + 90, y + 40, { steps: 6 }); await page.mouse.up();
+  await page.mouse.move(x, y); await page.mouse.down(); await page.mouse.move(x + 90, y + 40, { steps: 6 });
+  const [x2, y2] = await point(page, 'n:num');  // while it is held: once let go the layout draws it back, by how much is the layout's (random) business
+  await page.mouse.up();
   await sleep(300);
-  const [x2, y2] = await point(page, 'n:num');
   step('끌면 옮겨지고 누른 것으로 치지 않는다', Math.hypot(x2 - x, y2 - y) > 40 && (await nodes(page)).length === 5, JSON.stringify([Math.round(x2 - x), Math.round(y2 - y)]));
   const before = await point(page, 'n:geo'), other = await point(page, 'n:num');
   await page.click('.kg-tools button:nth-child(2)');
   await sleep(200);
   const after = await point(page, 'n:geo'), other2 = await point(page, 'n:num');
   step('+ 로 커진다', Math.hypot(after[0] - other2[0], after[1] - other2[1]) > Math.hypot(before[0] - other[0], before[1] - other[1]) * 1.1);
+  // the scale moves the nodes apart and leaves what is drawn its size (U23-1)
+  const seen = () => page.$eval('.kg-canvas', (c) => ({ scale: c.graph.scale(), letters: c.graph.letters(), written: c.graph.written(), mark: c.graph.mark('n:geo') }));
+  const crossing = (list) => list.some((a, i) => list.some((b, j) => j > i && a.box[0] < b.box[2] && b.box[0] < a.box[2] && a.box[1] < b.box[3] && b.box[1] < a.box[3]));
+  await page.keyboard.press('0');
+  await sleep(200);
+  const low = await seen();
+  const [cx, cy] = await point(page, 'tag:charts');
+  await page.mouse.move(cx, cy);
+  for (let i = 0; i < 10; i++) { await page.mouse.wheel(0, -120); await sleep(30); }
+  await sleep(200);
+  const high = await seen();
+  step('확대는 사이를 벌리고 그린 것의 크기는 둔다: 글자 크기가 그대로이고, 이름이 서로 겹치지 않으며, 표식은 조금만 커지고, 이름은 더 길게 적힌다',
+    high.scale > low.scale * 3 && high.written.length > 0 && high.written.every((l) => low.written.every((m) => m.id !== l.id || m.px === l.px))
+    && !crossing(low.written) && !crossing(high.written) && high.mark > 0 && high.mark <= low.mark * 1.7 && high.letters > low.letters,
+    JSON.stringify({ low: [low.scale, low.letters, low.mark, low.written.map((l) => [l.id, l.px])], high: [high.scale, high.letters, high.mark, high.written.map((l) => [l.id, l.px])] }));
+  const [zx, zy] = await point(page, 'tag:charts');
+  await page.mouse.click(zx, zy);
+  await sleep(500);
+  step('크게 본 채로도 그려진 자리를 누르면 그 노드다', (await side(page)).startsWith('charts'), JSON.stringify([Math.round(zx - cx), Math.round(zy - cy), (await side(page)).slice(0, 30)]));
   step('쪽 오류 없음', errors.length === 0, errors.join(' / ').slice(0, 300));
 
   await browser.close();

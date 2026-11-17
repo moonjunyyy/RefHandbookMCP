@@ -2,7 +2,9 @@
 // (the entries) and what joins them: a route from one topic to another, a row two topics both reach, a tag of both,
 // the cards. A topic pressed opens into its rows (and closes again); a node pressed says what it is beside the
 // drawing. Nodes are laid out by forces (they push each other apart, a link pulls its two ends together), dragged by
-// hand, and the whole is moved by dragging the ground and scaled by the wheel, − + and 0.
+// hand, and the whole is moved by dragging the ground and scaled by the wheel, − + and 0. A scale moves the nodes apart
+// and leaves what is drawn its size: a mark grows a little and stops, the letters keep their size on the screen, and
+// with more room more of the names are written — none over another.
 // One file, importing no other page: it can become an app of its own without being written again.
 
 import { api, button, empty, h, keys, main, message, pageHead, replace, title } from '/auth/static/site.js';
@@ -23,6 +25,12 @@ const LINK: Record<string, { length: number; joins: boolean }> = {
 const COLOUR: Record<string, string> = { entry: '--accent', tag: '--muted', card: '--ok', row: '--text', shared: '--warn' };
 const colourOf = (n: GNode) => COLOUR[n.shared ? 'shared' : n.type] ?? '--text';
 const radius = (n: GNode) => n.type === 'entry' ? 10 + Math.min(12, Math.sqrt(n.n ?? 0)) : n.shared ? 7 : n.type === 'row' ? 4.5 : 5.5;
+/** The scale's ends: all of it in sight, and a crowded corner pulled apart. */
+const SCALES: [number, number] = [.2, 8];
+/** How far a mark shrinks and grows with the scale (× its own radius): it stays a mark at both ends. */
+const MARK: [number, number] = [.75, 1.6];
+/** The letters' size on the screen (px), a topic's and the others': the same at every scale. */
+const LETTERS = { entry: 13, other: 12 };
 const room = (el: HTMLElement) => Math.max(320, Math.floor(window.innerHeight - el.getBoundingClientRect().top - 24));
 
 export async function graph(): Promise<void> {
@@ -104,36 +112,53 @@ export async function graph(): Promise<void> {
     canvas.height = Math.floor(height * ratio);
     draw();
   }
+  /** A mark's radius on the screen: its own, a little smaller far out and a little larger close in. */
+  const mark = (n: GNode) => radius(n) * Math.max(MARK[0], Math.min(MARK[1], Math.sqrt(scale)));
+  /** How much of a name is written: more of it as the scale gives it room. */
+  const letters = () => Math.round(Math.max(14, Math.min(64, 22 * scale + 6)));
+  /** The names written in the last drawing, each with its box on the screen (from the drawing's middle). */
+  let written: { id: string; text: string; box: [number, number, number, number]; px: number }[] = [];
   function draw(): void {
     const ratio = window.devicePixelRatio || 1, w = canvas.width / ratio, hgt = canvas.height / ratio;
     ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
     ctx.clearRect(0, 0, w, hgt);
-    ctx.translate(w / 2 + tx, hgt / 2 + ty);
-    ctx.scale(scale, scale);
+    ctx.translate(w / 2 + tx, hgt / 2 + ty);  // the scale is applied to the places below, not to the pen
     const line = css('--line'), accent = css('--accent'), text = css('--text');
     for (const l of links) {
       const a = byId.get(l.s)!, b = byId.get(l.t)!, joins = LINK[l.kind]?.joins;
       const lit = selected && (selected.id === l.s || selected.id === l.t);
-      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+      ctx.beginPath(); ctx.moveTo(a.x * scale, a.y * scale); ctx.lineTo(b.x * scale, b.y * scale);
       ctx.strokeStyle = joins || lit ? accent : line;
       ctx.globalAlpha = lit ? 1 : joins ? .75 : .9;
-      ctx.lineWidth = (joins ? 2.2 : 1) / Math.sqrt(scale);
+      ctx.lineWidth = joins ? 2.2 : 1;
       ctx.stroke();
     }
     ctx.globalAlpha = 1;
-    ctx.textAlign = 'center';
     for (const n of nodes) {
-      const r = radius(n);
-      ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
+      ctx.beginPath(); ctx.arc(n.x * scale, n.y * scale, mark(n), 0, Math.PI * 2);
       ctx.fillStyle = css(colourOf(n));
       ctx.fill();
-      if (n === selected || open.has(n.id)) { ctx.lineWidth = 2 / scale; ctx.strokeStyle = text; ctx.stroke(); }
-      if (n.type === 'entry' || n === selected || n === hover || scale > 1.5 || (n.shared && scale > .8)) {
-        ctx.font = `${n.type === 'entry' ? '600 ' : ''}${Math.max(10, 12 / Math.sqrt(scale))}px system-ui, sans-serif`;
-        ctx.fillStyle = text;
-        const label = n.type === 'row' ? n.title : n.title.split(' · ')[0];
-        ctx.fillText(label.length > 34 ? label.slice(0, 33) + '…' : label, n.x, n.y + r + 13 / Math.sqrt(scale));
-      }
+      if (n === selected || open.has(n.id)) { ctx.lineWidth = 2; ctx.strokeStyle = text; ctx.stroke(); }
+    }
+    // the names: the selected and the pointed-at first, then the topics (the larger first), then the rest as the
+    // scale lets them in; a name that would lie over one already written is left out until there is room
+    ctx.textAlign = 'center';
+    ctx.fillStyle = text;
+    written = [];
+    const most = letters();
+    const rank = (n: GNode) => n === selected ? 0 : n === hover ? 1 : n.type === 'entry' ? 2 : n.shared ? 3 : 4;
+    const wanted = nodes.filter(n => n.type === 'entry' || n === selected || n === hover || scale > 1.5 || (n.shared && scale > .8))
+      .sort((a, b) => rank(a) - rank(b) || (b.n ?? 0) - (a.n ?? 0));
+    for (const n of wanted) {
+      const px = n.type === 'entry' ? LETTERS.entry : LETTERS.other;
+      ctx.font = `${n.type === 'entry' ? '600 ' : ''}${px}px system-ui, sans-serif`;
+      const whole = n.type === 'row' ? n.title : n.title.split(' · ')[0];
+      const label = whole.length > most ? whole.slice(0, most - 1) + '…' : whole;
+      const x = n.x * scale, y = n.y * scale + mark(n) + px + 1, half = ctx.measureText(label).width / 2;
+      const box: [number, number, number, number] = [x - half, y - px, x + half, y + 3];
+      if (rank(n) > 1 && written.some(o => box[0] < o.box[2] && o.box[0] < box[2] && box[1] < o.box[3] && o.box[1] < box[3])) continue;
+      ctx.fillText(label, x, y);
+      written.push({ id: n.id, text: label, box, px });
     }
   }
 
@@ -143,11 +168,11 @@ export async function graph(): Promise<void> {
     return [(ev.clientX - b.left - b.width / 2 - tx) / scale, (ev.clientY - b.top - b.height / 2 - ty) / scale];
   };
   const under = (x: number, y: number): GNode | null => {
-    for (let i = nodes.length - 1; i >= 0; i--) { const n = nodes[i], r = radius(n) + 4 / scale; if ((n.x - x) ** 2 + (n.y - y) ** 2 <= r * r) return n; }
+    for (let i = nodes.length - 1; i >= 0; i--) { const n = nodes[i], r = (mark(n) + 4) / scale; if ((n.x - x) ** 2 + (n.y - y) ** 2 <= r * r) return n; }
     return null;
   };
   function zoom(by: number, cx = 0, cy = 0): void {
-    const next = Math.max(.2, Math.min(4, scale * by));
+    const next = Math.max(SCALES[0], Math.min(SCALES[1], scale * by));
     tx -= cx * (next - scale); ty -= cy * (next - scale);
     scale = next;
     draw();
@@ -156,7 +181,7 @@ export async function graph(): Promise<void> {
     if (!nodes.length) return;
     const xs = nodes.map(n => n.x), ys = nodes.map(n => n.y);
     const w = Math.max(...xs) - Math.min(...xs) + 160, hgt = Math.max(...ys) - Math.min(...ys) + 160;
-    scale = Math.max(.2, Math.min(1.6, Math.min(stage.clientWidth / w, stage.clientHeight / hgt)));
+    scale = Math.max(SCALES[0], Math.min(1.6, Math.min(stage.clientWidth / w, stage.clientHeight / hgt)));
     tx = -(Math.max(...xs) + Math.min(...xs)) / 2 * scale; ty = -(Math.max(...ys) + Math.min(...ys)) / 2 * scale;
     draw();
   }
@@ -241,5 +266,6 @@ export async function graph(): Promise<void> {
   run();
   // what a test (and a reader of the page's state) can ask without reading pixels
   (canvas as unknown as { graph: unknown }).graph = { nodes: () => nodes.map(n => ({ id: n.id, type: n.type, x: n.x, y: n.y })), links: () => links.length,
+    scale: () => scale, letters, written: () => written, mark: (id: string) => { const n = byId.get(id); return n ? mark(n) : 0; },
     point: (id: string) => { const n = byId.get(id), b = canvas.getBoundingClientRect(); return n ? [b.left + b.width / 2 + tx + n.x * scale, b.top + b.height / 2 + ty + n.y * scale] : null; } };
 }
