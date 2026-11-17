@@ -536,11 +536,23 @@ export async function calendar(): Promise<void> {
     drawHead();
     draw();
   }
-  /** The month's weeks take the room there is: as many weeks of it as the scale says. */
+  /** A day's height when the room shows `weeks` of them: the room over the weeks — but never taller than the day is
+   * wide times the ratio the style sheet declares (--cal-day-tall). A tall window shows more weeks, not taller days. */
+  function dayHeight(weeks: number, height: number): number {
+    const tall = Number.parseFloat(getComputedStyle(weeksBox).getPropertyValue('--cal-day-tall'));
+    const widest = tall > 0 && weeksBox.clientWidth > 0 ? Math.round(weeksBox.clientWidth / 7 * tall) : Infinity;
+    return Math.max(44, Math.min(Math.floor((height - (wds.offsetHeight || 30)) / weeks) - 1, widest));
+  }
+  /** The month's weeks take the room there is: as many weeks of it as the scale says, more where its days would be
+   * taller than they may. A step of the scale that would change nothing drawn is not offered. */
   function fitMonth(): void {
-    const height = room(grid);
+    const height = room(grid), now = dayHeight(scale.weeks, height);
     weeksBox.style.setProperty('--cal-h', `${height}px`);
-    weeksBox.style.setProperty('--cal-day', `${Math.max(44, Math.floor((height - (wds.offsetHeight || 30)) / scale.weeks) - 1)}px`);
+    weeksBox.style.setProperty('--cal-day', `${now}px`);
+    const at = WEEKS_SHOWN.indexOf(scale.weeks);
+    const same = (to: number) => WEEKS_SHOWN[to] === undefined || dayHeight(WEEKS_SHOWN[to], height) === now;
+    const [out, into] = [...head.querySelectorAll<HTMLButtonElement>('.cal-scale button')];
+    if (view === 'month' && out && into) { out.disabled = same(at - 1); into.disabled = same(at + 1); }
   }
 
   function drawHead(): void {

@@ -495,8 +495,9 @@ ul.plain li:first-child { border-top: 0; padding-top: 0; }
 .cal-grid { display: flex; flex-direction: column; background: var(--line); border: 1px solid var(--line);
             border-radius: var(--grid-radius); overflow: hidden; }
 /* the month: weeks in a column that scrolls on, under the weekday names (calendar.ts drawGrid) */
-/* its height is the room down to the window's edge (--cal-h, calendar.ts fitMonth); it scrolls on with no bar: the weeks have no end to show */
-.cal-weeks { position: relative; display: flex; flex-direction: column; max-height: var(--cal-h, min(70vh, 720px)); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; }
+/* its height is the room down to the window's edge (--cal-h, calendar.ts fitMonth); it scrolls on with no bar: the weeks have no end to show.
+   --cal-day-tall: how many times as tall as it is wide a day may be — past it a tall window shows more weeks, not taller days */
+.cal-weeks { --cal-day-tall: 1.15; position: relative; display: flex; flex-direction: column; max-height: var(--cal-h, min(70vh, 720px)); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; }
 .cal-weeks::-webkit-scrollbar, .wk-body::-webkit-scrollbar { display: none; }
 .cal-wds, .cal-week { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); flex: none; }
 .cal-weeks, .cal-wds, .cal-week { gap: 1px; }  /* the lines between the days are the grid's ground showing through */
@@ -565,7 +566,6 @@ ul.plain li:first-child { border-top: 0; padding-top: 0; }
 .cal-list-day .day-list { margin-top: var(--s1); }
 .cal-year { display: grid; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); gap: var(--s5) var(--s4); }
 @media (max-width: 640px) {
-  .cal-day { min-height: 64px; }
   .cal-ev .cal-time { display: none; }
   .cal-nav h1 { font-size: 1.1rem; min-width: 0; }
 }

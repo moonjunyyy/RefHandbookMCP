@@ -38,5 +38,9 @@ if node procedure.js; then ok=$((ok + 1)); else bad=$((bad + 1)); fi
 if node calendar-scale.js > scale.log 2>&1; then ok=$((ok + 1)); else bad=$((bad + 1)); fi
 head -1 scale.log
 grep '^FAIL' scale.log
+# the pages at tall and narrow windows (responsive.js)
+if node responsive.js > responsive.log 2>&1; then ok=$((ok + 1)); else bad=$((bad + 1)); fi
+head -1 responsive.log
+grep '^BAD' responsive.log | head -20
 echo "steps: $ok ok, $bad failed"
 test "$bad" -eq 0
