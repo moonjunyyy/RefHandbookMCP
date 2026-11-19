@@ -627,7 +627,7 @@ details.backlinks[open] > :not(summary) { position: absolute; right: 0; z-index:
 .note-body pre, .note-body .katex-display { overflow-x: auto; overflow-y: hidden; max-width: 100%; }
 .note-body .katex-display > .katex { white-space: nowrap; }
 .note-body hr { border: 0; border-top: 1px solid var(--line); margin: 1.2em 0; }
-.note-body a.wikilink.missing { color: var(--muted); text-decoration: underline dotted; }
+.note-body .wikilink.missing { color: var(--muted); text-decoration: underline dotted; }
 .note-body .tag { font-size: .78em; }
 .note-body input[type=checkbox] { margin: 0 .4em 0 0; }
 .note-body .katex-display { overflow-x: auto; overflow-y: hidden; padding: var(--s1) 0; }
