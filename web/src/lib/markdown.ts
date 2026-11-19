@@ -54,11 +54,13 @@ function wikilinks(md: MarkdownIt, resolve: Resolve): void {
         img.content = (alias ?? name).trim();
       } else {
         const to = resolve.note(name.trim());
-        const open = state.push('link_open', 'a', 1);
-        open.attrs = [['href', to ? to + (heading ? '#' + encodeURIComponent(heading.trim()) : '') : '#'], ['class', to ? 'wikilink' : 'wikilink missing']];
+        const open = state.push(to ? 'link_open' : 'missing_link_open', to ? 'a' : 'span', 1);
+        open.attrs = to
+          ? [['href', to + (heading ? '#' + encodeURIComponent(heading.trim()) : '')], ['class', 'wikilink']]
+          : [['class', 'wikilink missing'], ['title', `Note not found: ${name.trim()}`]];
         const text = state.push('text', '', 0);
         text.content = (alias ?? (heading ? `${name} › ${heading}` : name)).trim();
-        state.push('link_close', 'a', -1);
+        state.push(to ? 'link_close' : 'missing_link_close', to ? 'a' : 'span', -1);
       }
     }
     state.pos = end + 2;
