@@ -385,3 +385,22 @@ def test_a_recipe_unpacks_with_modes_as_roots_files(tmp_path, monkeypatch):
     fetch.unpack(buf, str(tmp_path / "node"), 1)
     assert owners == [0]
     assert os.stat(tmp_path / "node" / "bin" / "node").st_mode & 0o777 == 0o755
+
+
+def test_recipe_json_selector_rejects_code_and_selects_lts(monkeypatch, capsys):
+    import importlib.util
+    import io
+    from pathlib import Path
+
+    spec = importlib.util.spec_from_file_location(
+        "fetch_json", Path(__file__).resolve().parents[2] / "src/refhandbook/agents/recipes/fetch.py")
+    fetch = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fetch)
+    monkeypatch.setattr(fetch, "get", lambda url: io.BytesIO(
+        b'[{"version":"v1","lts":false},{"version":"v2","lts":"Active"}]'))
+    monkeypatch.setattr(fetch.sys, "argv", ["fetch.py", "--json", "https://example.test", "latest-lts-version"])
+    fetch.main()
+    assert capsys.readouterr().out.strip() == "v2"
+    monkeypatch.setattr(fetch.sys, "argv", ["fetch.py", "--json", "https://example.test", "__import__('os').system('false')"])
+    with pytest.raises(SystemExit, match="JSON key"):
+        fetch.main()
