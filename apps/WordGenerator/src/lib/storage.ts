@@ -26,10 +26,13 @@ let backend: Backend = 'browser';
 let uid: string | null = null;
 
 const api = (path: string) => new URL(`api/${path}`, document.baseURI).toString();
+const migrationMark = (): string => `geultarae_legacy_imported:uid:${encodeURIComponent(uid ?? '')}`;
+const localName = (key: StoreKey): string =>
+  backend === 'account' && uid ? `${LOCAL_NAMES[key]}:uid:${encodeURIComponent(uid)}` : LOCAL_NAMES[key];
 
 function readLocal<T>(key: StoreKey): T | null {
   try {
-    const raw = localStorage.getItem(LOCAL_NAMES[key]);
+    const raw = localStorage.getItem(localName(key));
     return raw === null ? null : (JSON.parse(raw) as T);
   } catch {
     return null;
@@ -38,7 +41,7 @@ function readLocal<T>(key: StoreKey): T | null {
 
 function writeLocal(key: StoreKey, value: unknown): void {
   try {
-    localStorage.setItem(LOCAL_NAMES[key], JSON.stringify(value));
+    localStorage.setItem(localName(key), JSON.stringify(value));
   } catch {
     // full or disabled: the account copy (if any) still holds it
   }
@@ -46,6 +49,8 @@ function writeLocal(key: StoreKey, value: unknown): void {
 
 /** Find out once where things are kept. */
 export async function connect(): Promise<{ backend: Backend; uid: string | null }> {
+  backend = 'browser';
+  uid = null;
   try {
     const r = await fetch(api('me'), { credentials: 'same-origin', headers: { Accept: 'application/json' } });
     const body = r.ok && r.headers.get('content-type')?.includes('application/json') ? await r.json() : null;
@@ -73,14 +78,43 @@ export async function load<T>(key: StoreKey): Promise<T | null> {
       writeLocal(key, value);
       return value;
     }
-    if (r.status === 404 && local !== null) {
-      await save(key, local); // the first visit with an account: bring this browser's copy along
-      return local;
-    }
+    // A missing account value may use only this account's own cache. Legacy browser keys
+    // have no owner and are never transferred automatically to another signed-in user.
+    if (r.status === 404) return local;
   } catch {
     // offline: the local copy is the best there is
   }
   return local;
+}
+
+/** Unowned browser-only values stay available for an explicit, user-reviewed import. */
+export function legacyKeys(): StoreKey[] {
+  if (backend !== 'account') return [];
+  try { if (localStorage.getItem(migrationMark()) === '1') return []; } catch { return []; }
+  return (Object.keys(LOCAL_NAMES) as StoreKey[]).filter(key => {
+    try { return localStorage.getItem(LOCAL_NAMES[key]) !== null; } catch { return false; }
+  });
+}
+
+/** Import only into empty account slots, after the user chooses to bring this browser's data in. */
+export async function importLegacy(): Promise<{ imported: number; failed: number }> {
+  if (backend !== 'account') return { imported: 0, failed: 0 };
+  let imported = 0, failed = 0;
+  for (const key of legacyKeys()) {
+    try {
+      const current = await fetch(api(`store/${key}`), { credentials: 'same-origin' });
+      if (current.status !== 404) { if (!current.ok) failed++; continue; }
+      const raw = localStorage.getItem(LOCAL_NAMES[key]);
+      if (raw === null) continue;
+      const value: unknown = JSON.parse(raw);
+      if (await save(key, value)) imported++;
+      else failed++;
+    } catch { failed++; }
+  }
+  if (!failed) {
+    try { localStorage.setItem(migrationMark(), '1'); } catch { /* can still use the account */ }
+  }
+  return { imported, failed };
 }
 
 /** Saves; resolves to false if the account could not be reached (the browser copy is kept anyway). */
