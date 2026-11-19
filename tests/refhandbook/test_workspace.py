@@ -385,3 +385,55 @@ def test_a_recipe_unpacks_with_modes_as_roots_files(tmp_path, monkeypatch):
     fetch.unpack(buf, str(tmp_path / "node"), 1)
     assert owners == [0]
     assert os.stat(tmp_path / "node" / "bin" / "node").st_mode & 0o777 == 0o755
+
+
+
+def test_recipe_rejects_links_outside_extraction_root(tmp_path):
+    import importlib.util
+    import io
+    import tarfile
+    from pathlib import Path
+
+    spec = importlib.util.spec_from_file_location(
+        "fetch_links", Path(__file__).resolve().parents[2] / "src/refhandbook/agents/recipes/fetch.py")
+    fetch = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fetch)
+    for kind, link in ((tarfile.SYMTYPE, "../../../outside"), (tarfile.LNKTYPE, "pkg/../../outside")):
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w") as tf:
+            member = tarfile.TarInfo("pkg/bin/escape")
+            member.type, member.linkname = kind, link
+            tf.addfile(member)
+        buf.seek(0)
+        with pytest.raises(ValueError, match="escapes destination"):
+            fetch.unpack(buf, str(tmp_path / "out"), 1)
+        assert not (tmp_path / "outside").exists()
+
+
+
+def test_recipe_keeps_safe_relative_links(tmp_path):
+    import importlib.util
+    import io
+    import tarfile
+    from pathlib import Path
+
+    spec = importlib.util.spec_from_file_location(
+        "fetch_safe_links", Path(__file__).resolve().parents[2] / "src/refhandbook/agents/recipes/fetch.py")
+    fetch = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fetch)
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w") as tf:
+        data = b"node binary"
+        file = tarfile.TarInfo("pkg/bin/node")
+        file.size = len(data)
+        tf.addfile(file, io.BytesIO(data))
+        symlink = tarfile.TarInfo("pkg/bin/npm")
+        symlink.type, symlink.linkname = tarfile.SYMTYPE, "node"
+        tf.addfile(symlink)
+        hardlink = tarfile.TarInfo("pkg/bin/npx")
+        hardlink.type, hardlink.linkname = tarfile.LNKTYPE, "pkg/bin/node"
+        tf.addfile(hardlink)
+    buf.seek(0)
+    fetch.unpack(buf, str(tmp_path / "layer"), 1)
+    assert (tmp_path / "layer/bin/npm").read_bytes() == b"node binary"
+    assert (tmp_path / "layer/bin/npx").read_bytes() == b"node binary"

@@ -11,6 +11,7 @@ download must match the line for its file name, or nothing is written.
 """
 import hashlib
 import json
+import posixpath
 import os
 import shutil
 import sys
@@ -62,12 +63,27 @@ def unpack(tmp, dest: str, strip: int) -> None:
         tf.errorlevel = 2
         members = []
         for m in tf.getmembers():
+            if m.name.startswith("/") or ".." in m.name.split("/"):
+                raise ValueError(f"fetch: archive member escapes destination: {m.name}")
             parts = m.name.split("/")[strip:]
             if not parts or not parts[0]:
                 continue
             m.name = "/".join(parts)
+            if m.name.startswith("/") or posixpath.normpath(m.name).startswith("../"):
+                raise ValueError(f"fetch: archive member escapes destination: {m.name}")
             if m.islnk():
                 m.linkname = "/".join(m.linkname.split("/")[strip:])
+                target = posixpath.normpath(m.linkname)
+            elif m.issym():
+                target = posixpath.normpath(posixpath.join(posixpath.dirname(m.name), m.linkname))
+            else:
+                target = ""
+            if (m.islnk() or m.issym()) and (
+                m.linkname.startswith("/") or target == ".." or target.startswith("../")
+            ):
+                raise ValueError(f"fetch: archive link escapes destination: {m.name} -> {m.linkname}")
+            if not (m.isfile() or m.isdir() or m.islnk() or m.issym()):
+                raise ValueError(f"fetch: unsupported archive member: {m.name}")
             m.uid = m.gid = 0
             m.uname = m.gname = "root"
             members.append(m)
