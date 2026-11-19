@@ -117,21 +117,33 @@ export async function importLegacy(): Promise<{ imported: number; failed: number
   return { imported, failed };
 }
 
-/** Saves; resolves to false if the account could not be reached (the browser copy is kept anyway). */
+const pending = new Map<string, Promise<void>>();
+
+/** Saves in order per account and key, so an older request cannot overwrite a newer value. */
 export async function save(key: StoreKey, value: unknown): Promise<boolean> {
   writeLocal(key, value);
   if (backend === 'browser') return true;
-  try {
-    const r = await fetch(api(`store/${key}`), {
-      method: 'PUT',
-      credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(value),
-    });
-    return r.ok;
-  } catch {
-    return false;
-  }
+  const queueKey = `${uid}:${key}`;
+  const prior = pending.get(queueKey) ?? Promise.resolve();
+  const result = prior.then(async () => {
+    try {
+      const r = await fetch(api(`store/${key}`), {
+        method: 'PUT',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(value),
+      });
+      return r.ok;
+    } catch {
+      return false;
+    }
+  });
+  const tail = result.then(() => {});
+  pending.set(queueKey, tail);
+  void tail.then(() => {
+    if (pending.get(queueKey) === tail) pending.delete(queueKey);
+  });
+  return result;
 }
 
 const timers = new Map<StoreKey, ReturnType<typeof setTimeout>>();
