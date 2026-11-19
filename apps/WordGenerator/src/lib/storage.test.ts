@@ -39,7 +39,7 @@ describe('storage', () => {
     expect(await storage.connect()).toEqual({ backend: 'account', uid: 'alice' });
     expect(await storage.save('saved-sets', [{ title: '1장' }])).toBe(true);
     expect(JSON.parse(server.get('saved-sets')!)).toEqual([{ title: '1장' }]);
-    expect(local.get('geultarae_saved_sets')).toBe('[{"title":"1장"}]'); // and a copy here
+    expect(local.get('geultarae_saved_sets:uid:alice')).toBe('[{"title":"1장"}]'); // and a copy here
   });
 
   it("brings this browser's old data to an empty account, once", async () => {
@@ -48,11 +48,38 @@ describe('storage', () => {
     local.set('geultarae_draft', JSON.stringify({ title: '예전 초안', content: '...' }));
     const storage = await import('./storage');
     await storage.connect();
-    expect(await storage.load('draft')).toEqual({ title: '예전 초안', content: '...' });
+    expect(await storage.load('draft')).toBeNull();
+    expect(server.has('draft')).toBe(false); // unowned data is never uploaded silently
+    expect(storage.legacyKeys()).toEqual(['draft']);
+    expect(await storage.importLegacy()).toEqual({ imported: 1, failed: 0 });
     expect(JSON.parse(server.get('draft')!).title).toBe('예전 초안');
+    expect(storage.legacyKeys()).toEqual([]);
     server.set('draft', JSON.stringify({ title: '다른 기기에서 쓴 초안' }));
     expect(await storage.load('draft')).toEqual({ title: '다른 기기에서 쓴 초안' }); // the account wins after
     expect(calls.filter(c => c.startsWith('PUT'))).toHaveLength(1);
+  });
+
+
+  it('keeps account caches separate when users share one browser', async () => {
+    const { local } = browser(new Map());
+    let current = 'alice';
+    const stores = new Map<string, string>();
+    vi.stubGlobal('fetch', async (url: string, init: RequestInit = {}) => {
+      if (new URL(url).pathname.endsWith('/api/me')) return Response.json({ uid: current });
+      const key = new URL(url).pathname.split('/').pop()!;
+      const scoped = `${current}:${key}`;
+      if (init.method === 'PUT') { stores.set(scoped, String(init.body)); return new Response(null, { status: 204 }); }
+      return stores.has(scoped) ? Response.json(JSON.parse(stores.get(scoped)!)) : new Response(null, { status: 404 });
+    });
+    const storage = await import('./storage');
+    await storage.connect();
+    await storage.save('draft', { title: 'Alice only' });
+    current = 'bob';
+    await storage.connect();
+    expect(await storage.load('draft')).toBeNull();
+    expect(stores.has('bob:draft')).toBe(false);
+    expect(local.get('geultarae_draft:uid:bob')).toBeUndefined();
+    expect(local.get('geultarae_draft:uid:alice')).toContain('Alice only');
   });
 
   it('is this browser alone without the site (npm run dev)', async () => {
