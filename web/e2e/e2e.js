@@ -666,7 +666,8 @@ async function run() {
   step('수식이 있는 노트가 KaTeX 청크를 가져왔다', fetched.some((u) => /katex/i.test(u)), fetched.filter((u) => /assets/.test(u)).join(' '));
   step('노트의 첫 요소는 Home 노트다', (await texts(page, '.note-head h1'))[0] === 'Home' && (await texts(page, '.note-body h1'))[0] === 'Home');
   step('위키링크가 노트로 가고 없는 노트는 표시된다', (await page.$eval('.note-body a.wikilink', (a) => a.getAttribute('href'))) === '/vault/v1/Ideas/Operators.md'
-    && (await texts(page, '.note-body a.wikilink'))[1] === 'the algebras');
+    && (await texts(page, '.note-body a.wikilink'))[1] === 'the algebras'
+    && !(await page.$('.note-body a.wikilink.missing')));
   step('수식이 그려진다', (await page.$$('.note-body .katex')).length >= 2 && !!(await page.$('.note-body .katex-display')));
   step('트리에 폴더와 노트가 있고 머리에 새 노트와 볼트의 ⋯ 가 있다', (await texts(page, '.vault-side ul.tree summary')).includes('Ideas') && (await texts(page, '.vault-side ul.tree a')).includes('Home')
     && (await texts(page, '.vault-side .tree-head button')).includes('새 노트') && !!(await page.$('.vault-side .vault-head button.more')));
@@ -704,6 +705,9 @@ async function run() {
   page.once('dialog', dialog => dialog.accept());
   await open(page, `${BASE}/vault/v1/Ideas/Operators.md`, '.note-body');
   step('주소로 노트를 연다', (await texts(page, '.note-head h1'))[0] === 'Ideas/Operators' && (await texts(page, '.vault-side li.current a'))[0] === 'Operators');
+  step('없는 위키링크는 이동 링크가 아니라 표시 텍스트다',
+    (await texts(page, '.note-body span.wikilink.missing'))[0] === 'Missing note'
+    && !(await page.$('.note-body a.wikilink.missing')));
   // a wide note in a fresh page: no KaTeX fetched; the table scrolls inside the note, the page does not widen (C31)
   const page5 = await ctx.newPage();
   watch(page5);
