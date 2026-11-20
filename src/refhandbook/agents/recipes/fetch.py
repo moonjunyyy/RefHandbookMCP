@@ -4,7 +4,7 @@ through the proxy the build's environment names (the egress supervisor).
     python3 fetch.py [--sums URL] URL DEST                  download URL to DEST
     python3 fetch.py [--sums URL] --unpack URL DIR [STRIP]  unpack the tar archive at URL into DIR,
                                                             dropping STRIP leading path components
-    python3 fetch.py --json URL EXPR                        print EXPR evaluated on the JSON at URL (as `d`)
+    python3 fetch.py --json URL KEY                        print the named JSON field (or latest-lts-version)
 
 --sums names the publisher's checksum list (lines "<sha256>  <file>", or one bare hash): the
 download must match the line for its file name, or nothing is written.
@@ -97,7 +97,20 @@ def main() -> None:
     if args[0] == "--sums":
         sums, args = args[1], args[2:]
     if args[0] == "--json":
-        print(eval(args[2], {"d": json.load(get(args[1]))}))  # noqa: S307 — the recipe's own expression
+        data = json.load(get(args[1]))
+        key = args[2]
+        if key == "latest-lts-version":
+            if not isinstance(data, list):
+                raise SystemExit("fetch: expected a JSON release list")
+            release = next((item for item in data if isinstance(item, dict)
+                            and item.get("lts") and isinstance(item.get("version"), str)), None)
+            if release is None:
+                raise SystemExit("fetch: no LTS release found")
+            print(release["version"])
+        elif isinstance(data, dict) and key in data:
+            print(data[key])
+        else:
+            raise SystemExit(f"fetch: JSON key {key!r} is missing")
     elif args[0] == "--unpack":
         unpack(download(args[1], sums), args[2], int(args[3]) if len(args) > 3 else 0)
     else:
