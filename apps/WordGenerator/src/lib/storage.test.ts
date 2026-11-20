@@ -82,6 +82,34 @@ describe('storage', () => {
     expect(local.get('geultarae_draft:uid:alice')).toContain('Alice only');
   });
 
+
+  it('serializes saves of one key so a slow older write cannot win', async () => {
+    browser(new Map());
+    let releaseFirst!: () => void;
+    const firstPending = new Promise<void>(resolve => { releaseFirst = resolve; });
+    const remote = new Map<string, string>();
+    const sent: string[] = [];
+    vi.stubGlobal('fetch', async (url: string, init: RequestInit = {}) => {
+      if (new URL(url).pathname.endsWith('/api/me')) return Response.json({ uid: 'alice' });
+      if (init.method === 'PUT') {
+        const body = String(init.body);
+        sent.push(body);
+        if (sent.length === 1) await firstPending;
+        remote.set('draft', body);
+        return new Response(null, { status: 204 });
+      }
+      return new Response(null, { status: 404 });
+    });
+    const storage = await import('./storage');
+    await storage.connect();
+    const oldSave = storage.save('draft', { title: 'old' });
+    const newSave = storage.save('draft', { title: 'new' });
+    await vi.waitFor(() => expect(sent).toHaveLength(1));
+    releaseFirst();
+    expect(await Promise.all([oldSave, newSave])).toEqual([true, true]);
+    expect(JSON.parse(remote.get('draft')!).title).toBe('new');
+  });
+
   it('is this browser alone without the site (npm run dev)', async () => {
     const { local } = browser(null);
     const storage = await import('./storage');
