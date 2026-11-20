@@ -53,6 +53,7 @@ export default function App() {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const [place, setPlace] = useState<{ backend: storage.Backend; uid: string | null } | null>(null);
+  const [legacyAvailable, setLegacyAvailable] = useState(false);
   const [lexicons, setLexicons] = useState<LoadedLexicon[]>([]);
   const [enabledLexicons, setEnabledLexicons] = useState<string[]>([]);
 
@@ -95,6 +96,7 @@ export default function App() {
       setSavedSets(Array.isArray(sets) ? sets : []);
       setKeywords(generateKeywords({ count: KEYWORD_COUNT.initial, mode: DEFAULTS.mode, combinationStyle: DEFAULTS.style }));
       setPlace(where);
+      setLegacyAvailable(where.backend === 'account' && storage.legacyKeys().length > 0);
     })();
     return () => { live = false; };
   }, [saveFailed]);
@@ -317,6 +319,18 @@ export default function App() {
 
         {/* Main Content Container */}
         <main className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-6">
+          {legacyAvailable && place?.backend === 'account' && (
+            <section className="border border-edge rounded-control p-4 text-sm" aria-label="예전 브라우저 자료">
+              <p>이 브라우저에 계정과 연결되지 않은 예전 자료가 있습니다. 현재 계정으로 가져올 자료인지 확인해 주세요.</p>
+              <button className="mt-2 text-accent underline" onClick={async () => {
+                if (!window.confirm('이 브라우저의 예전 자료를 현재 계정으로 가져올까요? 다른 사람이 사용하던 브라우저라면 취소하세요.')) return;
+                const result = await storage.importLegacy();
+                if (result.failed) { showToast(`${result.failed}개 항목을 가져오지 못했습니다. 다시 시도할 수 있습니다.`); return; }
+                setLegacyAvailable(false);
+                if (result.imported) window.location.reload();
+              }}>예전 자료 가져오기</button>
+            </section>
+          )}
           {activeTab === 'generator' && (
             <>
               {/* Editorial Intro Banner */}
