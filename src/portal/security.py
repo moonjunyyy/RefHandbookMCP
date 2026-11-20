@@ -53,6 +53,7 @@ class Throttle:
         self.limit, self.window = limit, window
         self._fails: dict[str, deque] = defaultdict(deque)
         self._lock = threading.Lock()
+        self._writes = 0
 
     def _prune(self, key: str) -> deque:
         q = self._fails[key]
@@ -63,10 +64,19 @@ class Throttle:
 
     def blocked(self, *keys: str) -> bool:
         with self._lock:
-            return any(len(self._prune(k)) >= self.limit for k in keys)
+            blocked = any(len(self._prune(k)) >= self.limit for k in keys)
+            for key in keys:
+                if not self._fails[key]:
+                    self._fails.pop(key, None)
+            return blocked
 
     def fail(self, *keys: str) -> None:
         with self._lock:
+            self._writes += 1
+            if self._writes % 256 == 0:
+                for key in list(self._fails):
+                    if not self._prune(key):
+                        self._fails.pop(key, None)
             for k in keys:
                 self._prune(k).append(time.monotonic())
 
