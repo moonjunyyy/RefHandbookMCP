@@ -10,7 +10,7 @@ const LINES = require('./lines');
 const BASE = mock.ORIGIN;
 const WINDOWS = [[390, 844], [820, 1180], [1080, 1920], [1100, 820]];
 const PAGES = [['/', '.widgets'], ['/calendar', '.cal-weeks .cal-week'], ['/calendar?v=week', '.wk-body'], ['/vault', '.note-body'], ['/board', 'main h1'],
-               ['/handbook', '.kg-canvas[data-nodes]'], ['/apps', '.catalog'], ['/settings', '.value'], ['/projects', 'main h1']];
+               ['/handbook', '.kg-canvas[data-nodes]'], ['/apps', '.catalog .store-card .app-tools'], ['/settings', '.value'], ['/projects', 'main h1']];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const MEASURE = () => {
