@@ -128,6 +128,7 @@ export const SITE: Record<string, string> = {
   '만들기': 'Create',
   '백링크 {n}': 'Backlinks {n}',
   '노트가 없습니다.': 'No notes.',
+  '노트를 찾을 수 없습니다: {name}': 'Note not found: {name}',
   '저장됨 {time}': 'Saved {time}',
   '노트 지우기': 'Delete the note',
   '요청이 실패했습니다 ({status})': 'The request failed ({status})',
