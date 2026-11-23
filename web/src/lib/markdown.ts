@@ -6,6 +6,7 @@
 // from a note is let through.
 
 import MarkdownIt from 'markdown-it';
+import { t } from './i18n';
 
 type Katex = { renderToString: (tex: string, opts: { displayMode: boolean; throwOnError: boolean; output: 'html' }) => string };
 let katex: Katex | null = null;
@@ -57,7 +58,7 @@ function wikilinks(md: MarkdownIt, resolve: Resolve): void {
         const open = state.push(to ? 'link_open' : 'missing_link_open', to ? 'a' : 'span', 1);
         open.attrs = to
           ? [['href', to + (heading ? '#' + encodeURIComponent(heading.trim()) : '')], ['class', 'wikilink']]
-          : [['class', 'wikilink missing'], ['title', `Note not found: ${name.trim()}`]];
+          : [['class', 'wikilink missing'], ['title', t('노트를 찾을 수 없습니다: {name}', { name: name.trim() })]];
         const text = state.push('text', '', 0);
         text.content = (alias ?? (heading ? `${name} › ${heading}` : name)).trim();
         state.push(to ? 'link_close' : 'missing_link_close', to ? 'a' : 'span', -1);
