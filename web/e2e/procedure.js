@@ -108,7 +108,9 @@ async function wordgen(page) {
   // Actual editing and account save, beyond a decorative tab.
   await page.getByRole('button',{name:'소설 집필실',exact:true}).click();
   await page.locator('textarea').fill('다음에 이어 쓸 초안');
-  await page.waitForFunction(()=>localStorage.getItem('geultarae_draft')?.includes('다음에 이어 쓸 초안'));
+  // the browser's copy is the account's own: its name carries the uid (apps/WordGenerator/src/lib/storage.ts localName)
+  await page.waitForFunction(()=>Object.keys(localStorage).some(k=>k.startsWith('geultarae_draft:uid:')&&localStorage.getItem(k).includes('다음에 이어 쓸 초안')));
+  assert.equal(await page.evaluate(()=>localStorage.getItem('geultarae_draft')),null);
   await page.waitForTimeout(1000);
   assert.match(JSON.stringify(mock.get('wordgen','draft')),/다음에 이어 쓸 초안/);
   await page.reload();await page.waitForSelector('body > header #nav a');
