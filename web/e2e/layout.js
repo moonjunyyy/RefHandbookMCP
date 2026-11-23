@@ -4,12 +4,14 @@
 // violation (pass · where · what · value), then a short table of the measured pairs for the eye.
 const { chromium } = require('playwright');
 const mock = require('./mock');
+const LINES = require('./lines');
 
 // Rules (px): an icon and its text are 4..12 apart (a big icon, as a card's column: up to 0.35 of its height,
 // so 44px → 15, 64px → 22) and share a centre within 2 (in a column — a tile, the mark over its name — the gap
 // is below the icon and the centre is the horizontal one); chips in a row share a
 // height within 1 and a centre within 1; buttons in one .actions row share a height within 1; no text
-// element is clipped by its parent; nothing in the header wraps onto a second line.
+// element is clipped by its parent; nothing in the header wraps onto a second line; no line ends inside a word
+// (lines.js, also run at every window by responsive.js).
 const RULES = { gapMin: 4, gapMax: 12, centre: 2, rowHeight: 1 };
 
 const MEASURE = (rules) => {
@@ -86,7 +88,11 @@ const MEASURE = (rules) => {
   mock.put('eq-sandbox', 'boards', [{ id: 'b1', title: '작업판 1', updated: Date.now() }]);
   const page = await ctx.newPage();
   const passes = [];
-  const measure = async (name) => passes.push([name, await page.evaluate(MEASURE, RULES)]);
+  const measure = async (name) => {
+    const m = await page.evaluate(MEASURE, RULES);
+    for (const [where, word] of await page.evaluate(LINES)) m.bad.push({ where, what: 'a line ends inside a word', value: word });
+    passes.push([name, m]);
+  };
   const visit = async (p, sel) => { await page.goto(`${mock.ORIGIN}${p}`, { waitUntil: 'networkidle' }); await page.waitForSelector(sel); await page.waitForTimeout(100); };
 
   await visit('/calendar', '.cal-grid');

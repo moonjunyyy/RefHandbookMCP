@@ -57,3 +57,8 @@
   --control-radius: clamp(0px, var(--radius-s), 12px);
   --grid-radius: clamp(0px, var(--radius-s), 8px);
 }
+
+/* Where a line may end: at a space, not inside a word. Korean breaks between any two syllables
+   unless told otherwise; a word wider than its box is still broken, so nothing runs out of it. The rule is
+   inherited: the site's pages and an app with parts of its own both have it from here, and no part repeats it. */
+:root { word-break: keep-all; overflow-wrap: break-word; line-break: strict; }

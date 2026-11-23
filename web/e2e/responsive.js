@@ -5,11 +5,12 @@
 // (BAD · window · page · what · value) and, for the eye, the month's and the hours' measures at each window.
 const { chromium } = require('playwright');
 const mock = require('./mock');
+const LINES = require('./lines');
 
 const BASE = mock.ORIGIN;
 const WINDOWS = [[390, 844], [820, 1180], [1080, 1920], [1100, 820]];
 const PAGES = [['/', '.widgets'], ['/calendar', '.cal-weeks .cal-week'], ['/calendar?v=week', '.wk-body'], ['/vault', '.note-body'], ['/board', 'main h1'],
-               ['/handbook', '.kg-canvas[data-nodes]'], ['/apps', '.catalog'], ['/settings', '.value'], ['/projects', 'main h1']];
+               ['/handbook', '.kg-canvas[data-nodes]'], ['/apps', '.catalog .store-card .app-tools'], ['/settings', '.value'], ['/projects', 'main h1']];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const MEASURE = () => {
@@ -56,6 +57,7 @@ const MEASURE = () => {
     const measure = async (name) => {
       seen++;
       const m = await page.evaluate(MEASURE);
+      for (const [where, word] of await page.evaluate(LINES)) m.bad.push(['a line ends inside a word', `${where} ${word}`]);
       for (const [what, value] of m.bad) bad.push(`BAD\t${width}x${height}\t${name}\t${what}\t${value}`);
       for (const n of m.note) notes.push(`${width}x${height}\t${name}\t${n}`);
     };

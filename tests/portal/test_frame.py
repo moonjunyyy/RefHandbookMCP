@@ -465,3 +465,22 @@ def test_widgets_draw_with_the_frames_parts():
         assert "from '/auth/static/site.js'" in text and re.search(r"\b(?:items|bars|monthGrid|dayStrip)\b", text), f"{p.name} draws without the frame's parts"
     home = (WEB / "src" / "pages" / "home.ts").read_text()
     assert "mount(el, c, w, size, p)" in home  # the module learns the cell's size, and the place's settings
+
+
+def test_where_a_line_may_end_is_one_inherited_rule():
+    """A line ends at a space, not inside a word (Korean breaks between any two syllables unless
+    told otherwise). The rule is theme.css's, on the root, so the pages and an app with parts of its own inherit it;
+    no part sets it again, and 'break anywhere' stays on code, addresses and values, never on prose or a title."""
+    theme = (STATIC / "theme.css").read_text()
+    assert re.search(r":root\s*\{[^}]*word-break:\s*keep-all;[^}]*overflow-wrap:\s*break-word;", theme)
+    anywhere = {"dd", ".secret", "code.address", "pre", "ol.history li", ".branches code", "dialog code.root", ".kg-meta",
+                ".kg-text", ".kg-links dd"}
+    offenders = []
+    for sheet in sorted(STATIC.glob("*.css")):
+        for rule in re.finditer(r"([^{}]+)\{([^{}]*)\}", sheet.read_text()):
+            selector, body = " ".join(rule.group(1).split("*/")[-1].split()), rule.group(2)
+            if "word-break: keep-all" in body and sheet.name != "theme.css":
+                offenders.append(f"{sheet.name}: {selector} repeats the rule")
+            if "overflow-wrap: anywhere" in body and not set(selector.split(", ")) <= anywhere:
+                offenders.append(f"{sheet.name}: {selector} breaks anywhere")
+    assert not offenders, "\n".join(offenders)
