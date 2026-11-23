@@ -38,6 +38,14 @@ Every recovered item carries the place it came from.
    5. **Another project's chats** (out of scope). Ask the user once for the chat
       link or a paste. If a link is given, try `read_conversation` with its id,
       and record the result either way.
+
+   A hit may hold only a part of the reference: one reference to earlier work
+   is often carried by several originals (rows of this ledger, a row of
+   another ledger, a file). When each carries a part and none contradicts
+   another, they are the item together. Record them as one context, each with
+   its locator, say which they are, and go on (exit a). Which of them the user
+   meant is not a question to ask. Only parts that contradict each other are a
+   disagreement (exit d).
 3. **External ladder.**
    1. `web_search` with short queries (1–6 words). Prefer originals: the paper,
       arXiv, official documentation, the author's notes.
@@ -64,7 +72,7 @@ Every recovered item carries the place it came from.
 
 **EXITS** (each exit returns objects; `<caller>` = the page of the K that routed here)
 
-- **a**: found in originals and recorded with locators → push `resume <caller step> on <new rows>` @<caller>
+- **a**: found in originals (one, or several that each carry a part and do not contradict) and recorded with locators → push `resume <caller step> on <new rows>` @<caller>
 - **b**: only pointers or snippets found → push `ask the user to confirm or paste <item>` @USER **and** `resume the independent part` @<caller>
 - **c**: not found after the ladder (calls recorded) → push `tell the user what was tried, ask` @USER
 - **d**: sources disagree (session vs session, or source vs source) → push `record the conflict as P#` (N2 rule: the latest session wins); also push `ask` @USER if it touches a mandatory C
